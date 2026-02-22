@@ -1,0 +1,190 @@
+// First Light — Grafana Alloy Configuration
+// Collects logs and metrics from all network data sources
+
+// ─────────────────────────────────────────────────────────
+// OUTPUTS
+// ─────────────────────────────────────────────────────────
+
+prometheus.remote_write "victoriametrics" {
+  endpoint {
+    url = "http://victoriametrics:8428/api/v1/write"
+  }
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+// SYSLOG SOURCES
+// ─────────────────────────────────────────────────────────
+
+// pfSense syslog (UDP 5514)
+loki.source.syslog "pfsense" {
+  listener {
+    address       = "0.0.0.0:5514"
+    protocol      = "udp"
+    syslog_format = "rfc3164"  // BSD syslog format (pfSense default)
+    labels        = {
+      job    = "syslog",
+      source = "pfsense",
+      host   = "firewall.mcducklabs.com",
+    }
+  }
+  forward_to = [loki.process.pfsense.receiver]
+}
+
+// Parse pfSense filterlog CSV format
+loki.process "pfsense" {
+  // Tag firewall block/pass events
+  stage.regex {
+    expression = `(?P<action>block|pass),(?P<direction>in|out)`
+  }
+  stage.labels {
+    values = {
+      action    = "action",
+      direction = "direction",
+    }
+  }
+  // Extract IP version for filtering
+  stage.regex {
+    expression = `,,(?P<ip_ver>4|6),`
+  }
+  stage.labels {
+    values = {
+      ip_version = "ip_ver",
+    }
+  }
+  forward_to = [loki.write.default.receiver]
+}
+
+// NAS syslog (UDP 5516)
+loki.source.syslog "nas" {
+  listener {
+    address       = "0.0.0.0:5516"
+    protocol      = "udp"
+    syslog_format = "rfc3164"  // BSD syslog format
+    labels        = {
+      job    = "syslog",
+      source = "nas",
+      host   = "nas.mcducklabs.com",
+    }
+  }
+  forward_to = [loki.write.default.receiver]
+}
+
+// ─────────────────────────────────────────────────────────
+// PROMETHEUS SCRAPE — ADGUARD HOME
+// Via adguard-exporter sidecar (no native Prometheus endpoint)
+// ─────────────────────────────────────────────────────────
+
+prometheus.scrape "adguard" {
+  targets = [{
+    __address__ = "adguard-exporter:9617",
+    job         = "adguard",
+    instance    = "adguard.mcducklabs.com",
+  }]
+  forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+  scrape_interval = "30s"
+  scrape_timeout  = "10s"
+}
+
+// ─────────────────────────────────────────────────────────
+// PROMETHEUS SCRAPE — NTOPNG
+// Uncomment after: add --prometheus-exporter-port=9000 to
+// /etc/ntopng/ntopng.conf and restart ntopng
+// ─────────────────────────────────────────────────────────
+
+// prometheus.scrape "ntopng" {
+//   targets = [{
+//     __address__ = "ntopng.mcducklabs.com:9000",
+//     job         = "ntopng",
+//     instance    = "ntopng.mcducklabs.com",
+//   }]
+//   forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+//   scrape_interval = "30s"
+// }
+
+// ─────────────────────────────────────────────────────────
+// PROMETHEUS SCRAPE — ETHEREUM VALIDATOR
+// ─────────────────────────────────────────────────────────
+
+prometheus.scrape "nimbus" {
+  targets = [{
+    __address__ = "vldtr.mcducklabs.com:8008",
+    job         = "nimbus",
+    instance    = "vldtr",
+  }]
+  forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+  scrape_interval = "30s"
+  scrape_timeout  = "10s"
+  metrics_path    = "/metrics"
+}
+
+prometheus.scrape "nethermind" {
+  targets = [{
+    __address__ = "vldtr.mcducklabs.com:6060",
+    job         = "nethermind",
+    instance    = "vldtr",
+  }]
+  forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+  scrape_interval = "30s"
+  scrape_timeout  = "10s"
+  metrics_path    = "/metrics"
+}
+
+// ─────────────────────────────────────────────────────────
+// SNMP — NETWORK SWITCH (TP-Link TL-SG2424)
+// ─────────────────────────────────────────────────────────
+
+prometheus.exporter.snmp "switch" {
+  config_file = "/etc/alloy/snmp.yml"
+
+  target "switch" {
+    address = "switch.mcducklabs.com"
+    module  = "if_mib"
+    walk_params = "switch"
+  }
+}
+
+prometheus.scrape "snmp_switch" {
+  targets         = prometheus.exporter.snmp.switch.targets
+  forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+  scrape_interval = "60s"
+  scrape_timeout  = "30s"
+}
+
+// ─────────────────────────────────────────────────────────
+// SNMP — NAS (QNAP SNMPv3 noAuthNoPriv)
+// ─────────────────────────────────────────────────────────
+
+prometheus.exporter.snmp "nas" {
+  config_file = "/etc/alloy/snmp.yml"
+
+  target "nas" {
+    address     = "nas.mcducklabs.com"
+    module      = "nas_host"
+    walk_params = "nas_v3"
+  }
+}
+
+prometheus.scrape "snmp_nas" {
+  targets         = prometheus.exporter.snmp.nas.targets
+  forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+  scrape_interval = "60s"
+  scrape_timeout  = "30s"
+}
+
+// ─────────────────────────────────────────────────────────
+// ALLOY SELF-METRICS
+// ─────────────────────────────────────────────────────────
+
+prometheus.exporter.self "alloy" {}
+
+prometheus.scrape "alloy_self" {
+  targets         = prometheus.exporter.self.alloy.targets
+  forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+  scrape_interval = "60s"
+}

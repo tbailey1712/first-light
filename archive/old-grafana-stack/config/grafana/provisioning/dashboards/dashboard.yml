@@ -1,0 +1,13 @@
+# First Light — Grafana Dashboard Provisioning
+
+apiVersion: 1
+
+providers:
+  - name: firstlight
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json
+      foldersFromFilesStructure: false

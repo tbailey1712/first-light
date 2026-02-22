@@ -1,0 +1,56 @@
+# First Light — Phase 1 MVP
+# Network observability with CrowdSec threat intelligence + SigNoz unified observability
+
+# Include SigNoz's official stack (ClickHouse, OTel collector, query service, frontend)
+include:
+  - signoz/docker-compose.yaml
+
+services:
+  # ── rsyslog — Fan-out router ─────────────────────────────────
+  # Receives syslog on UDP/TCP 514, routes to:
+  #   1. SigNoz OTel collector (TCP 5140)
+  #   2. /var/log/remote/{host}/syslog.log files for CrowdSec
+  rsyslog:
+    build:
+      context: ./rsyslog
+      dockerfile: Dockerfile
+    container_name: fl-rsyslog
+    restart: unless-stopped
+    ports:
+      - "514:514/udp"
+      - "514:514/tcp"
+    volumes:
+      - ./rsyslog/rsyslog.conf:/etc/rsyslog.conf:ro
+      - syslog_files:/var/log/remote
+    networks:
+      - signoz-net
+    depends_on:
+      - otel-collector
+
+  # ── CrowdSec — Threat detection ──────────────────────────────
+  # Tails log files written by rsyslog, runs community parsers/scenarios
+  # Detection-only for MVP (no bouncers yet)
+  crowdsec:
+    image: crowdsecurity/crowdsec:v1.6.3
+    container_name: fl-crowdsec
+    restart: unless-stopped
+    environment:
+      - COLLECTIONS=crowdsecurity/pfsense crowdsecurity/linux crowdsecurity/sshd
+      - ENROLL_KEY=${CROWDSEC_ENROLLMENT_KEY:-}
+    volumes:
+      - crowdsec_data:/var/lib/crowdsec/data
+      - crowdsec_config:/etc/crowdsec
+      - ./crowdsec/acquis.yml:/etc/crowdsec/acquis.d/acquis.yml:ro
+      - syslog_files:/var/log/remote:ro
+    networks:
+      - signoz-net
+
+volumes:
+  syslog_files:
+    name: fl-syslog-files
+  crowdsec_data:
+    name: fl-crowdsec-data
+  crowdsec_config:
+    name: fl-crowdsec-config
+
+# Note: signoz-net network is defined in signoz/docker-compose.yaml

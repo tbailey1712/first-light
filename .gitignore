@@ -1,0 +1,22 @@
+# Environment and secrets
+.env
+
+# Local development override (Mac)
+docker-compose.override.yml
+
+# Docker volumes and data
+*.log
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary test scripts
+test-*.sh

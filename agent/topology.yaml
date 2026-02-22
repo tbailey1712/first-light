@@ -1,0 +1,220 @@
+# First Light Network Topology
+# Auto-discovered: 2026-02-16
+
+network:
+  vlans:
+    - id: 1
+      name: "Main Network"
+      purpose: "Personal devices (Trusted)"
+      security_level: "trusted"
+      subnet: "192.168.1.0/24"
+
+    - id: 2
+      name: "IoT"
+      purpose: "IoT devices with internet access"
+      security_level: "restricted"
+      internet_access: true
+
+    - id: 3
+      name: "Cameras"
+      purpose: "Security cameras"
+      security_level: "isolated"
+      internet_access: false
+      fully_isolated: true
+
+    - id: 4
+      name: "DMZ"
+      purpose: "Ethereum validator"
+      security_level: "dmz"
+
+    - id: 10
+      name: "Guest"
+      purpose: "WiFi guest network"
+      security_level: "guest"
+      internet_only: true
+
+devices:
+  firewall:
+    name: "pfSense Plus"
+    hostname: "firewall.mcducklabs.com"
+    type: "firewall"
+    vendor: "Netgate"
+    capabilities:
+      - "syslog"
+      - "packet_filtering"
+      - "nat"
+    data_sources:
+      syslog:
+        port: 5514
+        setup: "Status → System Logs → Settings → Remote Logging → docker.mcducklabs.com:5514 UDP"
+
+  dns:
+    name: "AdGuard Home"
+    hostname: "adguard.mcducklabs.com"
+    port: 443
+    protocol: "https"
+    type: "dns_filter"
+    capabilities:
+      - "dns_filtering"
+      - "query_logging"
+      - "statistics_api"
+    data_sources:
+      api:
+        endpoint: "https://adguard.mcducklabs.com/control"
+
+  network_monitor:
+    name: "ntopng"
+    hostname: "ntopng.mcducklabs.com"
+    port: 443
+    protocol: "https"
+    type: "flow_analyzer"
+    vendor: "ntop"
+    version: "6.7.260217"
+    edition: "Community"
+    arch: "aarch64"
+    capabilities:
+      - "real_time_traffic"
+      - "protocol_analysis"
+      - "top_talkers"
+      - "interface_stats"
+      - "alerts"
+      - "prometheus_metrics"
+    limitations:
+      - "No historical flow export (Enterprise only)"
+      - "No nProbe integration (Enterprise only)"
+      - "No flow collection from external probes"
+    data_sources:
+      api:
+        endpoint: "https://ntopng.mcducklabs.com"
+        auth: "basic"
+      prometheus:
+        endpoint: "https://ntopng.mcducklabs.com/lua/metrics.lua"
+        notes: "Enable in ntopng Preferences > Prometheus"
+
+  switch:
+    name: "TP-Link TL-SG2424"
+    hostname: "switch.mcducklabs.com"
+    type: "managed_switch"
+    vendor: "TP-Link"
+    model: "TL-SG2424"
+    ports: 24
+    capabilities:
+      - "snmp"
+      - "vlan"
+      - "port_stats"
+    data_sources:
+      snmp:
+        version: "2c"
+        community: "public"
+
+  wireless:
+    name: "UniFi Controller"
+    hostname: "unifi.mcducklabs.com"
+    port: 8443
+    type: "wireless_controller"
+    vendor: "Ubiquiti"
+    capabilities:
+      - "ap_management"
+      - "client_tracking"
+      - "syslog"
+    data_sources:
+      api:
+        endpoint: "https://unifi.mcducklabs.com:8443/api"
+
+  validator:
+    name: "Ethereum Validator"
+    hostname: "vldtr.mcducklabs.com"
+    vlan: 4
+    type: "blockchain_validator"
+    consensus_client:
+      name: "Nimbus"
+      version: "unknown"
+      metrics_port: 8008
+      api_port: 5052
+    execution_client:
+      name: "Nethermind"
+      version: "1.36.0"
+      metrics_port: 6060
+      jsonrpc_port: 8545
+    fee_recipient: "0xf22f398823BAC04290033a88C0d9439929b1085B"
+    data_sources:
+      prometheus:
+        - "http://vldtr.mcducklabs.com:8008/metrics"
+        - "http://vldtr.mcducklabs.com:6060/metrics"
+      beacon_api:
+        endpoint: "http://vldtr.mcducklabs.com:5052"
+
+  uptime_monitor:
+    name: "Uptime Kuma"
+    hostname: "uptime.mcducklabs.com"
+    port: 443
+    protocol: "https"
+    type: "uptime_monitor"
+    capabilities:
+      - "service_monitoring"
+      - "api"
+    data_sources:
+      api:
+        endpoint: "https://uptime.mcducklabs.com"
+
+  hypervisor:
+    name: "Proxmox VE"
+    hostname: "pve.mcducklabs.com"
+    port: 8006
+    type: "hypervisor"
+    vendor: "Proxmox"
+    capabilities:
+      - "vm_management"
+      - "metrics_api"
+      - "resource_monitoring"
+    data_sources:
+      api:
+        endpoint: "https://pve.mcducklabs.com:8006/api2/json"
+
+  storage:
+    name: "QNAP NAS"
+    hostname: "nas.mcducklabs.com"
+    ip: "192.168.2.106"
+    vlan: 2
+    type: "nas"
+    vendor: "QNAP"
+    capabilities:
+      - "snmp_v3"
+      - "storage_monitoring"
+      - "syslog"
+    data_sources:
+      snmp:
+        version: "3"
+        username: "snmp"
+        security_level: "noAuthNoPriv"
+        notes: "Requires pfSense rule: docker host → 192.168.2.106 UDP 161"
+      syslog:
+        port: 5516
+        setup: "Control Panel → System → Syslog Server → docker.mcducklabs.com:5516 UDP"
+
+monitoring_focus:
+  security:
+    - "Cross-VLAN traffic (especially to/from isolated VLANs 3 and 4)"
+    - "pfSense firewall blocks and intrusion attempts"
+    - "AdGuard DNS blocks (malware, phishing domains)"
+    - "CrowdSec security alerts"
+    - "Unknown devices on network"
+
+  infrastructure:
+    - "Disk space on all hosts"
+    - "CPU and memory utilization"
+    - "Network interface saturation"
+    - "Service availability (Uptime Kuma)"
+
+  validator:
+    - "Attestation effectiveness"
+    - "Missed attestations/proposals"
+    - "Peer count (both consensus and execution)"
+    - "Sync status"
+    - "Balance changes"
+
+  network:
+    - "Top talkers per VLAN"
+    - "Bandwidth utilization"
+    - "Switch port errors"
+    - "WiFi client count and performance"

@@ -1,0 +1,7 @@
+# First Light — CrowdSec Log Acquisition (Production)
+# Watch syslog files from ALL network hosts
+
+filenames:
+  - /var/log/remote/*/syslog.log
+labels:
+  type: syslog

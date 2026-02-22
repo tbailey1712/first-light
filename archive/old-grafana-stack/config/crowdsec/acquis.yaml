@@ -1,0 +1,15 @@
+# First Light — CrowdSec Log Acquisition
+# Watches pfSense syslog logs ingested by Loki
+
+---
+source: loki
+url: http://loki:3100
+query: '{source="pfsense"}'
+labels:
+  type: syslog
+---
+source: loki
+url: http://loki:3100
+query: '{source="nas"}'
+labels:
+  type: syslog

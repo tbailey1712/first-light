@@ -1,0 +1,40 @@
+# First Light Dependencies
+
+# Core AI and Agent Framework
+langgraph>=0.2.0
+langchain-anthropic>=0.3.0
+langchain-core>=0.3.0
+
+# HTTP and Networking
+httpx>=0.27.0
+
+# Configuration and Environment
+pydantic>=2.0
+pydantic-settings>=2.0
+python-dotenv>=1.0
+
+# Logging
+structlog>=24.0
+
+# Caching and State
+redis>=5.0
+
+# Scheduling
+apscheduler>=3.10
+
+# Telegram Bot
+python-telegram-bot>=21.0
+
+# Network Discovery
+pysnmp>=6.0
+
+# Utilities
+pyyaml>=6.0
+jinja2>=3.1
+tenacity>=8.0
+
+# Development
+pytest>=8.0
+pytest-asyncio>=0.23
+black>=24.0
+ruff>=0.1

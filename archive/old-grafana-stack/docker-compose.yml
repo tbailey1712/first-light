@@ -1,0 +1,145 @@
+# First Light — Docker Compose
+# Local test deployment. For production, change image tags and resource limits.
+
+services:
+
+  # ── Time-series metrics storage ──────────────────────────
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.99.0
+    container_name: fl-victoriametrics
+    restart: unless-stopped
+    ports:
+      - "8428:8428"
+    volumes:
+      - vm_data:/storage
+    command:
+      - "-storageDataPath=/storage"
+      - "-retentionPeriod=90d"
+      - "-httpListenAddr=0.0.0.0:8428"
+    mem_limit: 1g
+    networks:
+      - firstlight
+
+  # ── Log aggregation ───────────────────────────────────────
+  loki:
+    image: grafana/loki:3.4.2
+    container_name: fl-loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki_data:/loki
+      - ./config/loki:/etc/loki
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    mem_limit: 512m
+    networks:
+      - firstlight
+
+  # ── Telemetry collector ───────────────────────────────────
+  alloy:
+    image: grafana/alloy:v1.6.1
+    container_name: fl-alloy
+    restart: unless-stopped
+    ports:
+      - "5514:5514/udp"   # pfSense syslog
+      - "5516:5516/udp"   # NAS syslog
+      - "12345:12345"     # Alloy UI / metrics
+    volumes:
+      - ./config/alloy:/etc/alloy
+    command:
+      - "run"
+      - "--server.http.listen-addr=0.0.0.0:12345"
+      - "--stability.level=generally-available"
+      - "/etc/alloy/config.alloy"
+    depends_on:
+      - victoriametrics
+      - loki
+    mem_limit: 512m
+    networks:
+      - firstlight
+
+  # ── Dashboards ────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: fl-grafana
+    restart: unless-stopped
+    ports:
+      - "3030:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-firstlight}
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_SERVER_ROOT_URL=http://localhost:3030
+    depends_on:
+      - victoriametrics
+      - loki
+    mem_limit: 512m
+    networks:
+      - firstlight
+
+  # ── Security intelligence ─────────────────────────────────
+  crowdsec:
+    image: crowdsec/crowdsec:v1.6.3
+    container_name: fl-crowdsec
+    restart: unless-stopped
+    environment:
+      - COLLECTIONS=crowdsecurity/pfsense crowdsecurity/linux
+      - ENROLL_KEY=${CROWDSEC_ENROLLMENT_KEY:-}
+    volumes:
+      - crowdsec_data:/var/lib/crowdsec/data
+      - crowdsec_config:/etc/crowdsec
+      - ./config/crowdsec:/etc/crowdsec/acquis.d
+      - loki_data:/var/log/loki:ro
+    mem_limit: 256m
+    networks:
+      - firstlight
+
+  # ── AdGuard Home exporter ────────────────────────────────
+  # Polls AdGuard API and exposes Prometheus metrics on :9617
+  adguard-exporter:
+    image: ebrianne/adguard-exporter:latest
+    container_name: fl-adguard-exporter
+    restart: unless-stopped
+    environment:
+      - adguard_protocol=${ADGUARD_PROTOCOL:-https}
+      - adguard_hostname=${ADGUARD_HOST}
+      - adguard_port=${ADGUARD_PORT:-443}
+      - adguard_username=${ADGUARD_USERNAME}
+      - adguard_password=${ADGUARD_PASSWORD}
+      - interval=30s
+      - log_limit=10000
+    ports:
+      - "9617:9617"
+    mem_limit: 64m
+    networks:
+      - firstlight
+
+  # ── Agent state cache ─────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: fl-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    mem_limit: 128m
+    networks:
+      - firstlight
+
+volumes:
+  vm_data:
+  loki_data:
+  grafana_data:
+  crowdsec_data:
+  crowdsec_config:
+  redis_data:
+
+networks:
+  firstlight:
+    driver: bridge
