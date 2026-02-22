@@ -37,6 +37,7 @@ x-clickhouse-defaults: &clickhouse-defaults
       hard: 262144
   environment:
     - CLICKHOUSE_SKIP_USER_SETUP=1
+    - TZ=America/Chicago
 x-zookeeper-defaults: &zookeeper-defaults
   !!merge <<: *common
   image: signoz/zookeeper:3.7.1
@@ -132,6 +133,7 @@ services:
       - TELEMETRY_ENABLED=true
       - DEPLOYMENT_TYPE=docker-standalone-amd
       - DOT_METRICS_ENABLED=true
+      - TZ=America/Chicago
     healthcheck:
       test:
         - CMD
@@ -156,6 +158,7 @@ services:
     environment:
       - OTEL_RESOURCE_ATTRIBUTES=host.name=signoz-host,os.type=linux
       - LOW_CARDINAL_EXCEPTION_GROUPING=false
+      - TZ=America/Chicago
     ports:
       # - "1777:1777"     # pprof extension
       - "4317:4317" # OTLP gRPC receiver
