@@ -11,9 +11,7 @@ services:
   #   1. SigNoz OTel collector (TCP 5140)
   #   2. /var/log/remote/{host}/syslog.log files for CrowdSec
   rsyslog:
-    build:
-      context: ./rsyslog
-      dockerfile: Dockerfile
+    image: rsyslog/syslog_appliance_alpine:latest
     container_name: fl-rsyslog
     restart: unless-stopped
     ports:
