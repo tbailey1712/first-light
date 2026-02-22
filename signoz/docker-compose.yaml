@@ -116,7 +116,7 @@ services:
     command:
       - --config=/root/config/prometheus.yml
     ports:
-      - "8080:8080" # signoz port
+      - "8081:8080" # signoz port (changed from 8080 - port conflict)
     #   - "6060:6060"     # pprof port
     volumes:
       - ./common/signoz/prometheus.yml:/root/config/prometheus.yml

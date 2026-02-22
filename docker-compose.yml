@@ -6,10 +6,6 @@ include:
   - signoz/docker-compose.yaml
 
 services:
-  # ── SigNoz Frontend — Port override (8080 was in use) ────────
-  signoz:
-    ports:
-      - "8081:8080"
   # ── rsyslog — Fan-out router ─────────────────────────────────
   # Receives syslog on UDP/TCP 514, routes to:
   #   1. SigNoz OTel collector (TCP 5140)
