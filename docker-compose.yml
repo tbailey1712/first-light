@@ -38,7 +38,7 @@ services:
     volumes:
       - crowdsec_data:/var/lib/crowdsec/data
       - crowdsec_config:/etc/crowdsec
-      - ./crowdsec/acquis.yml:/etc/crowdsec/acquis.d/acquis.yml:ro
+      - ./crowdsec/acquis.yml:/etc/crowdsec/acquis.d/first-light.yml:ro
       - syslog_files:/var/log/remote:ro
     networks:
       - signoz-net
