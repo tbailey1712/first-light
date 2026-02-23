@@ -77,9 +77,9 @@ processors:
     logs:
       log_record:
         # Drop verbose debug logs (keep warnings and above)
-        - severity_number < SEVERITY_NUMBER_INFO and resource["device.type"] != "firewall"
+        - severity_number < SEVERITY_NUMBER_INFO and resource.attributes["device.type"] != "firewall"
         # Drop repetitive DHCP requests (keep security-relevant logs)
-        - IsMatch(body, "DHCPACK|DHCPREQUEST") and resource["service.name"] == "dhcpd"
+        - IsMatch(body, "DHCPACK|DHCPREQUEST") and resource.attributes["service.name"] == "dhcpd"
         # Drop routine health checks and keepalives
         - IsMatch(body, "health check|keepalive|heartbeat") and severity_number < SEVERITY_NUMBER_WARN
   # Add device context and environment tags
@@ -89,19 +89,19 @@ processors:
       - context: log
         statements:
           # Tag device type based on hostname patterns
-          - set(resource["device.type"], "firewall") where IsMatch(resource["host.name"], "firewall")
-          - set(resource["device.type"], "hypervisor") where IsMatch(resource["host.name"], "pve")
-          - set(resource["device.type"], "nas") where IsMatch(resource["host.name"], "qnap")
-          - set(resource["device.type"], "switch") where IsMatch(resource["host.name"], "switch")
-          - set(resource["device.type"], "access-point") where IsMatch(resource["host.name"], "ap")
-          - set(resource["device.type"], "server") where resource["device.type"] == nil
+          - set(resource.attributes["device.type"], "firewall") where IsMatch(resource.attributes["host.name"], "firewall")
+          - set(resource.attributes["device.type"], "hypervisor") where IsMatch(resource.attributes["host.name"], "pve")
+          - set(resource.attributes["device.type"], "nas") where IsMatch(resource.attributes["host.name"], "qnap")
+          - set(resource.attributes["device.type"], "switch") where IsMatch(resource.attributes["host.name"], "switch")
+          - set(resource.attributes["device.type"], "access-point") where IsMatch(resource.attributes["host.name"], "ap")
+          - set(resource.attributes["device.type"], "server") where resource.attributes["device.type"] == nil
           # Environment tagging
-          - set(resource["deployment.environment"], "production")
+          - set(resource.attributes["deployment.environment"], "production")
           # Network zone based on hostname or interface
-          - set(attributes["network.zone"], "edge") where resource["device.type"] == "firewall"
-          - set(attributes["network.zone"], "core") where resource["device.type"] == "switch"
-          - set(attributes["network.zone"], "compute") where resource["device.type"] == "hypervisor"
-          - set(attributes["network.zone"], "storage") where resource["device.type"] == "nas"
+          - set(attributes["network.zone"], "edge") where resource.attributes["device.type"] == "firewall"
+          - set(attributes["network.zone"], "core") where resource.attributes["device.type"] == "switch"
+          - set(attributes["network.zone"], "compute") where resource.attributes["device.type"] == "hypervisor"
+          - set(attributes["network.zone"], "storage") where resource.attributes["device.type"] == "nas"
   # Parse pfSense filterlog CSV format into structured attributes
   transform/pfsense:
     error_mode: ignore
@@ -109,18 +109,18 @@ processors:
       - context: log
         statements:
           # Only process filterlog entries
-          - set(attributes["pfsense.raw"], body) where resource["service.name"] == "filterlog"
+          - set(attributes["pfsense.raw"], body) where resource.attributes["service.name"] == "filterlog"
           # Split CSV and extract fields (filterlog format)
           # Field positions: 0=rule,1=subrule,2=anchor,3=tracker,4=interface,5=reason,6=action,7=direction,8=ipver,...,15=proto_num,16=proto_name,17=length,18=src_ip,19=dst_ip
-          - set(attributes["pfsense.interface"], Split(body, ",")[4]) where resource["service.name"] == "filterlog"
-          - set(attributes["pfsense.action"], Split(body, ",")[6]) where resource["service.name"] == "filterlog"
-          - set(attributes["pfsense.direction"], Split(body, ",")[7]) where resource["service.name"] == "filterlog"
-          - set(attributes["pfsense.protocol"], Split(body, ",")[16]) where resource["service.name"] == "filterlog"
-          - set(attributes["pfsense.src_ip"], Split(body, ",")[18]) where resource["service.name"] == "filterlog"
-          - set(attributes["pfsense.dst_ip"], Split(body, ",")[19]) where resource["service.name"] == "filterlog"
+          - set(attributes["pfsense.interface"], Split(body, ",")[4]) where resource.attributes["service.name"] == "filterlog"
+          - set(attributes["pfsense.action"], Split(body, ",")[6]) where resource.attributes["service.name"] == "filterlog"
+          - set(attributes["pfsense.direction"], Split(body, ",")[7]) where resource.attributes["service.name"] == "filterlog"
+          - set(attributes["pfsense.protocol"], Split(body, ",")[16]) where resource.attributes["service.name"] == "filterlog"
+          - set(attributes["pfsense.src_ip"], Split(body, ",")[18]) where resource.attributes["service.name"] == "filterlog"
+          - set(attributes["pfsense.dst_ip"], Split(body, ",")[19]) where resource.attributes["service.name"] == "filterlog"
           # Extract ports for TCP/UDP (field 20 and 21)
-          - set(attributes["pfsense.src_port"], Split(body, ",")[20]) where resource["service.name"] == "filterlog" and (attributes["pfsense.protocol"] == "tcp" or attributes["pfsense.protocol"] == "udp")
-          - set(attributes["pfsense.dst_port"], Split(body, ",")[21]) where resource["service.name"] == "filterlog" and (attributes["pfsense.protocol"] == "tcp" or attributes["pfsense.protocol"] == "udp")
+          - set(attributes["pfsense.src_port"], Split(body, ",")[20]) where resource.attributes["service.name"] == "filterlog" and (attributes["pfsense.protocol"] == "tcp" or attributes["pfsense.protocol"] == "udp")
+          - set(attributes["pfsense.dst_port"], Split(body, ",")[21]) where resource.attributes["service.name"] == "filterlog" and (attributes["pfsense.protocol"] == "tcp" or attributes["pfsense.protocol"] == "udp")
           # Tag VLAN/network zone from interface name
           - set(attributes["network.vlan"], "trusted") where IsMatch(attributes["pfsense.interface"], "mvneta0.2")
           - set(attributes["network.vlan"], "iot") where IsMatch(attributes["pfsense.interface"], "mvneta0.3")
