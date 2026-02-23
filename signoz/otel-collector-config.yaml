@@ -19,22 +19,18 @@ receivers:
     protocol: rfc3164
     location: America/Chicago
     operators:
-      # Extract hostname from syslog message
+      # Extract hostname to resource attribute (Stanza syntax)
       - type: move
         from: attributes.hostname
-        to: resource["host.name"]
-      # Extract appname/program as service name
+        to: resource.host.name
+      # Extract appname/program to service.name
       - type: move
         from: attributes.appname
-        to: resource["service.name"]
-      # Keep severity as attribute for filtering
+        to: resource.service.name
+      # Keep facility and priority in attributes
       - type: move
-        from: attributes.severity
-        to: attributes["log.severity"]
-      # Keep facility as attribute
-      - type: move
-        from: attributes.facility
-        to: attributes["log.facility"]
+        from: attributes.message
+        to: body
   prometheus:
     config:
       global:
