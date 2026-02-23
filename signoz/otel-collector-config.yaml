@@ -63,14 +63,14 @@ processors:
     detectors: [env, system]
     timeout: 2s
   # Extract syslog attributes to resource attributes for fast filters
-  resource/syslog:
-    attributes:
-      - key: host.name
-        from_attribute: hostname
-        action: upsert
-      - key: service.name
-        from_attribute: appname
-        action: upsert
+  transform/syslog:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          # Copy hostname and appname from attributes to resource
+          - set(resource.attributes["host.name"], attributes["hostname"]) where attributes["hostname"] != nil
+          - set(resource.attributes["service.name"], attributes["appname"]) where attributes["appname"] != nil
   # Filter out noisy/repetitive logs to reduce storage
   filter/noise_reduction:
     error_mode: ignore
@@ -193,7 +193,7 @@ service:
       exporters: [signozclickhousemetrics, signozmeter]
     logs:
       receivers: [otlp, syslog]
-      processors: [resource/syslog, filter/noise_reduction, transform/device_context, transform/pfsense, batch]
+      processors: [transform/syslog, filter/noise_reduction, transform/device_context, transform/pfsense, batch]
       exporters: [clickhouselogsexporter, signozmeter]
     metrics/meter:
       receivers: [signozmeter]
