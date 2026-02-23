@@ -27,6 +27,22 @@ services:
     depends_on:
       - otel-collector
 
+  # ── SNMP Exporter — Network device metrics ───────────────────
+  # Polls switches, APs, etc. via SNMP for interface stats, bandwidth, errors
+  # Exposes Prometheus metrics for OTel collector to scrape
+  snmp-exporter:
+    image: prom/snmp-exporter:v0.26.0
+    container_name: fl-snmp-exporter
+    restart: unless-stopped
+    environment:
+      - TZ=America/Chicago
+    volumes:
+      - ./snmp-exporter/snmp.yml:/etc/snmp_exporter/snmp.yml:ro
+    ports:
+      - "9116:9116"
+    networks:
+      - signoz-net
+
   # ── CrowdSec — Threat detection ──────────────────────────────
   # Tails log files written by rsyslog, runs community parsers/scenarios
   # Detection-only for MVP (no bouncers yet)
