@@ -17,7 +17,24 @@ receivers:
     tcp:
       listen_address: "0.0.0.0:5140"
     protocol: rfc3164
-    location: UTC
+    location: America/Chicago
+    operators:
+      # Extract hostname from syslog message
+      - type: move
+        from: attributes.hostname
+        to: resource["host.name"]
+      # Extract appname/program as service name
+      - type: move
+        from: attributes.appname
+        to: resource["service.name"]
+      # Keep severity as attribute for filtering
+      - type: move
+        from: attributes.severity
+        to: attributes["log.severity"]
+      # Keep facility as attribute
+      - type: move
+        from: attributes.facility
+        to: attributes["log.facility"]
   prometheus:
     config:
       global:
