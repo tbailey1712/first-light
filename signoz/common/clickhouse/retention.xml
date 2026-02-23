@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<clickhouse>
+    <!-- TTL (Time To Live) settings for SigNoz data -->
+    <!-- These settings optimize storage by automatically removing old data -->
+
+    <merge_tree>
+        <!-- Default TTL for logs: 90 days -->
+        <!-- Can be overridden per table if needed -->
+        <ttl_only_drop_parts>1</ttl_only_drop_parts>
+
+        <!-- Merge settings to handle TTL efficiently -->
+        <max_bytes_to_merge_at_max_space_in_pool>161061273600</max_bytes_to_merge_at_max_space_in_pool>
+    </merge_tree>
+
+    <!-- Compression settings to reduce storage footprint -->
+    <compression>
+        <case>
+            <!-- Compress logs more aggressively -->
+            <min_part_size>10485760</min_part_size>
+            <min_part_size_ratio>0.01</min_part_size_ratio>
+            <method>zstd</method>
+            <level>3</level>
+        </case>
+    </compression>
+</clickhouse>
