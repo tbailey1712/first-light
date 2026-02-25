@@ -86,10 +86,19 @@ processors:
         - IsMatch(body, "DHCPACK|DHCPREQUEST") and resource.attributes["service.name"] == "dhcpd"
         # Drop routine health checks and keepalives
         - IsMatch(body, "health check|keepalive|heartbeat") and severity_number < SEVERITY_NUMBER_WARN
-        # Drop ntopng IoT false positives (normal for home networks)
-        - resource.attributes["service.name"] == "ntopng" and IsMatch(body, "HTTP Susp. User-Agent.*Empty or missing User-Agent")
-        - resource.attributes["service.name"] == "ntopng" and IsMatch(body, "Susp. Device Protocol")
-        - resource.attributes["service.name"] == "ntopng" and IsMatch(body, "Dropped Alerts.*is dropping alerts")
+        # AGGRESSIVE: Drop most ntopng logs (keep only WARN and above)
+        - resource.attributes["host.name"] == "ntopng" and severity_number < SEVERITY_NUMBER_WARN
+        # Drop specific ntopng noise patterns
+        - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "HTTP Susp. User-Agent")
+        - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "Susp. Device Protocol")
+        - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "Dropped Alerts")
+        - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "TLS Certificate Mismatch")
+        - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "DNS Data Exfiltration")
+        - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "Unresponsive Server")
+        - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "Suspicious File Transfer")
+        - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "Too Many Flows")
+        - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "IoT")
+        - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "Empty or missing")
   # Add device context and environment tags
   transform/device_context:
     error_mode: ignore
