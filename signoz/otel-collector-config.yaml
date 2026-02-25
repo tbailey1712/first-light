@@ -68,7 +68,11 @@ processors:
     log_statements:
       - context: log
         statements:
-          # Copy hostname and appname from attributes to resource
+          # Map known IPs to proper hostnames
+          - set(attributes["hostname"], "ntopng") where attributes["hostname"] == "192.168.1.5"
+          # Filter out dates being parsed as hostnames (YYYY-MM-DD pattern)
+          - set(attributes["hostname"], nil) where IsMatch(attributes["hostname"], "^\\d{4}-\\d{2}-\\d{2}$")
+          # Copy hostname and appname from attributes to resource (only if valid)
           - set(resource.attributes["host.name"], attributes["hostname"]) where attributes["hostname"] != nil
           - set(resource.attributes["service.name"], attributes["appname"]) where attributes["appname"] != nil
   # Filter out noisy/repetitive logs to reduce storage
@@ -82,6 +86,10 @@ processors:
         - IsMatch(body, "DHCPACK|DHCPREQUEST") and resource.attributes["service.name"] == "dhcpd"
         # Drop routine health checks and keepalives
         - IsMatch(body, "health check|keepalive|heartbeat") and severity_number < SEVERITY_NUMBER_WARN
+        # Drop ntopng IoT false positives (normal for home networks)
+        - resource.attributes["service.name"] == "ntopng" and IsMatch(body, "HTTP Susp. User-Agent.*Empty or missing User-Agent")
+        - resource.attributes["service.name"] == "ntopng" and IsMatch(body, "Susp. Device Protocol")
+        - resource.attributes["service.name"] == "ntopng" and IsMatch(body, "Dropped Alerts.*is dropping alerts")
   # Add device context and environment tags
   transform/device_context:
     error_mode: ignore
