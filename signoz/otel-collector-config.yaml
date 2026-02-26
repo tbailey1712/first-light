@@ -115,6 +115,7 @@ processors:
           - set(resource.attributes["device.type"], "nas") where IsMatch(resource.attributes["host.name"], "(?i)qnap|nas")
           - set(resource.attributes["device.type"], "switch") where IsMatch(resource.attributes["host.name"], "switch")
           - set(resource.attributes["device.type"], "access-point") where IsMatch(resource.attributes["host.name"], "(?i)unifi|ap")
+          - set(resource.attributes["device.type"], "home-automation") where IsMatch(resource.attributes["host.name"], "(?i)^ha$|home.?assistant")
           - set(resource.attributes["device.type"], "server") where resource.attributes["device.type"] == nil
           # Environment tagging
           - set(resource.attributes["deployment.environment"], "production")
@@ -123,6 +124,7 @@ processors:
           - set(attributes["network.zone"], "core") where resource.attributes["device.type"] == "switch"
           - set(attributes["network.zone"], "compute") where resource.attributes["device.type"] == "hypervisor"
           - set(attributes["network.zone"], "storage") where resource.attributes["device.type"] == "nas"
+          - set(attributes["network.zone"], "automation") where resource.attributes["device.type"] == "home-automation"
   # Parse pfSense filterlog CSV format into structured attributes
   transform/pfsense:
     error_mode: ignore

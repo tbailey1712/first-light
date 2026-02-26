@@ -13,16 +13,19 @@ These devices are successfully sending logs to rsyslog → SigNoz:
 - **docker** (`host.name = 'docker'`) - Docker host, observability stack
 - **firewall.mcducklabs.com** (`host.name = 'firewall.mcducklabs.com'`) - pfSense firewall
 - **pve** (`host.name = 'pve'`) - Proxmox hypervisor
+- **nas** (`host.name = 'nas'`) - QNAP NAS ✅ **ENABLED**
+- **ha** (`host.name = 'ha'`) - Home Assistant ✅ **ENABLED**
+- **switch.mcducklabs.com** (`host.name = 'switch.mcducklabs.com'`) - Network switch (after transform fix)
 - **UnifiSecondFloorBack** (`host.name = 'UnifiSecondFloorBack'`) - UniFi AP
 - **UnifiFirstFloorFront** (`host.name = 'UnifiFirstFloorFront'`) - UniFi AP (assumed)
 - **ntopng** (`host.name = 'ntopng'`) - Network monitoring
 
 ---
 
-## ❌ Missing: QNAP NAS
+## ~~❌ Missing: QNAP NAS~~ ✅ RESOLVED
 
-**Host:** nas.mcducklabs.com (QNAP NAS)
-**Status:** Not sending syslog to rsyslog container
+**Host:** nas (QNAP NAS)
+**Status:** ✅ **Now sending logs successfully**
 **Impact:** No visibility into:
 - Disk health/SMART data
 - File access logs

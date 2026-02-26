@@ -150,6 +150,11 @@ def main():
             "description": "All logs from Proxmox hypervisor"
         },
         {
+            "name": "Per-Device: Home Assistant",
+            "filter": "host.name = 'ha'",
+            "description": "All logs from Home Assistant"
+        },
+        {
             "name": "All Warnings and Errors",
             "filter": "severity_text IN ('WARN', 'ERROR', 'CRITICAL', 'FATAL')",
             "description": "All elevated severity logs"
