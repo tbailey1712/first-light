@@ -91,4 +91,7 @@ volumes:
   crowdsec_config:
     name: fl-crowdsec-config
 
-# Note: signoz-net network is defined in signoz/docker-compose.yaml
+networks:
+  signoz-net:
+    external: true
+    name: signoz-net
