@@ -62,6 +62,27 @@ services:
     networks:
       - signoz-net
 
+  # ── Webhook Relay — SigNoz to Telegram ───────────────────────
+  # Receives Alertmanager-format webhooks from SigNoz
+  # Translates and forwards alerts to Telegram bot
+  webhook-relay:
+    build: ./webhook-relay
+    container_name: fl-webhook-relay
+    restart: unless-stopped
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - TZ=America/Chicago
+    ports:
+      - "5000:5000"
+    networks:
+      - signoz-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 volumes:
   syslog_files:
     name: fl-syslog-files
