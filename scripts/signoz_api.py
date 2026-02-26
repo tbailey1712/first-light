@@ -146,7 +146,7 @@ def main():
         },
         {
             "name": "Per-Device: Proxmox",
-            "filter": "host.name = 'pve.mcducklabs.com'",
+            "filter": "host.name = 'pve'",
             "description": "All logs from Proxmox hypervisor"
         },
         {
