@@ -71,9 +71,9 @@ processors:
           # Map known IPs in hostname field to proper names
           - set(attributes["hostname"], "ntopng") where attributes["hostname"] == "192.168.1.5"
           - set(attributes["hostname"], "switch.mcducklabs.com") where attributes["hostname"] == "192.168.1.2"
-          # Map date hostnames by checking body for IP (for devices with bad syslog format)
-          - set(attributes["hostname"], "switch.mcducklabs.com") where IsMatch(attributes["hostname"], "^\\d{4}-\\d{2}-\\d{2}$") and IsMatch(body, "192\\.168\\.1\\.2")
-          - set(attributes["hostname"], "ntopng") where IsMatch(attributes["hostname"], "^\\d{4}-\\d{2}-\\d{2}$") and IsMatch(body, "192\\.168\\.1\\.5")
+          # Map date hostnames by checking message for IP (for devices with bad syslog format)
+          - set(attributes["hostname"], "switch.mcducklabs.com") where IsMatch(attributes["hostname"], "^\\d{4}-\\d{2}-\\d{2}$") and IsMatch(attributes["message"], "192.168.1.2")
+          - set(attributes["hostname"], "ntopng") where IsMatch(attributes["hostname"], "^\\d{4}-\\d{2}-\\d{2}$") and IsMatch(attributes["message"], "192.168.1.5")
           # Filter out any remaining date hostnames (set to nil so they don't pollute)
           - set(attributes["hostname"], nil) where IsMatch(attributes["hostname"], "^\\d{4}-\\d{2}-\\d{2}$")
           # Copy hostname and appname from attributes to resource (only if valid)
