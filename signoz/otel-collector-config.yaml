@@ -108,7 +108,7 @@ processors:
           # Tag device type based on hostname patterns
           - set(resource.attributes["device.type"], "firewall") where IsMatch(resource.attributes["host.name"], "firewall")
           - set(resource.attributes["device.type"], "hypervisor") where IsMatch(resource.attributes["host.name"], "pve")
-          - set(resource.attributes["device.type"], "nas") where IsMatch(resource.attributes["host.name"], "qnap")
+          - set(resource.attributes["device.type"], "nas") where IsMatch(resource.attributes["host.name"], "(?i)qnap|nas")
           - set(resource.attributes["device.type"], "switch") where IsMatch(resource.attributes["host.name"], "switch")
           - set(resource.attributes["device.type"], "access-point") where IsMatch(resource.attributes["host.name"], "(?i)unifi|ap")
           - set(resource.attributes["device.type"], "server") where resource.attributes["device.type"] == nil

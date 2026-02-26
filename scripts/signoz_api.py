@@ -141,7 +141,7 @@ def main():
         },
         {
             "name": "Per-Device: QNAP NAS",
-            "filter": "host.name = 'nas.mcducklabs.com'",
+            "filter": "host.name = 'nas'",
             "description": "All logs from QNAP NAS"
         },
         {
