@@ -38,7 +38,7 @@ receivers:
               - 192.168.1.2   # 24-Port Gigabit Smart Switch
               - 192.168.1.1   # pfSense Firewall
               - 192.168.2.9   # QNAP TS-X65U NAS
-              # - 192.168.1.89  # Proxmox (troubleshooting - snmpd not accessible)
+              - 192.168.1.89  # Proxmox VE Hypervisor
           metrics_path: /snmp
           params:
             module: [if_mib]  # Use if_mib module for interface stats
