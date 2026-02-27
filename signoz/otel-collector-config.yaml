@@ -93,13 +93,12 @@ processors:
         # AGGRESSIVE: Drop most ntopng logs (keep only WARN and above)
         - resource.attributes["host.name"] == "ntopng" and severity_number < SEVERITY_NUMBER_WARN
         # Drop specific ntopng noise patterns
+        # CRITICAL SECURITY ALERTS RESTORED: DNS Data Exfiltration, Suspicious File Transfer
         - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "HTTP Susp. User-Agent")
         - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "Susp. Device Protocol")
         - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "Dropped Alerts")
         - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "TLS Certificate Mismatch")
-        - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "DNS Data Exfiltration")
         - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "Unresponsive Server")
-        - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "Suspicious File Transfer")
         - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "Too Many Flows")
         - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "IoT")
         - resource.attributes["host.name"] == "ntopng" and IsMatch(body, "Empty or missing")
