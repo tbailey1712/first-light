@@ -1,5 +1,5 @@
 # SNMP Exporter Configuration for First Light
-# Format: v0.23.0+ (auth split from modules)
+# Format: v0.23.0+ (numeric OIDs required)
 
 auths:
   public_v2:
@@ -10,6 +10,6 @@ modules:
   # Standard interface statistics (works with most network devices)
   if_mib:
     walk:
-      - sysUpTime
-      - ifTable
-      - ifXTable
+      - 1.3.6.1.2.1.1.3      # sysUpTime
+      - 1.3.6.1.2.1.2        # ifTable (interface table)
+      - 1.3.6.1.2.1.31       # ifXTable (64-bit counters)
