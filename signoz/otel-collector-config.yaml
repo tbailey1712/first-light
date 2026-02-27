@@ -37,9 +37,8 @@ receivers:
             - targets:
               - 192.168.1.2   # 24-Port Gigabit Smart Switch
               - 192.168.1.1   # pfSense Firewall
-              # Future: Enable SNMP on these devices
-              # - 192.168.2.9   # QNAP NAS (SNMP not enabled)
-              # - 192.168.1.89  # Proxmox (SNMP not enabled)
+              - 192.168.2.9   # QNAP TS-X65U NAS
+              # - 192.168.1.89  # Proxmox (troubleshooting - snmpd not accessible)
           metrics_path: /snmp
           params:
             module: [if_mib]  # Use if_mib module for interface stats
