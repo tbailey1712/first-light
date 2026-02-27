@@ -1,29 +1,15 @@
-# SNMP Exporter Configuration for First Light (v0.26.0+ format)
-# Collects metrics from network devices (switches, APs, routers, firewalls)
+# SNMP Exporter Configuration for First Light
+# Format: v0.23.0+ (auth split from modules)
 
-# Authentication configuration
 auths:
   public_v2:
     community: public
-    security_level: noAuthNoPriv
-    auth_protocol: MD5
-    priv_protocol: DES
     version: 2
 
-# Modules define what OIDs to walk
 modules:
-  # Standard interface MIB - works with most managed switches, routers, APs, firewalls
+  # Standard interface statistics (works with most network devices)
   if_mib:
     walk:
-      - 1.3.6.1.2.1.2       # IF-MIB::interfaces (interface table)
-      - 1.3.6.1.2.1.31      # IF-MIB::ifXTable (64-bit counters for high-speed interfaces)
-      - 1.3.6.1.2.1.1       # SNMPv2-MIB::system (sysDescr, sysUpTime, etc.)
-    auth:
-      community: public
-
-  # Minimal system info only (for testing)
-  system:
-    walk:
-      - 1.3.6.1.2.1.1       # SNMPv2-MIB::system
-    auth:
-      community: public
+      - sysUpTime
+      - ifTable
+      - ifXTable
