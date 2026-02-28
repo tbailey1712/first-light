@@ -59,9 +59,10 @@ scrape_configs:
           device_type: "hypervisor"
           target_ip: "192.168.1.89"
 
-# Send metrics to SigNoz OTel Collector via Prometheus remote write
+# Send metrics to SigNoz OTel Collector via Prometheus Remote Write 2.0
 remote_write:
   - url: http://signoz-otel-collector:9090/api/v1/write
+    protobuf_message: io.prometheus.write.v2.Request
     queue_config:
       max_shards: 10
       max_samples_per_send: 500

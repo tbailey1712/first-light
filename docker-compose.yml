@@ -45,13 +45,16 @@ services:
 
   # ── Prometheus (SNMP) — Standalone scraper ───────────────────
   # Scrapes SNMP exporter and remote-writes to SigNoz
-  # Bypasses broken prometheus receiver in signoz-otel-collector
+  # Uses Prometheus 3.8+ for Remote Write 2.0 compatibility with OTel v0.142.0
   prometheus-snmp:
-    image: prom/prometheus:v2.51.0
+    image: prom/prometheus:v3.8.0
     container_name: fl-prometheus-snmp
     restart: unless-stopped
     environment:
       - TZ=America/Chicago
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --enable-feature=metadata-wal-records
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     networks:
