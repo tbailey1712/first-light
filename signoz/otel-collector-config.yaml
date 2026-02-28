@@ -29,62 +29,8 @@ receivers:
               - localhost:8888
             labels:
               job_name: otel-collector
-        # SNMP metrics from network devices (separate jobs to avoid relabel_configs bugs)
-        - job_name: snmp-switch
-          scrape_interval: 60s
-          scrape_timeout: 30s
-          static_configs:
-            - targets: [fl-snmp-exporter:9116]
-              labels:
-                device: "switch.mcducklabs.com"
-                device_type: "switch"
-                target_ip: "192.168.1.2"
-          metrics_path: /snmp
-          params:
-            target: ["192.168.1.2"]
-            module: [if_mib]
-
-        - job_name: snmp-pfsense
-          scrape_interval: 60s
-          scrape_timeout: 30s
-          static_configs:
-            - targets: [fl-snmp-exporter:9116]
-              labels:
-                device: "pfsense.mcducklabs.com"
-                device_type: "firewall"
-                target_ip: "192.168.1.1"
-          metrics_path: /snmp
-          params:
-            target: ["192.168.1.1"]
-            module: [if_mib]
-
-        - job_name: snmp-qnap
-          scrape_interval: 60s
-          scrape_timeout: 30s
-          static_configs:
-            - targets: [fl-snmp-exporter:9116]
-              labels:
-                device: "nas.mcducklabs.com"
-                device_type: "nas"
-                target_ip: "192.168.2.9"
-          metrics_path: /snmp
-          params:
-            target: ["192.168.2.9"]
-            module: [if_mib]
-
-        - job_name: snmp-proxmox
-          scrape_interval: 60s
-          scrape_timeout: 30s
-          static_configs:
-            - targets: [fl-snmp-exporter:9116]
-              labels:
-                device: "pve.mcducklabs.com"
-                device_type: "hypervisor"
-                target_ip: "192.168.1.89"
-          metrics_path: /snmp
-          params:
-            target: ["192.168.1.89"]
-            module: [if_mib]
+        # SNMP metrics now handled by standalone Prometheus (fl-prometheus-snmp)
+        # which remote-writes to SigNoz OTel collector at :4318/v1/metrics
 processors:
   batch:
     send_batch_size: 10000

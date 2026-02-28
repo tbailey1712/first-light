@@ -43,6 +43,20 @@ services:
     networks:
       - signoz-net
 
+  # ── Prometheus (SNMP) — Standalone scraper ───────────────────
+  # Scrapes SNMP exporter and remote-writes to SigNoz
+  # Bypasses broken prometheus receiver in signoz-otel-collector
+  prometheus-snmp:
+    image: prom/prometheus:v2.51.0
+    container_name: fl-prometheus-snmp
+    restart: unless-stopped
+    environment:
+      - TZ=America/Chicago
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - signoz-net
+
   # ── CrowdSec — Threat detection ──────────────────────────────
   # Tails log files written by rsyslog, runs community parsers/scenarios
   # Detection-only for MVP (no bouncers yet)
