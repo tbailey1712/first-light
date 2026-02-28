@@ -20,7 +20,9 @@ receivers:
     location: America/Chicago
   # Prometheus remote write receiver for standalone Prometheus instances
   prometheusremotewrite:
-    endpoint: 0.0.0.0:9090
+    protocols:
+      http:
+        endpoint: 0.0.0.0:9090
   prometheus:
     config:
       global:
