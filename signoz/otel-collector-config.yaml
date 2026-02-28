@@ -18,6 +18,9 @@ receivers:
       listen_address: "0.0.0.0:5140"
     protocol: rfc3164
     location: America/Chicago
+  # Prometheus remote write receiver for standalone Prometheus instances
+  prometheusremotewrite:
+    endpoint: 0.0.0.0:9090
   prometheus:
     config:
       global:
@@ -192,7 +195,7 @@ service:
       processors: [batch]
       exporters: [signozclickhousemetrics, signozmeter]
     metrics/prometheus:
-      receivers: [prometheus]
+      receivers: [prometheus, prometheusremotewrite]
       processors: [batch]
       exporters: [signozclickhousemetrics, signozmeter]
     logs:

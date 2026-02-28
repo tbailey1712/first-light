@@ -61,7 +61,7 @@ scrape_configs:
 
 # Send metrics to SigNoz OTel Collector via Prometheus remote write
 remote_write:
-  - url: http://signoz-otel-collector:4318/v1/metrics
+  - url: http://signoz-otel-collector:9090/api/v1/write
     queue_config:
       max_shards: 10
       max_samples_per_send: 500
