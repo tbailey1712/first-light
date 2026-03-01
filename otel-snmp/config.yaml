@@ -65,6 +65,9 @@ processors:
     timeout: 10s
 
 service:
+  telemetry:
+    logs:
+      level: debug
   pipelines:
     metrics:
       receivers: [prometheus]
