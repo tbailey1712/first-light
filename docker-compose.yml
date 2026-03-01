@@ -43,22 +43,21 @@ services:
     networks:
       - signoz-net
 
-  # ── Prometheus (SNMP) — Standalone scraper ───────────────────
-  # Scrapes SNMP exporter and remote-writes to SigNoz
-  # Uses Prometheus 3.8+ for Remote Write 2.0 compatibility with OTel v0.142.0
-  prometheus-snmp:
-    image: prom/prometheus:v3.8.0
-    container_name: fl-prometheus-snmp
+  # ── OTel Collector (SNMP) — Sidecar for SNMP metrics ─────────
+  # Uses standard contrib build with working prometheus receiver
+  # Scrapes SNMP exporter, exports via OTLP to SigNoz collector
+  otel-snmp:
+    image: otel/opentelemetry-collector-contrib:0.118.0
+    container_name: fl-otel-snmp
     restart: unless-stopped
     environment:
       - TZ=America/Chicago
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --enable-feature=metadata-wal-records
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./otel-snmp/config.yaml:/etc/otelcol-contrib/config.yaml:ro
     networks:
       - signoz-net
+    depends_on:
+      - snmp-exporter
 
   # ── CrowdSec — Threat detection ──────────────────────────────
   # Tails log files written by rsyslog, runs community parsers/scenarios
