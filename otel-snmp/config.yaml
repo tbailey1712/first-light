@@ -2,85 +2,87 @@ receivers:
   prometheus:
     config:
       scrape_configs:
-        - job_name: snmp-switch
+        # SNMP exporter self-metrics
+        - job_name: 'snmp-exporter'
           scrape_interval: 60s
-          scrape_timeout: 30s
-          metrics_path: /snmp
-          params:
-            module: [if_mib]
           static_configs:
-            - targets:
-                - 192.168.1.2
-              labels:
-                device: "switch.mcducklabs.com"
-                device_type: "switch"
-          relabel_configs:
-            - source_labels: [__address__]
-              target_label: __param_target
-            - source_labels: [__param_target]
-              target_label: instance
-            - target_label: __address__
-              replacement: fl-snmp-exporter:9116
+            - targets: ['fl-snmp-exporter:9116']
 
-        - job_name: snmp-pfsense
+        # SNMP switch - use query params in URL
+        - job_name: 'snmp-switch'
           scrape_interval: 60s
           scrape_timeout: 30s
           metrics_path: /snmp
           params:
             module: [if_mib]
+            target: [192.168.1.2]
           static_configs:
             - targets:
-                - 192.168.1.1
-              labels:
-                device: "pfsense.mcducklabs.com"
-                device_type: "firewall"
-          relabel_configs:
-            - source_labels: [__address__]
-              target_label: __param_target
-            - source_labels: [__param_target]
+              - fl-snmp-exporter:9116
+          metric_relabel_configs:
+            - source_labels: []
               target_label: instance
-            - target_label: __address__
-              replacement: fl-snmp-exporter:9116
+              replacement: '192.168.1.2'
+            - source_labels: []
+              target_label: device
+              replacement: 'switch.mcducklabs.com'
 
-        - job_name: snmp-qnap
+        # SNMP pfSense
+        - job_name: 'snmp-pfsense'
           scrape_interval: 60s
           scrape_timeout: 30s
           metrics_path: /snmp
           params:
             module: [if_mib]
+            target: [192.168.1.1]
           static_configs:
             - targets:
-                - 192.168.2.9
-              labels:
-                device: "nas.mcducklabs.com"
-                device_type: "nas"
-          relabel_configs:
-            - source_labels: [__address__]
-              target_label: __param_target
-            - source_labels: [__param_target]
+              - fl-snmp-exporter:9116
+          metric_relabel_configs:
+            - source_labels: []
               target_label: instance
-            - target_label: __address__
-              replacement: fl-snmp-exporter:9116
+              replacement: '192.168.1.1'
+            - source_labels: []
+              target_label: device
+              replacement: 'pfsense.mcducklabs.com'
 
-        - job_name: snmp-proxmox
+        # SNMP QNAP
+        - job_name: 'snmp-qnap'
           scrape_interval: 60s
           scrape_timeout: 30s
           metrics_path: /snmp
           params:
             module: [if_mib]
+            target: [192.168.2.9]
           static_configs:
             - targets:
-                - 192.168.1.89
-              labels:
-                device: "pve.mcducklabs.com"
-                device_type: "hypervisor"
-          relabel_configs:
-            - source_labels: [__address__]
-              target_label: __param_target
-            - source_labels: [__param_target]
+              - fl-snmp-exporter:9116
+          metric_relabel_configs:
+            - source_labels: []
               target_label: instance
-            - target_label: __address__
-              replacement: fl-snmp-exporter:9116
+              replacement: '192.168.2.9'
+            - source_labels: []
+              target_label: device
+              replacement: 'nas.mcducklabs.com'
+
+        # SNMP Proxmox
+        - job_name: 'snmp-proxmox'
+          scrape_interval: 60s
+          scrape_timeout: 30s
+          metrics_path: /snmp
+          params:
+            module: [if_mib]
+            target: [192.168.1.89]
+          static_configs:
+            - targets:
+              - fl-snmp-exporter:9116
+          metric_relabel_configs:
+            - source_labels: []
+              target_label: instance
+              replacement: '192.168.1.89'
+            - source_labels: []
+              target_label: device
+              replacement: 'pve.mcducklabs.com'
 
 exporters:
   otlp:
@@ -95,7 +97,7 @@ processors:
 service:
   telemetry:
     logs:
-      level: debug
+      level: info
   pipelines:
     metrics:
       receivers: [prometheus]

@@ -90,7 +90,7 @@ services:
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       - TZ=America/Chicago
     ports:
-      - "5000:5000"
+      - "5001:5000"
     networks:
       - signoz-net
     healthcheck:
@@ -106,8 +106,3 @@ volumes:
     name: fl-crowdsec-data
   crowdsec_config:
     name: fl-crowdsec-config
-
-networks:
-  signoz-net:
-    external: true
-    name: signoz-net
