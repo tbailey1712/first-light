@@ -8,7 +8,7 @@ receivers:
           static_configs:
             - targets: ['fl-snmp-exporter:9116']
 
-        # SNMP switch - use query params in URL
+        # SNMP switch
         - job_name: 'snmp-switch'
           scrape_interval: 60s
           scrape_timeout: 30s

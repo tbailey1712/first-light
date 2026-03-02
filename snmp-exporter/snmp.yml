@@ -8,6 +8,12 @@ auths:
     auth_protocol: MD5
     priv_protocol: DES
     version: 2
+  public:  # Alias for OTel compatibility (OTel hardcodes auth=public)
+    community: public
+    security_level: noAuthNoPriv
+    auth_protocol: MD5
+    priv_protocol: DES
+    version: 2
 
 modules:
   if_mib:
