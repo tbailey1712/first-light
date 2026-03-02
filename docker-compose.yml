@@ -27,37 +27,47 @@ services:
     depends_on:
       - otel-collector
 
-  # ── SNMP Exporter — Network device metrics ───────────────────
-  # Polls switches, APs, etc. via SNMP for interface stats, bandwidth, errors
-  # Exposes Prometheus metrics for OTel collector to scrape
-  snmp-exporter:
-    image: prom/snmp-exporter:v0.26.0
-    container_name: fl-snmp-exporter
+  # ── Telegraf — SNMP metrics collection ───────────────────────
+  # Native SNMP polling, sends metrics directly to SigNoz via OTLP
+  # Replaces snmp-exporter + otel-snmp (which had prometheus receiver bugs)
+  telegraf-snmp:
+    image: telegraf:1.32-alpine
+    container_name: fl-telegraf-snmp
     restart: unless-stopped
     environment:
       - TZ=America/Chicago
     volumes:
-      - ./snmp-exporter/snmp.yml:/etc/snmp_exporter/snmp.yml:ro
-    ports:
-      - "9116:9116"
+      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
     networks:
       - signoz-net
 
-  # ── OTel Collector (SNMP) — Sidecar for SNMP metrics ─────────
-  # Uses standard contrib build with working prometheus receiver
-  # Scrapes SNMP exporter, exports via OTLP to SigNoz collector
-  otel-snmp:
-    image: otel/opentelemetry-collector-contrib:0.118.0
-    container_name: fl-otel-snmp
-    restart: unless-stopped
-    environment:
-      - TZ=America/Chicago
-    volumes:
-      - ./otel-snmp/config.yaml:/etc/otelcol-contrib/config.yaml:ro
-    networks:
-      - signoz-net
-    depends_on:
-      - snmp-exporter
+  # ── DEPRECATED: SNMP Exporter (replaced by Telegraf) ─────────
+  # snmp-exporter:
+  #   image: prom/snmp-exporter:v0.26.0
+  #   container_name: fl-snmp-exporter
+  #   restart: unless-stopped
+  #   environment:
+  #     - TZ=America/Chicago
+  #   volumes:
+  #     - ./snmp-exporter/snmp.yml:/etc/snmp_exporter/snmp.yml:ro
+  #   ports:
+  #     - "9116:9116"
+  #   networks:
+  #     - signoz-net
+
+  # ── DEPRECATED: OTel SNMP Sidecar (prometheus receiver broken) ─
+  # otel-snmp:
+  #   image: otel/opentelemetry-collector-contrib:0.118.0
+  #   container_name: fl-otel-snmp
+  #   restart: unless-stopped
+  #   environment:
+  #     - TZ=America/Chicago
+  #   volumes:
+  #     - ./otel-snmp/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+  #   networks:
+  #     - signoz-net
+  #   depends_on:
+  #     - snmp-exporter
 
   # ── CrowdSec — Threat detection ──────────────────────────────
   # Tails log files written by rsyslog, runs community parsers/scenarios
@@ -106,3 +116,8 @@ volumes:
     name: fl-crowdsec-data
   crowdsec_config:
     name: fl-crowdsec-config
+
+networks:
+  signoz-net:
+    external: true
+    name: signoz-net
