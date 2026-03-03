@@ -1,0 +1,349 @@
+{
+  "title": "Network Monitoring - SNMP",
+  "description": "Network traffic, errors, and health metrics from Switch, pfSense, QNAP NAS, and Proxmox",
+  "tags": ["network", "snmp", "infrastructure"],
+  "layout": [
+    {
+      "id": "total-traffic",
+      "title": "Total Network Traffic",
+      "description": "Combined inbound and outbound traffic across all devices",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "promQL": "",
+        "builder": {
+          "queryData": [
+            {
+              "aggregateOperator": "rate",
+              "dataSource": "metrics",
+              "queryName": "A",
+              "metricName": "interface_in_octets",
+              "groupBy": [],
+              "legend": "Inbound (bytes/sec)",
+              "functions": []
+            },
+            {
+              "aggregateOperator": "rate",
+              "dataSource": "metrics",
+              "queryName": "B",
+              "metricName": "interface_out_octets",
+              "groupBy": [],
+              "legend": "Outbound (bytes/sec)",
+              "functions": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "traffic-by-device",
+      "title": "Traffic by Device",
+      "description": "Network traffic grouped by device",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "promQL": "",
+        "builder": {
+          "queryData": [
+            {
+              "aggregateOperator": "rate",
+              "dataSource": "metrics",
+              "queryName": "A",
+              "metricName": "interface_in_octets",
+              "groupBy": ["device"],
+              "legend": "{{device}} - In",
+              "functions": []
+            },
+            {
+              "aggregateOperator": "rate",
+              "dataSource": "metrics",
+              "queryName": "B",
+              "metricName": "interface_out_octets",
+              "groupBy": ["device"],
+              "legend": "{{device}} - Out",
+              "functions": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "switch-interfaces",
+      "title": "Switch - Top Interfaces by Traffic",
+      "description": "Busiest interfaces on switch.mcducklabs.com",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "promQL": "",
+        "builder": {
+          "queryData": [
+            {
+              "aggregateOperator": "rate",
+              "dataSource": "metrics",
+              "queryName": "A",
+              "metricName": "interface_in_octets",
+              "filters": [
+                {
+                  "key": "device",
+                  "op": "=",
+                  "value": "switch.mcducklabs.com"
+                }
+              ],
+              "groupBy": ["name"],
+              "legend": "{{name}} - In",
+              "functions": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "pfsense-traffic",
+      "title": "pfSense - Interface Traffic",
+      "description": "Firewall interface traffic",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "promQL": "",
+        "builder": {
+          "queryData": [
+            {
+              "aggregateOperator": "rate",
+              "dataSource": "metrics",
+              "queryName": "A",
+              "metricName": "interface_in_octets",
+              "filters": [
+                {
+                  "key": "device",
+                  "op": "=",
+                  "value": "pfsense.mcducklabs.com"
+                }
+              ],
+              "groupBy": ["name"],
+              "legend": "{{name}} - In",
+              "functions": []
+            },
+            {
+              "aggregateOperator": "rate",
+              "dataSource": "metrics",
+              "queryName": "B",
+              "metricName": "interface_out_octets",
+              "filters": [
+                {
+                  "key": "device",
+                  "op": "=",
+                  "value": "pfsense.mcducklabs.com"
+                }
+              ],
+              "groupBy": ["name"],
+              "legend": "{{name}} - Out",
+              "functions": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "nas-traffic",
+      "title": "QNAP NAS - Interface Traffic",
+      "description": "NAS network activity",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "promQL": "",
+        "builder": {
+          "queryData": [
+            {
+              "aggregateOperator": "rate",
+              "dataSource": "metrics",
+              "queryName": "A",
+              "metricName": "interface_in_octets",
+              "filters": [
+                {
+                  "key": "device",
+                  "op": "=",
+                  "value": "nas.mcducklabs.com"
+                }
+              ],
+              "groupBy": ["name"],
+              "legend": "{{name}} - In",
+              "functions": []
+            },
+            {
+              "aggregateOperator": "rate",
+              "dataSource": "metrics",
+              "queryName": "B",
+              "metricName": "interface_out_octets",
+              "filters": [
+                {
+                  "key": "device",
+                  "op": "=",
+                  "value": "nas.mcducklabs.com"
+                }
+              ],
+              "groupBy": ["name"],
+              "legend": "{{name}} - Out",
+              "functions": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "proxmox-traffic",
+      "title": "Proxmox - Interface Traffic",
+      "description": "Hypervisor network activity",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "promQL": "",
+        "builder": {
+          "queryData": [
+            {
+              "aggregateOperator": "rate",
+              "dataSource": "metrics",
+              "queryName": "A",
+              "metricName": "interface_in_octets",
+              "filters": [
+                {
+                  "key": "device",
+                  "op": "=",
+                  "value": "pve.mcducklabs.com"
+                }
+              ],
+              "groupBy": ["name"],
+              "legend": "{{name}} - In",
+              "functions": []
+            },
+            {
+              "aggregateOperator": "rate",
+              "dataSource": "metrics",
+              "queryName": "B",
+              "metricName": "interface_out_octets",
+              "filters": [
+                {
+                  "key": "device",
+                  "op": "=",
+                  "value": "pve.mcducklabs.com"
+                }
+              ],
+              "groupBy": ["name"],
+              "legend": "{{name}} - Out",
+              "functions": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "interface-errors",
+      "title": "Interface Errors by Device",
+      "description": "Inbound and outbound errors across all devices",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "promQL": "",
+        "builder": {
+          "queryData": [
+            {
+              "aggregateOperator": "rate",
+              "dataSource": "metrics",
+              "queryName": "A",
+              "metricName": "interface_in_errors",
+              "groupBy": ["device", "name"],
+              "legend": "{{device}}/{{name}} - In Errors",
+              "functions": []
+            },
+            {
+              "aggregateOperator": "rate",
+              "dataSource": "metrics",
+              "queryName": "B",
+              "metricName": "interface_out_errors",
+              "groupBy": ["device", "name"],
+              "legend": "{{device}}/{{name}} - Out Errors",
+              "functions": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "interface-discards",
+      "title": "Interface Discards (Switch Only)",
+      "description": "Packet discards on switch interfaces",
+      "panelTypes": "graph",
+      "query": {
+        "queryType": "builder",
+        "promQL": "",
+        "builder": {
+          "queryData": [
+            {
+              "aggregateOperator": "rate",
+              "dataSource": "metrics",
+              "queryName": "A",
+              "metricName": "interface_in_discards",
+              "groupBy": ["name"],
+              "legend": "{{name}} - In Discards",
+              "functions": []
+            },
+            {
+              "aggregateOperator": "rate",
+              "dataSource": "metrics",
+              "queryName": "B",
+              "metricName": "interface_out_discards",
+              "groupBy": ["name"],
+              "legend": "{{name}} - Out Discards",
+              "functions": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "device-uptime",
+      "title": "Device Uptime",
+      "description": "SNMP uptime for all monitored devices",
+      "panelTypes": "value",
+      "query": {
+        "queryType": "builder",
+        "promQL": "",
+        "builder": {
+          "queryData": [
+            {
+              "aggregateOperator": "latest",
+              "dataSource": "metrics",
+              "queryName": "A",
+              "metricName": "snmp_uptime",
+              "groupBy": ["device"],
+              "legend": "{{device}}",
+              "functions": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "error-rate",
+      "title": "Total Error Rate",
+      "description": "Combined error rate across all interfaces",
+      "panelTypes": "value",
+      "query": {
+        "queryType": "builder",
+        "promQL": "",
+        "builder": {
+          "queryData": [
+            {
+              "aggregateOperator": "rate",
+              "dataSource": "metrics",
+              "queryName": "A",
+              "metricName": "interface_in_errors",
+              "groupBy": [],
+              "legend": "Errors/sec",
+              "functions": []
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
