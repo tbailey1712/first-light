@@ -90,7 +90,28 @@ Since API query isn't working yet, verify attributes by:
 ## Action Items
 
 1. ✅ Verify SigNoz is accessible
-2. ⏭️ Open SigNoz UI and verify attributes exist
-3. ⏭️ Document actual attribute structure from UI
+2. ✅ Verify metric attributes exist (confirmed in ClickHouse)
+3. ✅ Document actual attribute structure (device, device_type, name, instance, etc.)
 4. ⏭️ Proceed to Issue #2 (notification channel)
 5. ⏭️ Proceed to Issue #3 (saved views via UI)
+
+## Verified Metric Attributes (2026-03-02)
+
+From ClickHouse query on `interface_in_octets`:
+- `device` - Device hostname (e.g., "switch.mcducklabs.com", "pfsense.mcducklabs.com")
+- `device_type` - Device category ("switch", "firewall", "nas", "hypervisor")
+- `instance` - Device IP address
+- `name` - Interface name (e.g., "port 1: Gigabit Copper", "mvneta0.3", "bond0")
+- `descr` - Interface description (switch only)
+- `host` - Telegraf hostname ("fl-telegraf-snmp")
+- `source` - Always "telegraf-snmp"
+- `deployment.environment` - Always "production"
+- `agent_host` - Source device IP
+
+**Metrics available:**
+- `interface_in_octets`, `interface_out_octets`
+- `interface_in_errors`, `interface_out_errors`
+- `interface_in_discards`, `interface_out_discards` (switch only)
+- `snmp_uptime`
+
+**Data confirmed:** 3,660 samples/hour per metric, flowing correctly into ClickHouse.
