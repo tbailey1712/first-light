@@ -6,8 +6,8 @@ Configure SigNoz alerting to send notifications to Telegram via webhook-relay.
 ## Status
 - ✅ webhook-relay service exists (`/webhook-relay/app.py`)
 - ✅ Telegram credentials configured in `.env`
-- ⏭️ Service needs to be started and tested
-- ⏭️ SigNoz alert channel needs to be configured
+- ✅ Service running and tested
+- ✅ SigNoz alert channel configured
 
 ## Architecture
 ```
