@@ -128,66 +128,14 @@ processors:
           - set(attributes["network.vlan"], "trusted") where IsMatch(attributes["pfsense.interface"], "mvneta0.2")
           - set(attributes["network.vlan"], "iot") where IsMatch(attributes["pfsense.interface"], "mvneta0.3")
           - set(attributes["network.vlan"], "guest") where IsMatch(attributes["pfsense.interface"], "mvneta0.4")
-  # Parse SSH and sudo logs for security monitoring
-  transform/ssh_sudo:
-    error_mode: ignore
-    log_statements:
-      - context: log
-        statements:
-          # === SSH LOGS ===
-          # Invalid user attempts
-          - set(attributes["ssh.event"], "invalid_user") where IsMatch(body, "sshd.*Invalid user")
-          - replace_pattern(attributes["ssh.user"], body, ".*Invalid user (\\S+) from.*", "$$1") where IsMatch(body, "Invalid user")
-          - replace_pattern(attributes["ssh.source_ip"], body, ".*from ([0-9.]+) port.*", "$$1") where IsMatch(body, "Invalid user")
-          - replace_pattern(attributes["ssh.source_port"], body, ".*port (\\d+).*", "$$1") where IsMatch(body, "Invalid user")
-          - set(attributes["security.event_type"], "auth_failure") where IsMatch(body, "Invalid user")
-          - set(severity_number, SEVERITY_NUMBER_WARN) where IsMatch(body, "Invalid user")
-
-          # Failed password attempts
-          - set(attributes["ssh.event"], "failed_password") where IsMatch(body, "sshd.*Failed password")
-          - replace_pattern(attributes["ssh.user"], body, ".*for (?:invalid user )?(\\S+) from.*", "$$1") where IsMatch(body, "Failed password")
-          - replace_pattern(attributes["ssh.source_ip"], body, ".*from ([0-9.]+) port.*", "$$1") where IsMatch(body, "Failed password")
-          - replace_pattern(attributes["ssh.source_port"], body, ".*port (\\d+).*", "$$1") where IsMatch(body, "Failed password")
-          - set(attributes["security.event_type"], "auth_failure") where IsMatch(body, "Failed password")
-          - set(severity_number, SEVERITY_NUMBER_WARN) where IsMatch(body, "Failed password")
-
-          # Accepted authentication
-          - set(attributes["ssh.event"], "accepted_publickey") where IsMatch(body, "sshd.*Accepted publickey")
-          - set(attributes["ssh.event"], "accepted_password") where IsMatch(body, "sshd.*Accepted password")
-          - replace_pattern(attributes["ssh.user"], body, ".*Accepted (?:publickey|password) for (\\S+) from.*", "$$1") where IsMatch(body, "Accepted")
-          - replace_pattern(attributes["ssh.source_ip"], body, ".*from ([0-9.]+) port.*", "$$1") where IsMatch(body, "Accepted")
-          - set(attributes["ssh.method"], "publickey") where IsMatch(body, "Accepted publickey")
-          - set(attributes["ssh.method"], "password") where IsMatch(body, "Accepted password")
-          - set(attributes["security.event_type"], "auth_success") where IsMatch(body, "Accepted")
-
-          # Connection closed (often after failed attempts)
-          - set(attributes["ssh.event"], "connection_closed") where IsMatch(body, "sshd.*Connection closed")
-          - replace_pattern(attributes["ssh.user"], body, ".*by (?:invalid user )?(\\S+) .*", "$$1") where IsMatch(body, "Connection closed by")
-          - replace_pattern(attributes["ssh.source_ip"], body, ".*\\S+ ([0-9.]+) port.*", "$$1") where IsMatch(body, "Connection closed")
-
-          # PAM authentication failures
-          - set(attributes["ssh.event"], "pam_auth_failure") where IsMatch(body, "pam_unix\\(sshd:auth\\).*authentication failure")
-          - replace_pattern(attributes["ssh.source_ip"], body, ".*rhost=([0-9.]+).*", "$$1") where IsMatch(body, "pam_unix\\(sshd:auth\\)")
-          - set(attributes["security.event_type"], "auth_failure") where IsMatch(body, "pam_unix\\(sshd:auth\\).*failure")
-
-          # === SUDO LOGS ===
-          # Sudo command execution
-          - replace_pattern(attributes["sudo.user"], body, ".*sudo:\\s+(\\S+)\\s+:.*", "$$1") where IsMatch(body, "sudo:.*COMMAND=")
-          - replace_pattern(attributes["sudo.command"], body, ".*COMMAND=(.+)$$", "$$1") where IsMatch(body, "COMMAND=")
-          - replace_pattern(attributes["sudo.pwd"], body, ".*PWD=([^;]+).*", "$$1") where IsMatch(body, "PWD=")
-          - replace_pattern(attributes["sudo.target_user"], body, ".*USER=([^;]+).*", "$$1") where IsMatch(body, "sudo:.*USER=")
-          - set(attributes["security.event_type"], "privilege_escalation") where IsMatch(body, "sudo:.*COMMAND=")
-
-          # Sudo session events
-          - set(attributes["sudo.event"], "session_opened") where IsMatch(body, "pam_unix\\(sudo:session\\):.*session opened")
-          - set(attributes["sudo.event"], "session_closed") where IsMatch(body, "pam_unix\\(sudo:session\\):.*session closed")
-          - replace_pattern(attributes["sudo.target_user"], body, ".*for user (\\S+).*", "$$1") where IsMatch(body, "pam_unix\\(sudo:session\\)")
-          - replace_pattern(attributes["sudo.user"], body, ".*by (\\S+)\\(uid.*", "$$1") where IsMatch(body, "session opened.*by")
-
-          # Sudo authentication failures
-          - set(attributes["sudo.event"], "auth_failure") where IsMatch(body, "sudo.*authentication failure")
-          - set(attributes["security.event_type"], "auth_failure") where IsMatch(body, "sudo.*authentication failure")
-          - set(severity_number, SEVERITY_NUMBER_WARN) where IsMatch(body, "sudo.*authentication failure")
+  # DISABLED: SSH/sudo parser - replace_pattern function doesn't exist in OTTL
+  # TODO: Rewrite using correct OTTL functions (replace_all_patterns or similar)
+  # transform/ssh_sudo:
+  #   error_mode: ignore
+  #   log_statements:
+  #     - context: log
+  #       statements:
+  #         # SSH and sudo parsing temporarily disabled
   signozspanmetrics/delta:
     metrics_exporter: signozclickhousemetrics
     metrics_flush_interval: 60s
