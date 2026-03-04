@@ -256,7 +256,8 @@ service:
       exporters: [signozclickhousemetrics, signozmeter]
     logs:
       receivers: [otlp, syslog]
-      processors: [transform/syslog, filter/noise_reduction, transform/device_context, transform/pfsense, transform/ssh_sudo, batch]
+      processors: [transform/syslog, filter/noise_reduction, transform/device_context, transform/pfsense, batch]
+      # transform/ssh_sudo temporarily disabled - replace_pattern not available in OTTL
       exporters: [clickhouselogsexporter, signozmeter]
     metrics/meter:
       receivers: [signozmeter]
