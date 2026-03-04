@@ -128,6 +128,66 @@ processors:
           - set(attributes["network.vlan"], "trusted") where IsMatch(attributes["pfsense.interface"], "mvneta0.2")
           - set(attributes["network.vlan"], "iot") where IsMatch(attributes["pfsense.interface"], "mvneta0.3")
           - set(attributes["network.vlan"], "guest") where IsMatch(attributes["pfsense.interface"], "mvneta0.4")
+  # Parse SSH and sudo logs for security monitoring
+  transform/ssh_sudo:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          # === SSH LOGS ===
+          # Invalid user attempts
+          - set(attributes["ssh.event"], "invalid_user") where IsMatch(body, "sshd.*Invalid user")
+          - set(attributes["ssh.user"], ExtractPatterns(body, "Invalid user (?P<user>\\S+) from")) where IsMatch(body, "Invalid user")
+          - set(attributes["ssh.source_ip"], ExtractPatterns(body, "from (?P<ip>[0-9.]+) port")) where IsMatch(body, "Invalid user")
+          - set(attributes["ssh.source_port"], ExtractPatterns(body, "port (?P<port>\\d+)")) where IsMatch(body, "Invalid user")
+          - set(attributes["security.event_type"], "auth_failure") where IsMatch(body, "Invalid user")
+          - set(severity_number, SEVERITY_NUMBER_WARN) where IsMatch(body, "Invalid user")
+
+          # Failed password attempts
+          - set(attributes["ssh.event"], "failed_password") where IsMatch(body, "sshd.*Failed password")
+          - set(attributes["ssh.user"], ExtractPatterns(body, "for (?:invalid user )?(?P<user>\\S+) from")) where IsMatch(body, "Failed password")
+          - set(attributes["ssh.source_ip"], ExtractPatterns(body, "from (?P<ip>[0-9.]+) port")) where IsMatch(body, "Failed password")
+          - set(attributes["ssh.source_port"], ExtractPatterns(body, "port (?P<port>\\d+)")) where IsMatch(body, "Failed password")
+          - set(attributes["security.event_type"], "auth_failure") where IsMatch(body, "Failed password")
+          - set(severity_number, SEVERITY_NUMBER_WARN) where IsMatch(body, "Failed password")
+
+          # Accepted authentication
+          - set(attributes["ssh.event"], "accepted_publickey") where IsMatch(body, "sshd.*Accepted publickey")
+          - set(attributes["ssh.event"], "accepted_password") where IsMatch(body, "sshd.*Accepted password")
+          - set(attributes["ssh.user"], ExtractPatterns(body, "Accepted (?:publickey|password) for (?P<user>\\S+) from")) where IsMatch(body, "Accepted")
+          - set(attributes["ssh.source_ip"], ExtractPatterns(body, "from (?P<ip>[0-9.]+) port")) where IsMatch(body, "Accepted")
+          - set(attributes["ssh.method"], "publickey") where IsMatch(body, "Accepted publickey")
+          - set(attributes["ssh.method"], "password") where IsMatch(body, "Accepted password")
+          - set(attributes["security.event_type"], "auth_success") where IsMatch(body, "Accepted")
+
+          # Connection closed (often after failed attempts)
+          - set(attributes["ssh.event"], "connection_closed") where IsMatch(body, "sshd.*Connection closed")
+          - set(attributes["ssh.user"], ExtractPatterns(body, "by (?:invalid user )?(?P<user>\\S+) ")) where IsMatch(body, "Connection closed by")
+          - set(attributes["ssh.source_ip"], ExtractPatterns(body, "\\S+ (?P<ip>[0-9.]+) port")) where IsMatch(body, "Connection closed")
+
+          # PAM authentication failures
+          - set(attributes["ssh.event"], "pam_auth_failure") where IsMatch(body, "pam_unix\\(sshd:auth\\).*authentication failure")
+          - set(attributes["ssh.source_ip"], ExtractPatterns(body, "rhost=(?P<ip>[0-9.]+)")) where IsMatch(body, "pam_unix\\(sshd:auth\\)")
+          - set(attributes["security.event_type"], "auth_failure") where IsMatch(body, "pam_unix\\(sshd:auth\\).*failure")
+
+          # === SUDO LOGS ===
+          # Sudo command execution
+          - set(attributes["sudo.user"], ExtractPatterns(body, "sudo:\\s+(?P<user>\\S+)\\s+:")) where IsMatch(body, "sudo:.*COMMAND=")
+          - set(attributes["sudo.command"], ExtractPatterns(body, "COMMAND=(?P<cmd>.+)$")) where IsMatch(body, "COMMAND=")
+          - set(attributes["sudo.pwd"], ExtractPatterns(body, "PWD=(?P<pwd>[^;]+)")) where IsMatch(body, "PWD=")
+          - set(attributes["sudo.target_user"], ExtractPatterns(body, "USER=(?P<user>[^;]+)")) where IsMatch(body, "sudo:.*USER=")
+          - set(attributes["security.event_type"], "privilege_escalation") where IsMatch(body, "sudo:.*COMMAND=")
+
+          # Sudo session events
+          - set(attributes["sudo.event"], "session_opened") where IsMatch(body, "pam_unix\\(sudo:session\\):.*session opened")
+          - set(attributes["sudo.event"], "session_closed") where IsMatch(body, "pam_unix\\(sudo:session\\):.*session closed")
+          - set(attributes["sudo.target_user"], ExtractPatterns(body, "for user (?P<user>\\S+)")) where IsMatch(body, "pam_unix\\(sudo:session\\)")
+          - set(attributes["sudo.user"], ExtractPatterns(body, "by (?P<user>\\S+)\\(uid")) where IsMatch(body, "session opened.*by")
+
+          # Sudo authentication failures
+          - set(attributes["sudo.event"], "auth_failure") where IsMatch(body, "sudo.*authentication failure")
+          - set(attributes["security.event_type"], "auth_failure") where IsMatch(body, "sudo.*authentication failure")
+          - set(severity_number, SEVERITY_NUMBER_WARN) where IsMatch(body, "sudo.*authentication failure")
   signozspanmetrics/delta:
     metrics_exporter: signozclickhousemetrics
     metrics_flush_interval: 60s
@@ -196,7 +256,7 @@ service:
       exporters: [signozclickhousemetrics, signozmeter]
     logs:
       receivers: [otlp, syslog]
-      processors: [transform/syslog, filter/noise_reduction, transform/device_context, transform/pfsense, batch]
+      processors: [transform/syslog, filter/noise_reduction, transform/device_context, transform/pfsense, transform/ssh_sudo, batch]
       exporters: [clickhouselogsexporter, signozmeter]
     metrics/meter:
       receivers: [signozmeter]
