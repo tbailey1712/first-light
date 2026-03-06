@@ -40,5 +40,6 @@ tenacity>=8.0
 # Development
 pytest>=8.0
 pytest-asyncio>=0.23
+pytest-env>=1.1
 black>=24.0
 ruff>=0.1

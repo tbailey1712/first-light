@@ -11,20 +11,25 @@ import os
 
 
 ModelName = Literal[
-    # Anthropic Claude (recommended)
+    # Anthropic Claude (via LiteLLM router)
     "claude-opus-4-6",
-    "claude-sonnet-4-5-20250929",
-    "claude-haiku-4-5-20251001",
+    "claude-opus-4-5",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-5",
+    "claude-haiku-4-5",
 
-    # OpenAI GPT-4 family
-    "gpt-4o",
-    "gpt-4o-mini",
-    "gpt-4-turbo",
+    # OpenAI GPT family (via LiteLLM router)
+    "gpt-5.2",
+    "gpt-5.2-pro",
+    "gpt-5-mini",
 
-    # OpenAI o1/o3 family (reasoning models)
-    "o1",
-    "o1-mini",
-    "o3-mini",
+    # Google Gemini (via LiteLLM router)
+    "gemini/gemini-3.1-pro-preview",
+    "gemini/gemini-3-pro-preview",
+    "gemini/gemini-3-flash-preview",
+
+    # X.ai Grok (via LiteLLM router)
+    "openrouter/x-ai/grok-4",
 ]
 
 
@@ -48,7 +53,7 @@ class ModelConfig(BaseModel):
 
     # Micro-agents: Individual specialized analysis
     micro_agent_model: ModelName = Field(
-        default=os.getenv("MICRO_AGENT_MODEL", "claude-sonnet-4-5-20250929"),
+        default=os.getenv("MICRO_AGENT_MODEL", "claude-sonnet-4-5"),
         description="Model for micro-agents (individual specialized analysts)"
     )
 

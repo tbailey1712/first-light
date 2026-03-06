@@ -8,8 +8,7 @@ import os
 from typing import Optional, Dict, Any
 from functools import lru_cache
 
-from langfuse import Langfuse
-from langfuse.decorators import observe, langfuse_context
+from langfuse import Langfuse, observe
 
 
 # Initialize Langfuse client
@@ -356,31 +355,19 @@ def trace_agent(
             # Langfuse not configured, return unwrapped function
             return func
 
+        # Use Langfuse observe decorator with metadata
+        trace_metadata = {
+            "agent_type": agent_type,
+            "domain": domain,
+            **(metadata or {})
+        }
+
         @observe(name=agent_type, as_type="generation")
         def wrapper(*args, **kwargs):
-            # Set context metadata
-            langfuse_context.update_current_observation(
-                metadata={
-                    "agent_type": agent_type,
-                    "domain": domain,
-                    **(metadata or {})
-                }
-            )
-
             # Execute agent
             result = func(*args, **kwargs)
-
-            # Log output
-            if hasattr(result, "findings"):
-                langfuse_context.update_current_observation(
-                    output={
-                        "findings_count": len(result.findings),
-                        "status": result.status,
-                        "summary": result.summary
-                    }
-                )
-
             return result
+
         return wrapper
     return decorator
 
