@@ -109,6 +109,33 @@ services:
       timeout: 10s
       retries: 3
 
+  # ── MCP Server — Model Context Protocol (HTTP) ────────────────
+  # Exposes DNS security tools via MCP over HTTP for Claude Desktop
+  # Access at: http://localhost:8080
+  mcp-server:
+    build:
+      context: .
+      dockerfile: mcp_servers/Dockerfile
+    container_name: fl-mcp
+    restart: unless-stopped
+    environment:
+      - SIGNOZ_BASE_URL=${SIGNOZ_BASE_URL}
+      - SIGNOZ_CLICKHOUSE_HOST=${SIGNOZ_CLICKHOUSE_HOST}
+      - SIGNOZ_CLICKHOUSE_USER=${SIGNOZ_CLICKHOUSE_USER}
+      - SIGNOZ_CLICKHOUSE_PASSWORD=${SIGNOZ_CLICKHOUSE_PASSWORD}
+      - TZ=America/Chicago
+    ports:
+      - "8080:8080"
+    networks:
+      - signoz-net
+    depends_on:
+      - clickhouse
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 volumes:
   syslog_files:
     name: fl-syslog-files

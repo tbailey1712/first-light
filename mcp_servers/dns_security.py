@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 """
-DNS Security MCP Server
+DNS Security MCP Server (FastMCP + HTTP)
 
-Exposes First Light DNS security tools via Model Context Protocol (MCP).
-Allows any MCP-compatible client to query DNS metrics, logs, and analytics.
+Exposes First Light DNS security tools via Model Context Protocol over HTTP.
+Runs as a containerized service in docker-compose, accessible on port 8080.
 
 Usage:
     python mcp_servers/dns_security.py
 
+    Or via docker-compose:
+    docker-compose up -d mcp-server
+
+    Then access at: http://localhost:8080
+
 Environment:
-    Requires .env file with SigNoz credentials (same as main agent)
+    Requires SigNoz credentials in .env or environment variables
 """
 
-import asyncio
 import os
 import sys
-from typing import Any
+from typing import Optional
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -23,127 +27,167 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
 
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from fastmcp import FastMCP
 
-from agent.tools import get_all_tools
-
-
-# === MCP Server Setup ===
-
-# Create MCP server instance
-app = Server("dns-security")
-
-# Get all DNS tools from the agent
-dns_tools = get_all_tools()
-
-
-# === Tool Registration ===
-
-@app.list_tools()
-async def list_tools() -> list[Tool]:
-    """
-    List all available DNS security tools.
-
-    Converts LangChain tools to MCP Tool format.
-    """
-    mcp_tools = []
-
-    for langchain_tool in dns_tools:
-        # Extract tool metadata from LangChain tool
-        tool_name = langchain_tool.name
-        description = langchain_tool.description or "No description"
-
-        # Parse args schema from LangChain tool
-        args_schema = {}
-        if hasattr(langchain_tool, 'args_schema') and langchain_tool.args_schema:
-            schema = langchain_tool.args_schema
-            if hasattr(schema, 'model_json_schema'):
-                schema_dict = schema.model_json_schema()
-                args_schema = {
-                    "type": "object",
-                    "properties": schema_dict.get("properties", {}),
-                    "required": schema_dict.get("required", [])
-                }
-
-        # Create MCP Tool
-        mcp_tool = Tool(
-            name=tool_name,
-            description=description,
-            inputSchema=args_schema if args_schema else {"type": "object"}
-        )
-
-        mcp_tools.append(mcp_tool)
-
-    return mcp_tools
+# Import DNS tools
+from agent.tools.logs import (
+    query_security_summary,
+    query_adguard_anomalies,
+    query_wireless_health,
+    query_infrastructure_events,
+    search_logs_by_ip,
+)
+from agent.tools.metrics import (
+    query_adguard_top_clients,
+    query_adguard_block_rates,
+    query_adguard_high_risk_clients,
+    query_adguard_blocked_domains,
+    query_adguard_traffic_by_type,
+)
 
 
-@app.call_tool()
-async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-    """
-    Execute a DNS security tool.
+# Create FastMCP server
+mcp = FastMCP("DNS Security")
+
+
+# === Register Tools ===
+
+@mcp.tool()
+def top_dns_clients(hours: int = 24, limit: int = 20) -> str:
+    """Get top DNS clients by query volume.
 
     Args:
-        name: Tool name
-        arguments: Tool arguments
-
-    Returns:
-        List of TextContent with tool results
+        hours: Lookback period in hours (default: 24)
+        limit: Number of results (default: 20)
     """
-    # Find the matching LangChain tool
-    langchain_tool = None
-    for tool in dns_tools:
-        if tool.name == name:
-            langchain_tool = tool
-            break
+    return query_adguard_top_clients.invoke({"hours": hours, "limit": limit})
 
-    if not langchain_tool:
-        return [TextContent(
-            type="text",
-            text=f"Error: Tool '{name}' not found. Available tools: {[t.name for t in dns_tools]}"
-        )]
 
-    try:
-        # Execute the tool
-        # LangChain tools can be called with invoke() or as a function
-        if hasattr(langchain_tool, 'invoke'):
-            result = langchain_tool.invoke(arguments)
-        else:
-            # Fallback: call as function
-            result = langchain_tool.run(**arguments)
+@mcp.tool()
+def dns_block_rates(hours: int = 24, min_block_rate: float = 0.0, limit: int = 20) -> str:
+    """Get DNS block rates per client.
 
-        # Return result as TextContent
-        return [TextContent(
-            type="text",
-            text=str(result)
-        )]
+    Args:
+        hours: Lookback period in hours (default: 24)
+        min_block_rate: Minimum block rate threshold (default: 0.0)
+        limit: Number of results (default: 20)
+    """
+    return query_adguard_block_rates.invoke({
+        "hours": hours,
+        "min_block_rate": min_block_rate,
+        "limit": limit
+    })
 
-    except Exception as e:
-        # Return error message
-        return [TextContent(
-            type="text",
-            text=f"Error executing tool '{name}': {str(e)}"
-        )]
+
+@mcp.tool()
+def high_risk_clients(hours: int = 24, min_risk_score: float = 5.0, limit: int = 20) -> str:
+    """Get high-risk DNS clients with suspicious activity.
+
+    Args:
+        hours: Lookback period in hours (default: 24)
+        min_risk_score: Minimum risk score threshold (default: 5.0, max: 10.0)
+        limit: Number of results (default: 20)
+    """
+    return query_adguard_high_risk_clients.invoke({
+        "hours": hours,
+        "min_risk_score": min_risk_score,
+        "limit": limit
+    })
+
+
+@mcp.tool()
+def blocked_domains(hours: int = 24, limit: int = 50) -> str:
+    """Get most frequently blocked domains.
+
+    Args:
+        hours: Lookback period in hours (default: 24)
+        limit: Number of results (default: 50)
+    """
+    return query_adguard_blocked_domains.invoke({"hours": hours, "limit": limit})
+
+
+@mcp.tool()
+def dns_traffic_by_type(hours: int = 24) -> str:
+    """Get DNS query volume breakdown by response type.
+
+    Args:
+        hours: Lookback period in hours (default: 24)
+    """
+    return query_adguard_traffic_by_type.invoke({"hours": hours})
+
+
+@mcp.tool()
+def security_summary(hours: int = 1) -> str:
+    """Get security summary showing threats, blocks, and attacks.
+
+    Args:
+        hours: Lookback period in hours (default: 1, max: 24)
+    """
+    return query_security_summary.invoke({"hours": min(hours, 24)})
+
+
+@mcp.tool()
+def dns_anomalies(hours: int = 1, limit: int = 20) -> str:
+    """Get DNS anomalies and unusual patterns.
+
+    Args:
+        hours: Lookback period in hours (default: 1)
+        limit: Number of results (default: 20)
+    """
+    return query_adguard_anomalies.invoke({"hours": hours, "limit": limit})
+
+
+@mcp.tool()
+def wireless_health(hours: int = 1) -> str:
+    """Get wireless network health summary.
+
+    Args:
+        hours: Lookback period in hours (default: 1)
+    """
+    return query_wireless_health.invoke({"hours": hours})
+
+
+@mcp.tool()
+def infrastructure_events(hours: int = 1, limit: int = 50) -> str:
+    """Get infrastructure events and alerts.
+
+    Args:
+        hours: Lookback period in hours (default: 1)
+        limit: Number of results (default: 50)
+    """
+    return query_infrastructure_events.invoke({"hours": hours, "limit": limit})
+
+
+@mcp.tool()
+def search_logs_for_ip(ip_address: str, hours: int = 1, limit: int = 100) -> str:
+    """Search logs for a specific IP address.
+
+    Args:
+        ip_address: IP address to search for
+        hours: Lookback period in hours (default: 1)
+        limit: Maximum number of log entries (default: 100)
+    """
+    return search_logs_by_ip.invoke({
+        "ip_address": ip_address,
+        "hours": hours,
+        "limit": limit
+    })
 
 
 # === Main Entry Point ===
 
-async def main():
-    """Run the MCP server."""
-    async with stdio_server() as (read_stream, write_stream):
-        await app.run(
-            read_stream,
-            write_stream,
-            app.create_initialization_options()
-        )
-
-
 if __name__ == "__main__":
-    print("Starting DNS Security MCP Server...", file=sys.stderr)
-    print(f"Loaded {len(dns_tools)} tools:", file=sys.stderr)
-    for tool in dns_tools:
-        print(f"  - {tool.name}", file=sys.stderr)
+    import uvicorn
+
+    print("Starting DNS Security MCP Server (FastMCP + HTTP)...", file=sys.stderr)
+    print(f"Server will listen on http://0.0.0.0:8080", file=sys.stderr)
+    print(f"Tools registered: {len(mcp.list_tools())}", file=sys.stderr)
     print(file=sys.stderr)
 
-    asyncio.run(main())
+    # Run FastMCP server with uvicorn
+    uvicorn.run(
+        mcp.get_asgi_app(),
+        host="0.0.0.0",
+        port=8080,
+        log_level="info"
+    )

@@ -1,280 +1,321 @@
-# First Light MCP Servers
+# First Light MCP Server
 
-Model Context Protocol (MCP) servers that expose First Light's network observability tools to any MCP-compatible client.
+Model Context Protocol (MCP) server that exposes First Light's DNS security tools over HTTP using [FastMCP](https://github.com/jlowin/fastmcp).
 
 ## What is MCP?
 
-[Model Context Protocol](https://modelcontextprotocol.io) is a standard protocol for connecting AI models to external tools and data sources. MCP servers expose capabilities that can be used by:
+[Model Context Protocol](https://modelcontextprotocol.io) is a standard protocol for connecting AI models to external tools and data sources. This MCP server allows:
 
-- Claude Desktop
-- Other MCP-compatible AI applications
-- Custom MCP clients
-
-## Available Servers
-
-### DNS Security Server (`dns_security.py`)
-
-Exposes DNS security and analytics tools for querying AdGuard metrics and logs.
-
-**Available Tools:**
-
-**Metrics (VictoriaMetrics/PromQL):**
-- `query_adguard_top_clients` - Top DNS clients by query volume
-- `query_adguard_block_rates` - DNS block rates per client
-- `query_adguard_high_risk_clients` - Clients with suspicious activity
-- `query_adguard_blocked_domains` - Most blocked domains
-- `query_adguard_traffic_by_type` - Query volume by response type
-
-**Logs (Loki/LogQL):**
-- `query_security_summary` - Security threats and blocks summary
-- `query_adguard_anomalies` - DNS anomalies and unusual patterns
-- `query_wireless_health` - Wireless network health
-- `query_infrastructure_events` - Infrastructure alerts
-- `search_logs_by_ip` - Search logs for specific IP address
-
-## Installation
-
-1. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Configure environment:**
-
-   Create `.env` file with SigNoz credentials:
-   ```bash
-   SIGNOZ_BASE_URL=https://your-signoz-instance.com
-   SIGNOZ_CLICKHOUSE_HOST=your-clickhouse-host
-   SIGNOZ_CLICKHOUSE_USER=your-username
-   SIGNOZ_CLICKHOUSE_PASSWORD=your-password
-   ```
-
-## Usage
-
-### Running Standalone
-
-```bash
-python mcp_servers/dns_security.py
-```
-
-The server runs in stdio mode and communicates via stdin/stdout following the MCP protocol.
-
-### Integrating with Claude Desktop
-
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
-
-```json
-{
-  "mcpServers": {
-    "first-light-dns": {
-      "command": "python",
-      "args": [
-        "/path/to/first-light/mcp_servers/dns_security.py"
-      ],
-      "env": {
-        "SIGNOZ_BASE_URL": "https://your-signoz-instance.com",
-        "SIGNOZ_CLICKHOUSE_HOST": "your-clickhouse-host",
-        "SIGNOZ_CLICKHOUSE_USER": "your-username",
-        "SIGNOZ_CLICKHOUSE_PASSWORD": "your-password"
-      }
-    }
-  }
-}
-```
-
-Or reference your `.env` file:
-
-```json
-{
-  "mcpServers": {
-    "first-light-dns": {
-      "command": "python",
-      "args": [
-        "/path/to/first-light/mcp_servers/dns_security.py"
-      ],
-      "envFile": "/path/to/first-light/.env"
-    }
-  }
-}
-```
-
-### Using with Other MCP Clients
-
-Any MCP-compatible client can connect to the server. The server follows the standard MCP protocol for:
-
-- `tools/list` - List available tools
-- `tools/call` - Execute a tool with arguments
-
-Example tool call:
-
-```json
-{
-  "method": "tools/call",
-  "params": {
-    "name": "query_adguard_top_clients",
-    "arguments": {
-      "hours": 24,
-      "limit": 10
-    }
-  }
-}
-```
-
-## Tool Examples
-
-### Get Top DNS Clients
-
-```python
-# Via MCP client
-result = await client.call_tool(
-    "query_adguard_top_clients",
-    {"hours": 24, "limit": 20}
-)
-```
-
-Returns formatted table:
-```
-| Client              | IP           | Queries |
-|---------------------|--------------|---------|
-| laptop.local        | 192.168.1.50 | 15,432  |
-| phone.local         | 192.168.1.75 | 8,921   |
-| ...                 | ...          | ...     |
-```
-
-### Check High-Risk Clients
-
-```python
-result = await client.call_tool(
-    "query_adguard_high_risk_clients",
-    {"hours": 24, "min_risk_score": 7.0}
-)
-```
-
-Returns JSON with risk analysis:
-```json
-{
-  "high_risk_clients": [
-    {
-      "client": "unknown-device.local",
-      "ip": "192.168.1.99",
-      "risk_score": 8.5,
-      "reasons": ["High block rate (45%)", "Unusual query patterns", "New device"]
-    }
-  ]
-}
-```
-
-### Search Logs for IP
-
-```python
-result = await client.call_tool(
-    "search_logs_by_ip",
-    {"ip_address": "192.168.1.50", "hours": 1, "limit": 50}
-)
-```
-
-Returns JSON with log entries:
-```json
-{
-  "total_entries": 42,
-  "entries": [
-    {
-      "timestamp": "2026-03-06T20:15:23Z",
-      "service": "adguard",
-      "message": "Query: example.com -> ALLOWED",
-      "details": {...}
-    },
-    ...
-  ]
-}
-```
+- Claude Desktop to query your network's DNS security data
+- Other MCP-compatible AI applications to access DNS analytics
+- Custom clients to integrate with your observability stack
 
 ## Architecture
 
 ```
 ┌─────────────────────┐
-│   MCP Client        │
-│ (Claude Desktop,    │
-│  custom app, etc)   │
+│   Claude Desktop    │
+│   (MCP Client)      │
 └──────────┬──────────┘
-           │ MCP Protocol (stdio)
-           │
+           │ HTTP + SSE
+           │ localhost:8080
 ┌──────────▼──────────┐
-│  dns_security.py    │
-│  (MCP Server)       │
+│  fl-mcp container   │
+│  (FastMCP server)   │
 └──────────┬──────────┘
-           │
-┌──────────▼──────────┐
-│  agent/tools/       │
-│  - metrics.py       │
-│  - logs.py          │
-└──────────┬──────────┘
-           │
+           │ Docker network
 ┌──────────▼──────────┐
 │  SigNoz/ClickHouse  │
 │  (Metrics + Logs)   │
 └─────────────────────┘
 ```
 
+**Key Benefits:**
+- ✅ Runs in docker-compose with rest of stack
+- ✅ Isolated with proper environment variables
+- ✅ HTTP + SSE transport (no stdio complexity)
+- ✅ Auto-discovery in Claude Desktop
+- ✅ Standard FastAPI/OpenAPI docs at http://localhost:8080/docs
+
+## Available Tools
+
+### Metrics Tools (VictoriaMetrics/PromQL)
+- `top_dns_clients` - Top DNS clients by query volume
+- `dns_block_rates` - Block rates per client
+- `high_risk_clients` - Clients with suspicious activity
+- `blocked_domains` - Most frequently blocked domains
+- `dns_traffic_by_type` - Query volume by response type
+
+### Logs Tools (Loki/LogQL)
+- `security_summary` - Security threats and blocks
+- `dns_anomalies` - Unusual DNS patterns
+- `wireless_health` - Wireless network health
+- `infrastructure_events` - Infrastructure alerts
+- `search_logs_for_ip` - IP-specific log search
+
+## Quick Start
+
+### 1. Start the MCP Server
+
+```bash
+docker-compose up -d mcp-server
+```
+
+Check status:
+```bash
+docker-compose ps mcp-server
+docker-compose logs -f mcp-server
+```
+
+Verify it's running:
+```bash
+curl http://localhost:8080/health
+```
+
+### 2. Configure Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "first-light-dns": {
+      "url": "http://localhost:8080/mcp",
+      "transport": "sse"
+    }
+  }
+}
+```
+
+### 3. Restart Claude Desktop
+
+Quit Claude Desktop completely and restart it. The MCP server will be auto-discovered.
+
+### 4. Test It
+
+Ask Claude:
+- "What are the top DNS clients in the last 24 hours?"
+- "Show me high-risk DNS clients"
+- "What domains are being blocked most frequently?"
+- "Search logs for IP 192.168.1.50"
+
+Claude will automatically use the MCP tools to query your network data!
+
+## Usage Examples
+
+### Via Claude Desktop
+
+Just ask natural language questions:
+
+```
+You: "What are the top DNS clients?"
+
+Claude: [calls top_dns_clients tool]
+Here are the top DNS clients by query volume:
+
+| Client              | IP           | Queries |
+|---------------------|--------------|---------|
+| laptop.local        | 192.168.1.50 | 15,432  |
+| phone.local         | 192.168.1.75 | 8,921   |
+...
+```
+
+### Via API (Direct HTTP)
+
+You can also call the tools directly via HTTP:
+
+```bash
+# List available tools
+curl http://localhost:8080/mcp/tools
+
+# Call a tool
+curl -X POST http://localhost:8080/mcp/tools/top_dns_clients \
+  -H "Content-Type: application/json" \
+  -d '{"hours": 24, "limit": 10}'
+```
+
+### Via FastAPI Docs
+
+Open http://localhost:8080/docs in your browser for interactive API documentation.
+
+## Configuration
+
+### Environment Variables
+
+Set in docker-compose.yml (already configured):
+
+```yaml
+environment:
+  - SIGNOZ_BASE_URL=${SIGNOZ_BASE_URL}
+  - SIGNOZ_CLICKHOUSE_HOST=${SIGNOZ_CLICKHOUSE_HOST}
+  - SIGNOZ_CLICKHOUSE_USER=${SIGNOZ_CLICKHOUSE_USER}
+  - SIGNOZ_CLICKHOUSE_PASSWORD=${SIGNOZ_CLICKHOUSE_PASSWORD}
+```
+
+These are loaded from your `.env` file.
+
+### Port Configuration
+
+Default: `8080`
+
+To change:
+1. Edit `docker-compose.yml` - change port mapping
+2. Update Claude Desktop config with new URL
+
 ## Development
+
+### Local Testing (Without Container)
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Run MCP server locally
+python mcp_servers/dns_security.py
+```
+
+Access at http://localhost:8080
 
 ### Adding New Tools
 
-1. Add tool to `agent/tools/metrics.py` or `agent/tools/logs.py`
-2. Register tool in `agent/tools/__init__.py` → `get_all_tools()`
-3. Restart MCP server - new tool automatically exposed
+1. Add tool function to `agent/tools/metrics.py` or `agent/tools/logs.py`
+2. Import it in `mcp_servers/dns_security.py`
+3. Register it with `@mcp.tool()` decorator
+4. Rebuild container: `docker-compose up -d --build mcp-server`
+
+Example:
+
+```python
+@mcp.tool()
+def my_new_tool(param: str, hours: int = 24) -> str:
+    """Description of what this tool does.
+
+    Args:
+        param: Description of parameter
+        hours: Lookback period in hours
+    """
+    # Your implementation
+    return result
+```
 
 ### Testing
 
-Test the MCP server with the MCP Inspector:
-
 ```bash
-npx @modelcontextprotocol/inspector python mcp_servers/dns_security.py
-```
+# Run MCP server tests
+pytest tests/integration/test_mcp_server.py -v
 
-Or use the First Light test suite:
-
-```bash
-pytest tests/integration/test_mcp_server.py
+# Test specific tool
+curl -X POST http://localhost:8080/mcp/tools/top_dns_clients \
+  -H "Content-Type: application/json" \
+  -d '{"hours": 1, "limit": 5}'
 ```
 
 ## Troubleshooting
 
 ### Server won't start
 
-- Check that `.env` file exists and has valid credentials
-- Verify Python dependencies installed: `pip install -r requirements.txt`
-- Check Python path includes project root
+```bash
+# Check container logs
+docker-compose logs mcp-server
+
+# Check if port 8080 is already in use
+lsof -i :8080
+
+# Verify ClickHouse connection
+docker-compose exec mcp-server python -c "
+from agent.config import get_config
+config = get_config()
+print(f'ClickHouse host: {config.signoz_clickhouse_host}')
+"
+```
+
+### Claude Desktop can't connect
+
+1. **Verify server is running:**
+   ```bash
+   curl http://localhost:8080/health
+   ```
+
+2. **Check Claude Desktop config path:**
+   - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - Must be valid JSON
+   - URL must be `http://localhost:8080/mcp`
+   - Transport must be `sse`
+
+3. **Restart Claude Desktop completely:**
+   - Quit (Cmd+Q)
+   - Restart from Applications folder
+   - Check server logs for connection attempts
 
 ### Tools return errors
 
-- Verify SigNoz/ClickHouse connection: `tests/test_connections.py`
-- Check that metrics/logs exist for the requested time range
-- Review server logs (stderr output)
+1. **Verify SigNoz/ClickHouse is running:**
+   ```bash
+   docker-compose ps clickhouse
+   ```
 
-### Claude Desktop can't find tools
+2. **Check credentials:**
+   ```bash
+   docker-compose exec mcp-server env | grep SIGNOZ
+   ```
 
-- Check Claude Desktop config path
-- Verify Python interpreter path in config
-- Check `.env` file path if using `envFile`
-- Restart Claude Desktop after config changes
+3. **Test query directly:**
+   ```bash
+   docker-compose exec mcp-server python -c "
+   from agent.tools.metrics import query_adguard_top_clients
+   print(query_adguard_top_clients.invoke({'hours': 1, 'limit': 5}))
+   "
+   ```
+
+### Port conflicts
+
+If port 8080 is already in use:
+
+1. Edit `docker-compose.yml`:
+   ```yaml
+   ports:
+     - "8081:8080"  # Use 8081 on host
+   ```
+
+2. Update Claude Desktop config:
+   ```json
+   {
+     "mcpServers": {
+       "first-light-dns": {
+         "url": "http://localhost:8081/mcp",
+         "transport": "sse"
+       }
+     }
+   }
+   ```
+
+3. Restart: `docker-compose up -d mcp-server`
 
 ## Security Notes
 
-- MCP servers run with your local credentials
-- Credentials passed via environment variables (never hardcoded)
-- Server only exposes read-only query tools (no write operations)
-- Runs locally - no network exposure unless you explicitly proxy it
+- MCP server runs in isolated container
+- Only accessible on localhost (not exposed to network)
+- Uses read-only database credentials
+- All tools are read-only (no write operations)
+- Same security boundary as SigNoz stack
+
+## Performance
+
+- Tools use efficient PromQL/LogQL queries
+- Default time ranges limited to prevent long queries
+- Results cached by Claude Desktop per conversation
+- Container uses minimal resources (~100MB RAM)
 
 ## Next Steps
 
-- **Try it:** Add to Claude Desktop and ask "What are the top DNS clients?"
-- **Extend it:** Add more tools for different data sources (ntopng, Uptime Kuma, etc.)
-- **Integrate it:** Use the MCP server from custom applications
-- **Monitor it:** Tools support time range filtering for efficient queries
+- **Try it:** Start the server and ask Claude about your DNS data
+- **Extend it:** Add tools for other data sources (ntopng, Uptime Kuma, validator metrics)
+- **Automate it:** Use MCP tools in Claude Projects for automated network analysis
+- **Integrate it:** Build custom MCP clients for dashboards or alerting
 
 ## References
 
+- [FastMCP Documentation](https://github.com/jlowin/fastmcp)
 - [Model Context Protocol Specification](https://spec.modelcontextprotocol.io)
-- [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
 - [Claude Desktop MCP Guide](https://modelcontextprotocol.io/quickstart/user)
+- [First Light Project Documentation](../README.md)
