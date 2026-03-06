@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "first-light-dns": {
-      "url": "http://localhost:8080/mcp",
+      "url": "http://localhost:8082/mcp",
       "transport": "sse"
     }
   }

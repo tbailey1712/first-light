@@ -18,7 +18,7 @@ Model Context Protocol (MCP) server that exposes First Light's DNS security tool
 │   (MCP Client)      │
 └──────────┬──────────┘
            │ HTTP + SSE
-           │ localhost:8080
+           │ localhost:8082
 ┌──────────▼──────────┐
 │  fl-mcp container   │
 │  (FastMCP server)   │
@@ -35,7 +35,7 @@ Model Context Protocol (MCP) server that exposes First Light's DNS security tool
 - ✅ Isolated with proper environment variables
 - ✅ HTTP + SSE transport (no stdio complexity)
 - ✅ Auto-discovery in Claude Desktop
-- ✅ Standard FastAPI/OpenAPI docs at http://localhost:8080/docs
+- ✅ Standard FastAPI/OpenAPI docs at http://localhost:8082/docs
 
 ## Available Tools
 
@@ -69,7 +69,7 @@ docker-compose logs -f mcp-server
 
 Verify it's running:
 ```bash
-curl http://localhost:8080/health
+curl http://localhost:8082/health
 ```
 
 ### 2. Configure Claude Desktop
@@ -80,7 +80,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "first-light-dns": {
-      "url": "http://localhost:8080/mcp",
+      "url": "http://localhost:8082/mcp",
       "transport": "sse"
     }
   }
@@ -126,17 +126,17 @@ You can also call the tools directly via HTTP:
 
 ```bash
 # List available tools
-curl http://localhost:8080/mcp/tools
+curl http://localhost:8082/mcp/tools
 
 # Call a tool
-curl -X POST http://localhost:8080/mcp/tools/top_dns_clients \
+curl -X POST http://localhost:8082/mcp/tools/top_dns_clients \
   -H "Content-Type: application/json" \
   -d '{"hours": 24, "limit": 10}'
 ```
 
 ### Via FastAPI Docs
 
-Open http://localhost:8080/docs in your browser for interactive API documentation.
+Open http://localhost:8082/docs in your browser for interactive API documentation.
 
 ## Configuration
 
@@ -156,7 +156,7 @@ These are loaded from your `.env` file.
 
 ### Port Configuration
 
-Default: `8080`
+Default: `8082`
 
 To change:
 1. Edit `docker-compose.yml` - change port mapping
@@ -174,7 +174,7 @@ pip install -r requirements.txt
 python mcp_servers/dns_security.py
 ```
 
-Access at http://localhost:8080
+Access at http://localhost:8082
 
 ### Adding New Tools
 
@@ -205,7 +205,7 @@ def my_new_tool(param: str, hours: int = 24) -> str:
 pytest tests/integration/test_mcp_server.py -v
 
 # Test specific tool
-curl -X POST http://localhost:8080/mcp/tools/top_dns_clients \
+curl -X POST http://localhost:8082/mcp/tools/top_dns_clients \
   -H "Content-Type: application/json" \
   -d '{"hours": 1, "limit": 5}'
 ```
@@ -218,8 +218,8 @@ curl -X POST http://localhost:8080/mcp/tools/top_dns_clients \
 # Check container logs
 docker-compose logs mcp-server
 
-# Check if port 8080 is already in use
-lsof -i :8080
+# Check if port 8082 is already in use
+lsof -i :8082
 
 # Verify ClickHouse connection
 docker-compose exec mcp-server python -c "
@@ -233,13 +233,13 @@ print(f'ClickHouse host: {config.signoz_clickhouse_host}')
 
 1. **Verify server is running:**
    ```bash
-   curl http://localhost:8080/health
+   curl http://localhost:8082/health
    ```
 
 2. **Check Claude Desktop config path:**
    - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
    - Must be valid JSON
-   - URL must be `http://localhost:8080/mcp`
+   - URL must be `http://localhost:8082/mcp`
    - Transport must be `sse`
 
 3. **Restart Claude Desktop completely:**
@@ -269,12 +269,12 @@ print(f'ClickHouse host: {config.signoz_clickhouse_host}')
 
 ### Port conflicts
 
-If port 8080 is already in use:
+If port 8082 is already in use:
 
 1. Edit `docker-compose.yml`:
    ```yaml
    ports:
-     - "8081:8080"  # Use 8081 on host
+     - "8081:8082"  # Use 8081 on host
    ```
 
 2. Update Claude Desktop config:
