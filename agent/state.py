@@ -59,6 +59,18 @@ class MicroAgentOutput(BaseModel):
         }
 
 
+class MicroAgentInput(BaseModel):
+    """Input specification for launching a micro-agent."""
+
+    agent_id: str
+    agent_type: str
+    domain: Literal["dns_security", "network_security", "infrastructure", "validator", "wireless"]
+    time_range_hours: int
+
+    # Specific parameters per agent type
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+
+
 class SupervisorOutput(BaseModel):
     """Output from a domain supervisor that aggregates micro-agent findings."""
 
@@ -86,6 +98,14 @@ class SupervisorOutput(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
+
+
+class SupervisorInput(BaseModel):
+    """Input specification for launching a domain supervisor."""
+
+    supervisor_id: str
+    domain: Literal["dns_security", "network_security", "infrastructure", "validator", "wireless"]
+    micro_agent_outputs: List[MicroAgentOutput]
 
 
 class AgentState(BaseModel):
@@ -127,23 +147,3 @@ class AgentState(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
-
-
-class MicroAgentInput(BaseModel):
-    """Input specification for launching a micro-agent."""
-
-    agent_id: str
-    agent_type: str
-    domain: Literal["dns_security", "network_security", "infrastructure", "validator", "wireless"]
-    time_range_hours: int
-
-    # Specific parameters per agent type
-    parameters: Dict[str, Any] = Field(default_factory=dict)
-
-
-class SupervisorInput(BaseModel):
-    """Input specification for launching a domain supervisor."""
-
-    supervisor_id: str
-    domain: Literal["dns_security", "network_security", "infrastructure", "validator", "wireless"]
-    micro_agent_outputs: List[MicroAgentOutput]

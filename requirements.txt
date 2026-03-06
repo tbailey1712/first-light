@@ -1,7 +1,7 @@
 # First Light Dependencies
 
 # Core AI and Agent Framework
-langgraph>=0.2.0
+langgraph>=0.2.50  # Requires Send API for parallel execution
 langchain-openai>=0.3.0
 langchain-core>=0.3.0
 

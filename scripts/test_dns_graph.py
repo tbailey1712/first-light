@@ -25,8 +25,9 @@ if __name__ == "__main__":
     print("\n" + "=" * 80)
     print("DOMAIN SUMMARY")
     print("=" * 80)
-    if result.supervisor_outputs:
-        print(result.supervisor_outputs[0].domain_summary)
+    if result.get("supervisor_outputs"):
+        print(result["supervisor_outputs"][0].domain_summary)
     print()
-    print(f"Total findings: {result.total_findings}")
+    print(f"Total findings: {result.get('total_findings', 0)}")
+    print(f"Critical findings: {result.get('critical_count', 0)}")
     print(f"Execution time: {elapsed:.1f}s")
