@@ -40,66 +40,66 @@ class ModelConfig(BaseModel):
     Override via environment variables if you want different models.
     """
 
-    # LiteLLM Router Configuration
+    # LiteLLM Router Configuration - REQUIRED
     litellm_base_url: str = Field(
-        default=os.getenv("LITELLM_BASE_URL", "http://localhost:4000"),
-        description="LiteLLM router base URL"
+        default=...,  # REQUIRED - no default
+        description="LiteLLM router base URL (REQUIRED)"
     )
 
     litellm_api_key: str = Field(
-        default=os.getenv("LITELLM_API_KEY", "sk-1234"),
-        description="LiteLLM API key"
+        default=...,  # REQUIRED - no default
+        description="LiteLLM API key (REQUIRED)"
     )
 
-    # Micro-agents: Individual specialized analysis
+    # Micro-agents: Individual specialized analysis - REQUIRED
     micro_agent_model: ModelName = Field(
-        default=os.getenv("MICRO_AGENT_MODEL", "claude-sonnet-4-5"),
-        description="Model for micro-agents (individual specialized analysts)"
+        default=...,  # REQUIRED - no default
+        description="Model for micro-agents (REQUIRED)"
     )
 
-    # Domain supervisors: Aggregate findings from micro-agents
+    # Domain supervisors: Aggregate findings from micro-agents - REQUIRED
     supervisor_model: ModelName = Field(
-        default=os.getenv("SUPERVISOR_MODEL", "claude-opus-4-6"),
-        description="Model for domain supervisors (aggregate multiple agents)"
+        default=...,  # REQUIRED - no default
+        description="Model for domain supervisors (REQUIRED)"
     )
 
-    # Synthesis: Top-level cross-domain analysis
+    # Synthesis: Top-level cross-domain analysis - REQUIRED
     synthesis_model: ModelName = Field(
-        default=os.getenv("SYNTHESIS_MODEL", "claude-opus-4-6"),
-        description="Model for synthesis agent (final report generation)"
+        default=...,  # REQUIRED - no default
+        description="Model for synthesis agent (REQUIRED)"
     )
 
-    # Temporal aggregation: Weekly/monthly reports
+    # Temporal aggregation: Weekly/monthly reports - REQUIRED
     weekly_model: ModelName = Field(
-        default=os.getenv("WEEKLY_MODEL", "claude-opus-4-6"),
-        description="Model for weekly aggregation"
+        default=...,  # REQUIRED - no default
+        description="Model for weekly aggregation (REQUIRED)"
     )
 
     monthly_model: ModelName = Field(
-        default=os.getenv("MONTHLY_MODEL", "claude-opus-4-6"),
-        description="Model for monthly aggregation"
+        default=...,  # REQUIRED - no default
+        description="Model for monthly aggregation (REQUIRED)"
     )
 
-    # Temperature settings
+    # Temperature settings - REQUIRED
     micro_agent_temperature: float = Field(
-        default=float(os.getenv("MICRO_AGENT_TEMPERATURE", "0.0")),
+        default=...,  # REQUIRED - no default
         ge=0.0,
         le=2.0,
-        description="Temperature for micro-agents (0.0 = deterministic)"
+        description="Temperature for micro-agents (REQUIRED)"
     )
 
     supervisor_temperature: float = Field(
-        default=float(os.getenv("SUPERVISOR_TEMPERATURE", "0.1")),
+        default=...,  # REQUIRED - no default
         ge=0.0,
         le=2.0,
-        description="Temperature for supervisors"
+        description="Temperature for supervisors (REQUIRED)"
     )
 
     synthesis_temperature: float = Field(
-        default=float(os.getenv("SYNTHESIS_TEMPERATURE", "0.2")),
+        default=...,  # REQUIRED - no default
         ge=0.0,
         le=2.0,
-        description="Temperature for synthesis (slightly higher for better writing)"
+        description="Temperature for synthesis (REQUIRED)"
     )
 
 
@@ -108,10 +108,46 @@ _config: ModelConfig | None = None
 
 
 def get_model_config() -> ModelConfig:
-    """Get the model configuration singleton."""
+    """Get the model configuration singleton.
+
+    Raises:
+        ValueError: If required environment variables are not set
+    """
     global _config
     if _config is None:
-        _config = ModelConfig()
+        # Check required environment variables
+        required_vars = {
+            "LITELLM_BASE_URL": os.getenv("LITELLM_BASE_URL"),
+            "LITELLM_API_KEY": os.getenv("LITELLM_API_KEY"),
+            "MICRO_AGENT_MODEL": os.getenv("MICRO_AGENT_MODEL"),
+            "SUPERVISOR_MODEL": os.getenv("SUPERVISOR_MODEL"),
+            "SYNTHESIS_MODEL": os.getenv("SYNTHESIS_MODEL"),
+            "WEEKLY_MODEL": os.getenv("WEEKLY_MODEL"),
+            "MONTHLY_MODEL": os.getenv("MONTHLY_MODEL"),
+            "MICRO_AGENT_TEMPERATURE": os.getenv("MICRO_AGENT_TEMPERATURE"),
+            "SUPERVISOR_TEMPERATURE": os.getenv("SUPERVISOR_TEMPERATURE"),
+            "SYNTHESIS_TEMPERATURE": os.getenv("SYNTHESIS_TEMPERATURE"),
+        }
+
+        missing = [k for k, v in required_vars.items() if not v]
+        if missing:
+            raise ValueError(
+                f"CONFIGURATION ERROR: Missing required environment variables: {', '.join(missing)}\n"
+                f"Set these in your .env file. No defaults provided - configuration must be explicit."
+            )
+
+        _config = ModelConfig(
+            litellm_base_url=required_vars["LITELLM_BASE_URL"],
+            litellm_api_key=required_vars["LITELLM_API_KEY"],
+            micro_agent_model=required_vars["MICRO_AGENT_MODEL"],
+            supervisor_model=required_vars["SUPERVISOR_MODEL"],
+            synthesis_model=required_vars["SYNTHESIS_MODEL"],
+            weekly_model=required_vars["WEEKLY_MODEL"],
+            monthly_model=required_vars["MONTHLY_MODEL"],
+            micro_agent_temperature=float(required_vars["MICRO_AGENT_TEMPERATURE"]),
+            supervisor_temperature=float(required_vars["SUPERVISOR_TEMPERATURE"]),
+            synthesis_temperature=float(required_vars["SYNTHESIS_TEMPERATURE"]),
+        )
     return _config
 
 
