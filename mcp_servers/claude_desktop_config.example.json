@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "first-light-dns": {
+      "command": "python",
+      "args": [
+        "/ABSOLUTE/PATH/TO/first-light/mcp_servers/dns_security.py"
+      ],
+      "env": {
+        "SIGNOZ_BASE_URL": "https://your-signoz-instance.com",
+        "SIGNOZ_CLICKHOUSE_HOST": "your-clickhouse-host",
+        "SIGNOZ_CLICKHOUSE_USER": "your-username",
+        "SIGNOZ_CLICKHOUSE_PASSWORD": "your-password"
+      }
+    }
+  }
+}

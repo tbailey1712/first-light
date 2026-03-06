@@ -1,7 +1,7 @@
 # First Light Dependencies
 
 # Core AI and Agent Framework
-langgraph>=0.2.50  # Requires Send API for parallel execution
+langgraph>=0.2.50  # Used with ThreadPoolExecutor for parallel agent execution
 langchain-openai>=0.3.0
 langchain-core>=0.3.0
 
@@ -31,6 +31,9 @@ python-telegram-bot>=21.0
 
 # Network Discovery
 pysnmp>=6.0
+
+# MCP (Model Context Protocol)
+mcp>=1.0.0
 
 # Utilities
 pyyaml>=6.0
