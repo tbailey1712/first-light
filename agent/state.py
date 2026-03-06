@@ -100,7 +100,10 @@ class AgentState(BaseModel):
     time_range_hours: int = Field(default=24, description="Lookback period for analysis")
     specific_query: Optional[str] = Field(default=None, description="For interactive queries")
 
-    # Micro-agent outputs (fan-out results)
+    # Agent inputs (for fan-out)
+    micro_agent_inputs: List[MicroAgentInput] = Field(default_factory=list, description="Input specs for parallel execution")
+
+    # Micro-agent outputs (fan-in results)
     micro_agent_outputs: Annotated[List[MicroAgentOutput], operator.add] = Field(default_factory=list)
 
     # Supervisor outputs (domain aggregation)
