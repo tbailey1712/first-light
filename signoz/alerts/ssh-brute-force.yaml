@@ -1,0 +1,63 @@
+# SSH Brute Force Detection
+# Triggers on >5 failed SSH attempts from same IP in 5 minutes
+
+alert: SSH Brute Force Attack
+labels:
+  severity: warning
+  category: security
+  attack_type: brute_force
+
+query:
+  queryType: logs
+  dataSource: logs
+  aggregateAttribute: count
+  filters:
+    - key: resources_string['service.name']
+      op: "="
+      value: "sshd"
+    - key: body
+      op: "contains"
+      value: "Failed password"
+  groupBy:
+    - attributes_string['ssh.source_ip']  # Group by source IP
+
+# Condition: More than 5 failed attempts in 5 minutes
+condition: |
+  count() > 5
+
+evalWindow: 5m
+frequency: 1m
+threshold: 5
+
+annotations:
+  summary: "SSH brute force attack from {{ $labels.ssh_source_ip }}"
+  description: |
+    SSH brute force attack detected
+
+    Source IP: {{ $labels.ssh_source_ip }}
+    Failed Attempts: {{ $value }}
+    Target: {{ $labels.host_name }}
+    Time Window: Last 5 minutes
+
+    RECOMMENDED ACTIONS:
+    1. Check if IP is already banned by CrowdSec:
+       `docker exec fl-crowdsec cscli decisions list`
+
+    2. Manual ban if needed:
+       `docker exec fl-crowdsec cscli decisions add --ip {{ $labels.ssh_source_ip }} --duration 4h --reason "SSH brute force"`
+
+    3. Verify pfSense bouncer is blocking:
+       `pfctl -t crowdsec_blacklist -T show | grep {{ $labels.ssh_source_ip }}`
+
+    4. Check for any successful logins from this IP:
+       `grep "Accepted" /var/log/auth.log | grep {{ $labels.ssh_source_ip }}`
+
+    Note: If CrowdSec bouncer is configured, this IP should be auto-banned.
+
+  runbook_url: "https://docs.mcducklabs.com/runbooks/ssh-brute-force"
+
+notification_channels:
+  - type: email
+    severity: warning
+  - type: telegram
+    severity: warning

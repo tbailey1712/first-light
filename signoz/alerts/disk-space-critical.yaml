@@ -1,0 +1,54 @@
+# Critical Disk Space Alert
+# Triggers when any device exceeds 90% disk usage
+
+alert: Critical Disk Space
+labels:
+  severity: critical
+  category: infrastructure
+  resource: disk
+
+# Query disk usage metrics from SNMP or system metrics
+query:
+  queryType: metrics
+  dataSource: metrics
+  aggregateAttribute: max
+  metricName: "disk_used_percent"  # Adjust based on actual metric name
+  groupBy:
+    - host.name
+    - mount_point
+
+# Conditions
+condition: |
+  max(disk_used_percent) > 90
+
+evalWindow: 5m
+frequency: 5m
+threshold: 90
+
+annotations:
+  summary: "CRITICAL: Disk space >90% on {{ $labels.host_name }}"
+  description: |
+    Disk usage critical on {{ $labels.host_name }}
+
+    Mount Point: {{ $labels.mount_point }}
+    Current Usage: {{ $value }}%
+    Threshold: 90%
+
+    ACTIONS REQUIRED:
+    1. Identify large files: `du -sh /* | sort -rh | head -20`
+    2. Clear log files if safe
+    3. Remove old backups/snapshots
+    4. Expand disk if needed
+
+    Common culprits:
+    - Docker logs: /var/lib/docker/containers
+    - SigNoz data: /var/lib/clickhouse
+    - System logs: /var/log
+
+  runbook_url: "https://docs.mcducklabs.com/runbooks/disk-space-critical"
+
+notification_channels:
+  - type: email
+    severity: critical
+  - type: telegram
+    severity: critical

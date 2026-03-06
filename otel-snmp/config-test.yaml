@@ -1,0 +1,17 @@
+receivers:
+  prometheus/simple:
+    config:
+      scrape_configs:
+        - job_name: 'test'
+          static_configs:
+            - targets: ['fl-snmp-exporter:9116']
+
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    metrics:
+      receivers: [prometheus/simple]
+      exporters: [debug]

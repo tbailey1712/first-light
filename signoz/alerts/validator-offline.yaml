@@ -1,0 +1,82 @@
+# ETH Validator Offline Alert
+# Triggers when validator stops sending metrics or misses attestations
+
+alert: ETH Validator Offline
+labels:
+  severity: critical
+  category: validator
+  impact: financial
+
+# Option 1: Check for missing metrics (validator not reporting)
+query_option_1:
+  queryType: metrics
+  dataSource: metrics
+  aggregateAttribute: count
+  metricName: "validator_balance"  # Or any core validator metric
+  filters:
+    - key: service.name
+      op: "="
+      value: "eth-validator"
+
+# Condition: No metrics received in last 10 minutes
+condition_option_1: |
+  count(validator_balance) == 0
+
+# Option 2: Check missed attestations metric (if available)
+query_option_2:
+  queryType: metrics
+  dataSource: metrics
+  aggregateAttribute: rate
+  metricName: "validator_attestations_missed_total"
+
+condition_option_2: |
+  rate(validator_attestations_missed_total[5m]) > 0
+
+evalWindow: 10m
+frequency: 5m
+
+annotations:
+  summary: "CRITICAL: ETH Validator {{ $labels.validator_pubkey }} OFFLINE"
+  description: |
+    ETH Validator is offline or missing attestations
+
+    Validator: {{ $labels.validator_pubkey }}
+    Status: OFFLINE / MISSED ATTESTATION
+    Duration: {{ $labels.for }}
+
+    FINANCIAL IMPACT:
+    - Missed attestations: -0.000015 ETH per missed epoch
+    - Missed proposals: -0.02 ETH per missed proposal
+    - Extended downtime: Potential ejection from validator set
+
+    IMMEDIATE ACTIONS REQUIRED:
+    1. Check validator service status:
+       `ssh vldtr.mcducklabs.com "systemctl status lighthouse-beacon lighthouse-validator"`
+
+    2. Check execution client:
+       `ssh vldtr.mcducklabs.com "systemctl status nethermind"`
+
+    3. Check sync status:
+       `curl http://vldtr.mcducklabs.com:5052/eth/v1/node/syncing`
+
+    4. Check for errors:
+       `ssh vldtr.mcducklabs.com "journalctl -u lighthouse-validator -n 50"`
+
+    5. Verify network connectivity to beacon chain
+
+    6. Check disk space on validator (common issue):
+       `ssh vldtr.mcducklabs.com "df -h"`
+
+    TIME CRITICAL: Resolve within 1 hour to minimize penalties.
+
+  runbook_url: "https://docs.mcducklabs.com/runbooks/validator-offline"
+
+notification_channels:
+  - type: email
+    severity: critical
+    send_immediately: true
+  - type: telegram
+    severity: critical
+    send_immediately: true
+  - type: sms  # Optional if configured
+    severity: critical

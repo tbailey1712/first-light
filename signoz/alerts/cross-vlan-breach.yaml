@@ -1,0 +1,64 @@
+# Cross-VLAN Traffic Alert - CRITICAL
+# Detects ANY traffic from isolated Camera VLAN (3) or Validator DMZ (4)
+
+alert: Cross-VLAN Security Breach
+labels:
+  severity: critical
+  category: security
+  vlan: isolated
+
+# Alert on ANY log from Camera VLAN or Validator DMZ going to other VLANs
+condition: |
+  (
+    attributes_string['pfsense.interface'] = 'mvneta0.3' OR
+    attributes_string['pfsense.interface'] = 'mvneta0.4' OR
+    attributes_string['network.vlan'] = 'camera' OR
+    attributes_string['network.vlan'] = 'validator'
+  ) AND (
+    attributes_string['pfsense.direction'] = 'out'
+  )
+
+query:
+  queryType: logs
+  dataSource: logs
+  aggregateAttribute: count
+  filters:
+    - key: resources_string['service.name']
+      op: "="
+      value: "filterlog"
+    - key: attributes_string['pfsense.interface']
+      op: "in"
+      value: ["mvneta0.3", "mvneta0.4"]
+
+# Alert immediately - this should NEVER happen
+evalWindow: 1m
+frequency: 1m
+threshold: 1  # Alert on even ONE log
+
+annotations:
+  summary: "CRITICAL: Traffic detected from isolated VLAN"
+  description: |
+    Traffic from isolated Camera VLAN (3) or Validator DMZ (4) detected.
+
+    Source Interface: {{ $labels.pfsense_interface }}
+    Source IP: {{ $labels.pfsense_src_ip }}
+    Destination IP: {{ $labels.pfsense_dst_ip }}
+    Protocol: {{ $labels.pfsense_protocol }}
+
+    This is a CRITICAL security event. These VLANs should have NO outbound traffic.
+
+    IMMEDIATE ACTIONS REQUIRED:
+    1. Check pfSense firewall rules
+    2. Investigate source device
+    3. Verify VLAN configuration
+    4. Check for compromised device
+
+  runbook_url: "https://docs.mcducklabs.com/runbooks/cross-vlan-breach"
+
+notification_channels:
+  - type: email
+    severity: critical
+  - type: telegram
+    severity: critical
+  - type: pagerduty  # Optional if configured
+    severity: critical

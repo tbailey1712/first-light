@@ -74,7 +74,12 @@ class FirstLightConfig(BaseSettings):
     validator_pubkeys: Optional[str] = None
 
     # AI Agent
-    anthropic_api_key: str
+    anthropic_api_key: Optional[str] = None
+
+    # LiteLLM Router
+    litellm_base_url: str = "https://model-router.mcducklabs.com"
+    litellm_api_key: Optional[str] = None
+    litellm_model: str = "claude-sonnet-4-5-20250929"
 
     # Telegram Bot
     telegram_bot_token: str

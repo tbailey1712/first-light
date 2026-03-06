@@ -119,5 +119,4 @@ volumes:
 
 networks:
   signoz-net:
-    external: true
     name: signoz-net

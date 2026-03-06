@@ -4,14 +4,36 @@
 
 You are building **NetOps AI**, a unified network observability platform with AI-powered analysis. This project collects logs, metrics, and flow data from a home/prosumer network infrastructure, stores it in a modern observability stack, and uses an AI agent to analyze everything and communicate findings via Telegram.
 
+## Current Status (March 2026)
+
+**Infrastructure:** ✅ Deployed and operational
+- SigNoz (ClickHouse backend) collecting 850k logs/day, 500k metrics/day
+- OTel Collector with comprehensive log parsing (pfSense, UniFi, ntopng, Proxmox, HA, Docker)
+- AdGuard DNS metrics export (hourly)
+- SNMP metrics (switch, NAS, pfSense, Proxmox)
+
+**AI Agent:** 🚧 In development
+- AdGuard metrics tools built
+- Threat assessment plan designed (see `/docs/THREAT_ASSESSMENT_PLAN.md`)
+- Daily/weekly security reports planned
+
+**Next Phase:** Implement automated threat assessment reports
+
 ## Architecture Overview
 
+**Current (Deployed):**
 ```
-Data Sources → Grafana Alloy (collector) → VictoriaMetrics (metrics) + Loki (logs)
-                                         → Grafana (dashboards)
-                                         → CrowdSec (security)
-                                         → LangGraph Agent (AI analysis)
-                                         → Telegram Bot (interaction)
+Data Sources → OTel Collector → SigNoz (ClickHouse + UI)
+                              → Parsed logs with security attributes
+                              → Metrics aggregation
+```
+
+**Target (In Progress):**
+```
+Data Sources → OTel Collector → SigNoz (storage + visualization)
+                              → LangGraph Agent (AI analysis)
+                              → Automated Reports (daily/weekly)
+                              → Telegram Bot (interaction)
 ```
 
 ## Bootstrap Sequence
