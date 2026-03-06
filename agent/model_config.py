@@ -35,6 +35,17 @@ class ModelConfig(BaseModel):
     Override via environment variables if you want different models.
     """
 
+    # LiteLLM Router Configuration
+    litellm_base_url: str = Field(
+        default=os.getenv("LITELLM_BASE_URL", "http://localhost:4000"),
+        description="LiteLLM router base URL"
+    )
+
+    litellm_api_key: str = Field(
+        default=os.getenv("LITELLM_API_KEY", "sk-1234"),
+        description="LiteLLM API key"
+    )
+
     # Micro-agents: Individual specialized analysis
     micro_agent_model: ModelName = Field(
         default=os.getenv("MICRO_AGENT_MODEL", "claude-sonnet-4-5-20250929"),
@@ -136,14 +147,14 @@ def create_llm_for_agent_type(
 
     Args:
         agent_type: Type of agent (micro, supervisor, synthesis, etc.)
-        **kwargs: Additional arguments to pass to ChatAnthropic/ChatOpenAI
+        **kwargs: Additional arguments to pass to ChatOpenAI (via LiteLLM)
 
     Returns:
-        Configured LLM instance
+        Configured LLM instance (via LiteLLM router)
     """
-    from langchain_anthropic import ChatAnthropic
     from langchain_openai import ChatOpenAI
 
+    config = get_model_config()
     model = get_model_for_agent_type(agent_type)
 
     # Determine temperature (use default if not micro/supervisor/synthesis)
@@ -152,21 +163,14 @@ def create_llm_for_agent_type(
     else:
         temperature = kwargs.pop("temperature", 0.1)
 
-    # Use appropriate LLM class based on model
-    if model.startswith("claude"):
-        return ChatAnthropic(
-            model=model,
-            temperature=temperature,
-            **kwargs
-        )
-    elif model.startswith("gpt") or model.startswith("o1") or model.startswith("o3"):
-        return ChatOpenAI(
-            model=model,
-            temperature=temperature,
-            **kwargs
-        )
-    else:
-        raise ValueError(f"Unknown model: {model}")
+    # Use LiteLLM router via OpenAI-compatible interface
+    return ChatOpenAI(
+        model=model,
+        temperature=temperature,
+        base_url=config.litellm_base_url,
+        api_key=config.litellm_api_key,
+        **kwargs
+    )
 
 
 def print_model_config():
