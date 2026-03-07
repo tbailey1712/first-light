@@ -1,5 +1,11 @@
 """
 Tools for querying ntopng REST API for flow data and network statistics.
+
+NOTE: Some endpoints require ntopng Enterprise Edition and may not work
+with Community Edition. Tested working endpoints:
+- query_ntopng_interfaces()
+- query_ntopng_interface_stats()
+- query_ntopng_flow_summary()
 """
 
 import httpx
@@ -46,14 +52,16 @@ def query_ntopng_interfaces() -> str:
 
 @tool
 def query_ntopng_top_talkers(
-    ifid: int = 0,
+    ifid: int = 3,
     limit: int = 20,
     sortby: str = "bytes"
 ) -> str:
     """Get top bandwidth users (top talkers) from ntopng.
 
+    NOTE: This endpoint may not be available in ntopng Community Edition.
+
     Args:
-        ifid: Interface ID (default: 0 for first interface)
+        ifid: Interface ID (default: 3 for eth0)
         limit: Number of results to return (default: 20)
         sortby: Sort field (bytes, packets, flows) (default: bytes)
 
@@ -92,11 +100,11 @@ def query_ntopng_top_talkers(
 
 
 @tool
-def query_ntopng_interface_stats(ifid: int = 0) -> str:
+def query_ntopng_interface_stats(ifid: int = 3) -> str:
     """Get detailed statistics for a specific network interface.
 
     Args:
-        ifid: Interface ID (default: 0 for first interface)
+        ifid: Interface ID (default: 3 for eth0)
 
     Returns:
         JSON with interface stats (bytes, packets, active hosts, flows)
@@ -176,13 +184,13 @@ def query_ntopng_active_alerts(
 @tool
 def query_ntopng_host_details(
     host: str,
-    ifid: int = 0
+    ifid: int = 3
 ) -> str:
     """Get detailed information about a specific host.
 
     Args:
         host: IP address or hostname to query
-        ifid: Interface ID (default: 0)
+        ifid: Interface ID (default: 3 for eth0)
 
     Returns:
         JSON with host details (traffic stats, active flows, alerts)
@@ -219,13 +227,13 @@ def query_ntopng_host_details(
 
 @tool
 def query_ntopng_flow_summary(
-    ifid: int = 0,
+    ifid: int = 3,
     protocol: Optional[str] = None
 ) -> str:
     """Get summary of active network flows.
 
     Args:
-        ifid: Interface ID (default: 0)
+        ifid: Interface ID (default: 3 for eth0)
         protocol: Filter by protocol (TCP, UDP, ICMP) (optional)
 
     Returns:
@@ -261,11 +269,13 @@ def query_ntopng_flow_summary(
 
 
 @tool
-def query_ntopng_l7_protocols(ifid: int = 0) -> str:
+def query_ntopng_l7_protocols(ifid: int = 3) -> str:
     """Get Layer 7 (application) protocol breakdown.
 
+    NOTE: This endpoint may not be available in ntopng Community Edition.
+
     Args:
-        ifid: Interface ID (default: 0)
+        ifid: Interface ID (default: 3 for eth0)
 
     Returns:
         JSON with traffic breakdown by application protocol (HTTP, DNS, TLS, SSH, etc.)
