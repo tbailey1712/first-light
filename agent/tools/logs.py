@@ -4,12 +4,14 @@ Tools for querying and analyzing logs from SigNoz/ClickHouse.
 Returns summaries for LLM analysis + sample log details for investigation.
 """
 
-import subprocess
+import httpx
 import json
 from typing import Literal, Optional, Dict, List
 from datetime import datetime
 
 from langchain_core.tools import tool
+
+from agent.config import get_config
 
 
 @tool
@@ -430,21 +432,29 @@ def search_logs_by_ip(
 
 
 def _execute_clickhouse_query(query: str) -> str:
-    """Execute a ClickHouse query via Docker."""
+    """Execute a ClickHouse query via HTTP."""
+    config = get_config()
+
+    # ClickHouse HTTP interface (port 8123 by default)
+    clickhouse_url = f"http://{config.signoz_clickhouse_host}:8123"
+
     try:
-        result = subprocess.run(
-            ["docker", "exec", "signoz-clickhouse", "clickhouse-client", "-q", query],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(
+                clickhouse_url,
+                params={
+                    "user": config.signoz_clickhouse_user,
+                    "password": config.signoz_clickhouse_password,
+                    "query": query
+                }
+            )
 
-        if result.returncode != 0:
-            raise Exception(f"Query failed: {result.stderr}")
+            if response.status_code != 200:
+                raise Exception(f"HTTP {response.status_code} - {response.text}")
 
-        return result.stdout.strip()
+            return response.text.strip()
 
-    except subprocess.TimeoutExpired:
+    except httpx.TimeoutException:
         raise Exception("Query timed out after 30 seconds")
     except Exception as e:
         raise Exception(f"ClickHouse query error: {str(e)}")

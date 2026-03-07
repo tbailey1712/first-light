@@ -101,6 +101,12 @@ class FirstLightConfig(BaseSettings):
     # CrowdSec
     crowdsec_enrollment_key: Optional[str] = None
 
+    # SigNoz / ClickHouse
+    signoz_base_url: str = "http://signoz-query-service:8080"
+    signoz_clickhouse_host: str = "clickhouse"
+    signoz_clickhouse_user: str = "default"
+    signoz_clickhouse_password: str = ""
+
     # Internal services
     victoria_metrics_port: int = 8428
     loki_port: int = 3100

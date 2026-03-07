@@ -2,7 +2,7 @@
 Tools for querying metrics from SigNoz/ClickHouse.
 """
 
-import subprocess
+import httpx
 from typing import Literal, Optional
 
 from langchain_core.tools import tool
@@ -164,7 +164,7 @@ def query_adguard_traffic_by_type(hours: int = 24) -> str:
 
 
 def _execute_clickhouse_query(query: str) -> str:
-    """Execute a ClickHouse query via Docker and return results.
+    """Execute a ClickHouse query via HTTP and return results.
 
     Args:
         query: SQL query to execute
@@ -172,24 +172,33 @@ def _execute_clickhouse_query(query: str) -> str:
     Returns:
         Query results as formatted string
     """
+    config = get_config()
+
+    # ClickHouse HTTP interface (port 8123 by default)
+    clickhouse_url = f"http://{config.signoz_clickhouse_host}:8123"
+
     try:
-        # Use remote Docker context to execute on docker host
-        result = subprocess.run(
-            ["docker", "exec", "signoz-clickhouse", "clickhouse-client", "-q", query],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(
+                clickhouse_url,
+                params={
+                    "user": config.signoz_clickhouse_user,
+                    "password": config.signoz_clickhouse_password,
+                    "query": query
+                }
+            )
 
-        if result.returncode != 0:
-            return f"Error executing query: {result.stderr}"
+            if response.status_code != 200:
+                return f"Error executing query: HTTP {response.status_code} - {response.text}"
 
-        if not result.stdout.strip():
-            return "No results found"
+            result = response.text.strip()
 
-        return result.stdout.strip()
+            if not result:
+                return "No results found"
 
-    except subprocess.TimeoutExpired:
+            return result
+
+    except httpx.TimeoutException:
         return "Query timed out after 30 seconds"
     except Exception as e:
         return f"Error: {str(e)}"
