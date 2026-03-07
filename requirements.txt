@@ -33,7 +33,9 @@ python-telegram-bot>=21.0
 pysnmp>=6.0
 
 # MCP (Model Context Protocol)
-fastmcp>=0.2.0
+mcp>=1.0.0
+uvicorn>=0.30.0
+starlette>=0.37.0
 
 # Utilities
 pyyaml>=6.0

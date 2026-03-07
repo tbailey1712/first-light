@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DNS Security MCP Server (FastMCP + HTTP)
+DNS Security MCP Server (HTTP/SSE)
 
 Exposes First Light DNS security tools via Model Context Protocol over HTTP.
 Runs as a containerized service in docker-compose, accessible on port 8080.
@@ -8,18 +8,14 @@ Runs as a containerized service in docker-compose, accessible on port 8080.
 Usage:
     python mcp_servers/dns_security.py
 
-    Or via docker-compose:
-    docker-compose up -d mcp-server
-
-    Then access at: http://localhost:8080
-
 Environment:
     Requires SigNoz credentials in .env or environment variables
 """
 
 import os
 import sys
-from typing import Optional
+import asyncio
+from typing import Any
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,7 +23,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastmcp import FastMCP
+from mcp.server import Server
+from mcp.server.sse import SseServerTransport
+from mcp.types import Tool, TextContent
+from starlette.applications import Starlette
+from starlette.routing import Mount
+from starlette.responses import Response
+import uvicorn
 
 # Import DNS tools
 from agent.tools.logs import (
@@ -46,140 +48,209 @@ from agent.tools.metrics import (
 )
 
 
-# Create FastMCP server
-mcp = FastMCP("DNS Security")
+# Create MCP server
+app = Server("dns-security")
 
 
-# === Register Tools ===
+# === Tool Registration ===
 
-@mcp.tool()
-def top_dns_clients(hours: int = 24, limit: int = 20) -> str:
-    """Get top DNS clients by query volume.
-
-    Args:
-        hours: Lookback period in hours (default: 24)
-        limit: Number of results (default: 20)
-    """
-    return query_adguard_top_clients.invoke({"hours": hours, "limit": limit})
-
-
-@mcp.tool()
-def dns_block_rates(hours: int = 24, min_block_rate: float = 0.0, limit: int = 20) -> str:
-    """Get DNS block rates per client.
-
-    Args:
-        hours: Lookback period in hours (default: 24)
-        min_block_rate: Minimum block rate threshold (default: 0.0)
-        limit: Number of results (default: 20)
-    """
-    return query_adguard_block_rates.invoke({
-        "hours": hours,
-        "min_block_rate": min_block_rate,
-        "limit": limit
-    })
-
-
-@mcp.tool()
-def high_risk_clients(hours: int = 24, min_risk_score: float = 5.0, limit: int = 20) -> str:
-    """Get high-risk DNS clients with suspicious activity.
-
-    Args:
-        hours: Lookback period in hours (default: 24)
-        min_risk_score: Minimum risk score threshold (default: 5.0, max: 10.0)
-        limit: Number of results (default: 20)
-    """
-    return query_adguard_high_risk_clients.invoke({
-        "hours": hours,
-        "min_risk_score": min_risk_score,
-        "limit": limit
-    })
-
-
-@mcp.tool()
-def blocked_domains(hours: int = 24, limit: int = 50) -> str:
-    """Get most frequently blocked domains.
-
-    Args:
-        hours: Lookback period in hours (default: 24)
-        limit: Number of results (default: 50)
-    """
-    return query_adguard_blocked_domains.invoke({"hours": hours, "limit": limit})
-
-
-@mcp.tool()
-def dns_traffic_by_type(hours: int = 24) -> str:
-    """Get DNS query volume breakdown by response type.
-
-    Args:
-        hours: Lookback period in hours (default: 24)
-    """
-    return query_adguard_traffic_by_type.invoke({"hours": hours})
-
-
-@mcp.tool()
-def security_summary(hours: int = 1) -> str:
-    """Get security summary showing threats, blocks, and attacks.
-
-    Args:
-        hours: Lookback period in hours (default: 1, max: 24)
-    """
-    return query_security_summary.invoke({"hours": min(hours, 24)})
-
-
-@mcp.tool()
-def dns_anomalies(hours: int = 1, limit: int = 20) -> str:
-    """Get DNS anomalies and unusual patterns.
-
-    Args:
-        hours: Lookback period in hours (default: 1)
-        limit: Number of results (default: 20)
-    """
-    return query_adguard_anomalies.invoke({"hours": hours, "limit": limit})
-
-
-@mcp.tool()
-def wireless_health(hours: int = 1) -> str:
-    """Get wireless network health summary.
-
-    Args:
-        hours: Lookback period in hours (default: 1)
-    """
-    return query_wireless_health.invoke({"hours": hours})
-
-
-@mcp.tool()
-def infrastructure_events(hours: int = 1, limit: int = 50) -> str:
-    """Get infrastructure events and alerts.
-
-    Args:
-        hours: Lookback period in hours (default: 1)
-        limit: Number of results (default: 50)
-    """
-    return query_infrastructure_events.invoke({"hours": hours, "limit": limit})
-
-
-@mcp.tool()
-def search_logs_for_ip(ip_address: str, hours: int = 1, limit: int = 100) -> str:
-    """Search logs for a specific IP address.
-
-    Args:
-        ip_address: IP address to search for
-        hours: Lookback period in hours (default: 1)
-        limit: Maximum number of log entries (default: 100)
-    """
-    return search_logs_by_ip.invoke({
-        "ip_address": ip_address,
-        "hours": hours,
-        "limit": limit
-    })
+@app.list_tools()
+async def list_tools() -> list[Tool]:
+    """List all available DNS security tools."""
+    return [
+        Tool(
+            name="top_dns_clients",
+            description="Get top DNS clients by query volume",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "hours": {"type": "integer", "description": "Lookback period in hours", "default": 24},
+                    "limit": {"type": "integer", "description": "Number of results", "default": 20}
+                }
+            }
+        ),
+        Tool(
+            name="dns_block_rates",
+            description="Get DNS block rates per client",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "hours": {"type": "integer", "description": "Lookback period in hours", "default": 24},
+                    "min_block_rate": {"type": "number", "description": "Minimum block rate threshold", "default": 0.0},
+                    "limit": {"type": "integer", "description": "Number of results", "default": 20}
+                }
+            }
+        ),
+        Tool(
+            name="high_risk_clients",
+            description="Get high-risk DNS clients with suspicious activity",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "hours": {"type": "integer", "description": "Lookback period in hours", "default": 24},
+                    "min_risk_score": {"type": "number", "description": "Minimum risk score threshold", "default": 5.0},
+                    "limit": {"type": "integer", "description": "Number of results", "default": 20}
+                }
+            }
+        ),
+        Tool(
+            name="blocked_domains",
+            description="Get most frequently blocked domains",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "hours": {"type": "integer", "description": "Lookback period in hours", "default": 24},
+                    "limit": {"type": "integer", "description": "Number of results", "default": 50}
+                }
+            }
+        ),
+        Tool(
+            name="dns_traffic_by_type",
+            description="Get DNS query volume breakdown by response type",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "hours": {"type": "integer", "description": "Lookback period in hours", "default": 24}
+                }
+            }
+        ),
+        Tool(
+            name="security_summary",
+            description="Get security summary showing threats, blocks, and attacks",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "hours": {"type": "integer", "description": "Lookback period in hours", "default": 1}
+                }
+            }
+        ),
+        Tool(
+            name="dns_anomalies",
+            description="Get DNS anomalies and unusual patterns",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "hours": {"type": "integer", "description": "Lookback period in hours", "default": 1},
+                    "limit": {"type": "integer", "description": "Number of results", "default": 20}
+                }
+            }
+        ),
+        Tool(
+            name="wireless_health",
+            description="Get wireless network health summary",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "hours": {"type": "integer", "description": "Lookback period in hours", "default": 1}
+                }
+            }
+        ),
+        Tool(
+            name="infrastructure_events",
+            description="Get infrastructure events and alerts",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "hours": {"type": "integer", "description": "Lookback period in hours", "default": 1},
+                    "limit": {"type": "integer", "description": "Number of results", "default": 50}
+                }
+            }
+        ),
+        Tool(
+            name="search_logs_for_ip",
+            description="Search logs for a specific IP address",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "ip_address": {"type": "string", "description": "IP address to search for"},
+                    "hours": {"type": "integer", "description": "Lookback period in hours", "default": 1},
+                    "limit": {"type": "integer", "description": "Maximum number of log entries", "default": 100}
+                },
+                "required": ["ip_address"]
+            }
+        ),
+    ]
 
 
-# === Main Entry Point ===
+@app.call_tool()
+async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+    """Execute a DNS security tool."""
+    tool_map = {
+        "top_dns_clients": query_adguard_top_clients,
+        "dns_block_rates": query_adguard_block_rates,
+        "high_risk_clients": query_adguard_high_risk_clients,
+        "blocked_domains": query_adguard_blocked_domains,
+        "dns_traffic_by_type": query_adguard_traffic_by_type,
+        "security_summary": query_security_summary,
+        "dns_anomalies": query_adguard_anomalies,
+        "wireless_health": query_wireless_health,
+        "infrastructure_events": query_infrastructure_events,
+        "search_logs_for_ip": search_logs_by_ip,
+    }
+
+    if name not in tool_map:
+        return [TextContent(
+            type="text",
+            text=f"Error: Tool '{name}' not found"
+        )]
+
+    try:
+        langchain_tool = tool_map[name]
+        result = langchain_tool.invoke(arguments)
+
+        return [TextContent(
+            type="text",
+            text=str(result)
+        )]
+
+    except Exception as e:
+        return [TextContent(
+            type="text",
+            text=f"Error executing tool '{name}': {str(e)}"
+        )]
+
+
+# === HTTP Server Setup ===
+
+async def handle_sse(request):
+    """Handle SSE connections for MCP."""
+    sse = SseServerTransport("/mcp/sse")
+    async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
+        await app.run(
+            streams[0],
+            streams[1],
+            app.create_initialization_options()
+        )
+
+
+async def health_check(request):
+    """Health check endpoint."""
+    return Response("OK", status_code=200)
+
+
+# Create Starlette app
+starlette_app = Starlette(
+    routes=[
+        Mount("/mcp", app=handle_sse),
+    ]
+)
+
+
+# Add health check
+@starlette_app.route("/health")
+async def health(request):
+    return Response("OK", status_code=200)
+
 
 if __name__ == "__main__":
-    print("Starting DNS Security MCP Server (FastMCP + HTTP)...", file=sys.stderr)
+    print("Starting DNS Security MCP Server (HTTP/SSE)...", file=sys.stderr)
     print(f"Server will listen on http://0.0.0.0:8080", file=sys.stderr)
     print(file=sys.stderr)
 
-    # Run FastMCP server
-    mcp.run(host="0.0.0.0", port=8080)
+    # Run server
+    uvicorn.run(
+        starlette_app,
+        host="0.0.0.0",
+        port=8080,
+        log_level="info"
+    )
