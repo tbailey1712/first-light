@@ -41,8 +41,12 @@ class MCPTester:
         """Connect to MCP server via SSE."""
         print(f"Connecting to MCP server at {self.base_url}...")
 
-        # Create SSE client
-        read_stream, write_stream = sse_client(f"{self.base_url}/mcp/sse")
+        # Create SSE client context manager
+        self.sse_context = sse_client(f"{self.base_url}/mcp/sse")
+
+        # Enter the context and get streams
+        self.streams = await self.sse_context.__aenter__()
+        read_stream, write_stream = self.streams
 
         # Create MCP session
         self.session = ClientSession(read_stream, write_stream)
@@ -204,9 +208,8 @@ class MCPTester:
 
     async def close(self):
         """Close the session."""
-        if self.session:
-            # MCP session cleanup
-            pass
+        if hasattr(self, 'sse_context'):
+            await self.sse_context.__aexit__(None, None, None)
 
 
 async def main():

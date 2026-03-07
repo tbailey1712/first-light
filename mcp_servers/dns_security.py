@@ -212,7 +212,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 # === HTTP Server Setup ===
 
-from starlette.routing import Route
+from starlette.routing import Route, Mount
 from starlette.requests import Request
 
 sse_transport = SseServerTransport("/messages")
@@ -236,7 +236,7 @@ async def health_check(request: Request):
 # Create Starlette app
 starlette_app = Starlette(
     routes=[
-        Route("/mcp/sse", handle_sse),
+        Mount("/mcp/sse", app=handle_sse),
         Route("/health", health_check, methods=["GET"]),
     ]
 )
