@@ -82,8 +82,8 @@ class FirstLightConfig(BaseSettings):
     litellm_model: str = "claude-sonnet-4-5-20250929"
 
     # Telegram Bot
-    telegram_bot_token: str
-    telegram_chat_id: str
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
     telegram_allowed_user_ids: Optional[str] = None
 
     # Notifications
