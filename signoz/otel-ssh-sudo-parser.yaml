@@ -1,0 +1,135 @@
+# SSH/sudo Security Event Parser for OTel Collector
+#
+# This file contains the transform/ssh_sudo processor configuration.
+# Copy these statements into the main otel-collector-config.yaml.
+#
+# Note: This parser uses only basic OTTL functions that are guaranteed to exist.
+# For field extraction, we use ExtractPatterns() with named capture groups.
+
+transform/ssh_sudo:
+  error_mode: ignore
+  log_statements:
+    - context: log
+      statements:
+        # ===== SSH Parsing =====
+
+        # SSH service detection
+        - set(attributes["security.service"], "ssh") where IsMatch(body, "sshd\\[\\d+\\]")
+
+        # Successful password authentication
+        # Format: "Accepted password for USER from IP port PORT ssh2"
+        - set(attributes["ssh.event"], "login_success") where IsMatch(body, "Accepted password for")
+        - set(attributes["ssh.auth_method"], "password") where IsMatch(body, "Accepted password for")
+
+        # Successful publickey authentication
+        # Format: "Accepted publickey for USER from IP port PORT ssh2"
+        - set(attributes["ssh.event"], "login_success") where IsMatch(body, "Accepted publickey for")
+        - set(attributes["ssh.auth_method"], "publickey") where IsMatch(body, "Accepted publickey for")
+
+        # Failed password authentication
+        # Format: "Failed password for USER from IP port PORT ssh2"
+        - set(attributes["ssh.event"], "login_failure") where IsMatch(body, "Failed password for")
+        - set(attributes["ssh.auth_method"], "password") where IsMatch(body, "Failed password for")
+
+        # Invalid user attempts
+        # Format: "Invalid user USER from IP" or "Failed password for invalid user USER from IP"
+        - set(attributes["ssh.event"], "invalid_user") where IsMatch(body, "Invalid user|invalid user")
+
+        # Connection closed / Disconnected
+        - set(attributes["ssh.event"], "disconnect") where IsMatch(body, "Connection closed|Disconnected from")
+
+        # Session opened
+        - set(attributes["ssh.event"], "session_opened") where IsMatch(body, "session opened for user")
+
+        # Session closed
+        - set(attributes["ssh.event"], "session_closed") where IsMatch(body, "session closed for user")
+
+        # Extract SSH fields using ExtractPatterns with named groups
+        # Successful login: "Accepted password for USER from IP port PORT"
+        - merge_maps(attributes, ExtractPatterns(body, "Accepted (?:password|publickey) for (?P<user>[^ ]+) from (?P<source_ip>[0-9.]+) port (?P<port>\\d+)"), "upsert") where IsMatch(body, "Accepted (password|publickey)")
+        - set(attributes["ssh.user"], attributes["user"]) where attributes["user"] != nil
+        - set(attributes["ssh.source_ip"], attributes["source_ip"]) where attributes["source_ip"] != nil
+        - set(attributes["ssh.port"], attributes["port"]) where attributes["port"] != nil
+        - delete_key(attributes, "user") where attributes["user"] != nil
+        - delete_key(attributes, "source_ip") where attributes["source_ip"] != nil
+        - delete_key(attributes, "port") where attributes["port"] != nil
+
+        # Failed login: "Failed password for USER from IP port PORT"
+        - merge_maps(attributes, ExtractPatterns(body, "Failed password for (?P<user>[^ ]+) from (?P<source_ip>[0-9.]+) port (?P<port>\\d+)"), "upsert") where IsMatch(body, "Failed password") and attributes["ssh.user"] == nil
+        - set(attributes["ssh.user"], attributes["user"]) where attributes["user"] != nil
+        - set(attributes["ssh.source_ip"], attributes["source_ip"]) where attributes["source_ip"] != nil
+        - set(attributes["ssh.port"], attributes["port"]) where attributes["port"] != nil
+        - delete_key(attributes, "user") where attributes["user"] != nil
+        - delete_key(attributes, "source_ip") where attributes["source_ip"] != nil
+        - delete_key(attributes, "port") where attributes["port"] != nil
+
+        # Invalid user: "Invalid user USER from IP"
+        - merge_maps(attributes, ExtractPatterns(body, "Invalid user (?P<user>[^ ]+) from (?P<source_ip>[0-9.]+)"), "upsert") where IsMatch(body, "Invalid user") and attributes["ssh.user"] == nil
+        - set(attributes["ssh.user"], attributes["user"]) where attributes["user"] != nil
+        - set(attributes["ssh.source_ip"], attributes["source_ip"]) where attributes["source_ip"] != nil
+        - delete_key(attributes, "user") where attributes["user"] != nil
+        - delete_key(attributes, "source_ip") where attributes["source_ip"] != nil
+
+        # Tag severity based on event type
+        - set(attributes["security.severity"], "high") where attributes["ssh.event"] == "login_failure" or attributes["ssh.event"] == "invalid_user"
+        - set(attributes["security.severity"], "info") where attributes["ssh.event"] == "login_success"
+        - set(attributes["security.severity"], "low") where attributes["ssh.event"] == "disconnect" or attributes["ssh.event"] == "session_closed"
+
+        # ===== SUDO Parsing =====
+
+        # Sudo service detection
+        - set(attributes["security.service"], "sudo") where IsMatch(body, "sudo:")
+
+        # Sudo command execution
+        # Format: "USER : TTY=tty ; PWD=pwd ; USER=root ; COMMAND=command"
+        - set(attributes["sudo.event"], "command_executed") where IsMatch(body, "sudo:.*COMMAND=")
+
+        # Sudo authentication failure
+        # Format: "USER : X authentication failures"
+        - set(attributes["sudo.event"], "auth_failure") where IsMatch(body, "sudo:.*authentication failure")
+
+        # Sudo not allowed
+        # Format: "USER : command not allowed"
+        - set(attributes["sudo.event"], "command_not_allowed") where IsMatch(body, "sudo:.*command not allowed")
+
+        # Extract sudo fields - format is key=value pairs separated by semicolons
+        # We'll use multiple ExtractPatterns calls for each field
+
+        # Extract TTY
+        - merge_maps(attributes, ExtractPatterns(body, "TTY=(?P<tty>[^;\\s]+)"), "upsert") where IsMatch(body, "TTY=")
+        - set(attributes["sudo.tty"], attributes["tty"]) where attributes["tty"] != nil
+        - delete_key(attributes, "tty") where attributes["tty"] != nil
+
+        # Extract PWD (working directory)
+        - merge_maps(attributes, ExtractPatterns(body, "PWD=(?P<pwd>[^;]+)"), "upsert") where IsMatch(body, "PWD=")
+        - set(attributes["sudo.pwd"], attributes["pwd"]) where attributes["pwd"] != nil
+        - delete_key(attributes, "pwd") where attributes["pwd"] != nil
+
+        # Extract target USER (the user sudo is switching to)
+        - merge_maps(attributes, ExtractPatterns(body, "USER=(?P<target_user>[^;\\s]+)"), "upsert") where IsMatch(body, "USER=")
+        - set(attributes["sudo.target_user"], attributes["target_user"]) where attributes["target_user"] != nil
+        - delete_key(attributes, "target_user") where attributes["target_user"] != nil
+
+        # Extract COMMAND
+        - merge_maps(attributes, ExtractPatterns(body, "COMMAND=(?P<command>[^\\n]+)"), "upsert") where IsMatch(body, "COMMAND=")
+        - set(attributes["sudo.command"], attributes["command"]) where attributes["command"] != nil
+        - delete_key(attributes, "command") where attributes["command"] != nil
+
+        # Extract sudo username (the user running sudo) - appears before the colon
+        # Format: "username : TTY=..."
+        - merge_maps(attributes, ExtractPatterns(body, "sudo:\\s*(?P<sudo_user>[a-zA-Z0-9_-]+)\\s*:"), "upsert") where IsMatch(body, "sudo:")
+        - set(attributes["sudo.user"], attributes["sudo_user"]) where attributes["sudo_user"] != nil
+        - delete_key(attributes, "sudo_user") where attributes["sudo_user"] != nil
+
+        # Tag severity based on event type
+        - set(attributes["security.severity"], "critical") where attributes["sudo.event"] == "auth_failure"
+        - set(attributes["security.severity"], "warning") where attributes["sudo.event"] == "command_not_allowed"
+        - set(attributes["security.severity"], "info") where attributes["sudo.event"] == "command_executed"
+
+        # ===== Common Security Attributes =====
+
+        # Tag as security event
+        - set(attributes["security.event"], "true") where attributes["security.service"] != nil
+
+        # Set event category
+        - set(attributes["security.category"], "authentication") where attributes["ssh.event"] != nil or attributes["sudo.event"] != nil
