@@ -1,0 +1,101 @@
+# ntopng Log Parser for OTel Collector
+#
+# This file contains the transform/ntopng processor configuration.
+#
+# ntopng Log Format:
+# <priority>timestamp hostname ntopng[pid] [ISO_timestamp] [Interface: name] [Severity: level] [Type] [Alert Name] [flow] Description
+#
+# Example:
+# <116>Mar 7 17:02:06 192.168.1.5 ntopng[664948] [2026-03-07T17:01:18Z] [Interface: eth0] [Severity: Warning] [Flow] [Known Proto on Non Std Port] [pbs@1:8007 -> pve@1:46414] Detected...
+
+transform/ntopng:
+  error_mode: ignore
+  log_statements:
+    - context: log
+      statements:
+        # Only process ntopng logs
+        - set(attributes["_is_ntopng"], "true") where resource.attributes["host.name"] == "ntopng"
+
+        # ===== Extract Timestamp =====
+        # Format: [2026-03-07T17:01:18Z]
+        - merge_maps(attributes, ExtractPatterns(body, "\\[(?P<timestamp>\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z)\\]"), "upsert") where attributes["_is_ntopng"] == "true"
+        - set(attributes["ntopng.timestamp"], attributes["timestamp"]) where attributes["timestamp"] != nil
+        - delete_key(attributes, "timestamp") where attributes["timestamp"] != nil
+
+        # ===== Extract Interface =====
+        # Format: [Interface: eth0]
+        - merge_maps(attributes, ExtractPatterns(body, "\\[Interface:\\s*(?P<interface>[^\\]]+)\\]"), "upsert") where attributes["_is_ntopng"] == "true"
+        - set(attributes["ntopng.interface"], attributes["interface"]) where attributes["interface"] != nil
+        - delete_key(attributes, "interface") where attributes["interface"] != nil
+
+        # ===== Extract Severity =====
+        # Format: [Severity: Warning] or [Severity: Error]
+        - merge_maps(attributes, ExtractPatterns(body, "\\[Severity:\\s*(?P<severity>[^\\]]+)\\]"), "upsert") where attributes["_is_ntopng"] == "true"
+        - set(attributes["ntopng.severity"], attributes["severity"]) where attributes["severity"] != nil
+        - delete_key(attributes, "severity") where attributes["severity"] != nil
+
+        # ===== Extract Alert Type =====
+        # Format: [Type] - usually [Flow] or [Host]
+        - merge_maps(attributes, ExtractPatterns(body, "\\[Severity:[^\\]]+\\]\\s*\\[(?P<type>[^\\]]+)\\]"), "upsert") where attributes["_is_ntopng"] == "true"
+        - set(attributes["ntopng.type"], attributes["type"]) where attributes["type"] != nil
+        - delete_key(attributes, "type") where attributes["type"] != nil
+
+        # ===== Extract Alert Name =====
+        # Format: [Alert Name] - comes after [Type]
+        # Pattern: [Type] [Alert Name] [flow or other details]
+        - merge_maps(attributes, ExtractPatterns(body, "\\[Severity:[^\\]]+\\]\\s*\\[[^\\]]+\\]\\s*\\[(?P<alert_name>[^\\]]+)\\]"), "upsert") where attributes["_is_ntopng"] == "true"
+        - set(attributes["ntopng.alert_name"], attributes["alert_name"]) where attributes["alert_name"] != nil
+        - delete_key(attributes, "alert_name") where attributes["alert_name"] != nil
+
+        # ===== Extract Flow Details =====
+        # Format: [src@vlan:port -> dst@vlan:port]
+        # Extract source
+        - merge_maps(attributes, ExtractPatterns(body, "\\[([^@\\]]+)@(\\d+):(\\d+)\\s*->"), "upsert") where attributes["_is_ntopng"] == "true" and IsMatch(body, "->")
+        - set(attributes["ntopng.flow.src_host"], attributes["1"]) where attributes["1"] != nil
+        - set(attributes["ntopng.flow.src_vlan"], attributes["2"]) where attributes["2"] != nil
+        - set(attributes["ntopng.flow.src_port"], attributes["3"]) where attributes["3"] != nil
+        - delete_key(attributes, "1") where attributes["1"] != nil
+        - delete_key(attributes, "2") where attributes["2"] != nil
+        - delete_key(attributes, "3") where attributes["3"] != nil
+
+        # Extract destination
+        - merge_maps(attributes, ExtractPatterns(body, "->\\s*([^@\\]]+)@(\\d+):(\\d+)\\]"), "upsert") where attributes["_is_ntopng"] == "true" and IsMatch(body, "->")
+        - set(attributes["ntopng.flow.dst_host"], attributes["1"]) where attributes["1"] != nil
+        - set(attributes["ntopng.flow.dst_vlan"], attributes["2"]) where attributes["2"] != nil
+        - set(attributes["ntopng.flow.dst_port"], attributes["3"]) where attributes["3"] != nil
+        - delete_key(attributes, "1") where attributes["1"] != nil
+        - delete_key(attributes, "2") where attributes["2"] != nil
+        - delete_key(attributes, "3") where attributes["3"] != nil
+
+        # ===== Extract Description =====
+        # Description is the text after the last bracket
+        - merge_maps(attributes, ExtractPatterns(body, "\\]\\s+([^\\n]+)$"), "upsert") where attributes["_is_ntopng"] == "true"
+        - set(attributes["ntopng.description"], attributes["1"]) where attributes["1"] != nil
+        - delete_key(attributes, "1") where attributes["1"] != nil
+
+        # ===== Map Severity to Standard Levels =====
+        - set(attributes["security.severity"], "critical") where attributes["ntopng.severity"] == "Critical"
+        - set(attributes["security.severity"], "high") where attributes["ntopng.severity"] == "Error"
+        - set(attributes["security.severity"], "warning") where attributes["ntopng.severity"] == "Warning"
+        - set(attributes["security.severity"], "info") where attributes["ntopng.severity"] == "Info"
+
+        # ===== Classify Security Events =====
+        # High-priority security alerts
+        - set(attributes["security.event"], "true") where attributes["_is_ntopng"] == "true" and (
+            IsMatch(attributes["ntopng.alert_name"], "DNS Data Exfiltration") or
+            IsMatch(attributes["ntopng.alert_name"], "Suspicious File Transfer") or
+            IsMatch(attributes["ntopng.alert_name"], "Probing Attempt") or
+            IsMatch(attributes["ntopng.alert_name"], "Exploit Attempt") or
+            IsMatch(attributes["ntopng.alert_name"], "Malware") or
+            IsMatch(attributes["ntopng.alert_name"], "Blacklisted")
+          )
+
+        - set(attributes["security.category"], "network_threat") where attributes["security.event"] == "true" and attributes["_is_ntopng"] == "true"
+
+        # ===== Network Context =====
+        - set(attributes["network.direction"], "inbound") where attributes["_is_ntopng"] == "true" and IsMatch(attributes["ntopng.flow.src_host"], "^\\d+\\.\\d+\\.\\d+\\.\\d+$") and not IsMatch(attributes["ntopng.flow.src_host"], "^192\\.168\\.")
+        - set(attributes["network.direction"], "outbound") where attributes["_is_ntopng"] == "true" and IsMatch(attributes["ntopng.flow.dst_host"], "^\\d+\\.\\d+\\.\\d+\\.\\d+$") and not IsMatch(attributes["ntopng.flow.dst_host"], "^192\\.168\\.")
+        - set(attributes["network.direction"], "internal") where attributes["_is_ntopng"] == "true" and attributes["network.direction"] == nil
+
+        # ===== Cleanup =====
+        - delete_key(attributes, "_is_ntopng") where attributes["_is_ntopng"] != nil
