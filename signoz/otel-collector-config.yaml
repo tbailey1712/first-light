@@ -280,23 +280,23 @@ processors:
           - set(attributes["ntopng.alert_name"], attributes["alert_name"]) where attributes["alert_name"] != nil
           - delete_key(attributes, "alert_name") where attributes["alert_name"] != nil
 
-          # Extract Flow Source [src@vlan:port -> dst@vlan:port]
-          - merge_maps(attributes, ExtractPatterns(body, "\\[([^@\\]]+)@(\\d+):(\\d+)\\s*->"), "upsert") where attributes["_is_ntopng"] == "true" and IsMatch(body, "->")
-          - set(attributes["ntopng.flow.src_host"], attributes["1"]) where attributes["1"] != nil
-          - set(attributes["ntopng.flow.src_vlan"], attributes["2"]) where attributes["2"] != nil
-          - set(attributes["ntopng.flow.src_port"], attributes["3"]) where attributes["3"] != nil
-          - delete_key(attributes, "1") where attributes["1"] != nil
-          - delete_key(attributes, "2") where attributes["2"] != nil
-          - delete_key(attributes, "3") where attributes["3"] != nil
+          # Extract Flow Source [src@vlan:port -> dst@vlan:port] - use named groups
+          - merge_maps(attributes, ExtractPatterns(body, "\\[(?P<src_host>[^@]+)@(?P<src_vlan>\\d+):(?P<src_port>\\d+)\\s*->"), "upsert") where attributes["_is_ntopng"] == "true" and IsMatch(body, "->")
+          - set(attributes["ntopng.flow.src_host"], attributes["src_host"]) where attributes["src_host"] != nil
+          - set(attributes["ntopng.flow.src_vlan"], attributes["src_vlan"]) where attributes["src_vlan"] != nil
+          - set(attributes["ntopng.flow.src_port"], attributes["src_port"]) where attributes["src_port"] != nil
+          - delete_key(attributes, "src_host") where attributes["src_host"] != nil
+          - delete_key(attributes, "src_vlan") where attributes["src_vlan"] != nil
+          - delete_key(attributes, "src_port") where attributes["src_port"] != nil
 
-          # Extract Flow Destination
-          - merge_maps(attributes, ExtractPatterns(body, "->\\s*([^@\\]]+)@(\\d+):(\\d+)\\]"), "upsert") where attributes["_is_ntopng"] == "true" and IsMatch(body, "->")
-          - set(attributes["ntopng.flow.dst_host"], attributes["1"]) where attributes["1"] != nil
-          - set(attributes["ntopng.flow.dst_vlan"], attributes["2"]) where attributes["2"] != nil
-          - set(attributes["ntopng.flow.dst_port"], attributes["3"]) where attributes["3"] != nil
-          - delete_key(attributes, "1") where attributes["1"] != nil
-          - delete_key(attributes, "2") where attributes["2"] != nil
-          - delete_key(attributes, "3") where attributes["3"] != nil
+          # Extract Flow Destination - use named groups
+          - merge_maps(attributes, ExtractPatterns(body, "->\\s*(?P<dst_host>[^@]+)@(?P<dst_vlan>\\d+):(?P<dst_port>\\d+)\\]"), "upsert") where attributes["_is_ntopng"] == "true" and IsMatch(body, "->")
+          - set(attributes["ntopng.flow.dst_host"], attributes["dst_host"]) where attributes["dst_host"] != nil
+          - set(attributes["ntopng.flow.dst_vlan"], attributes["dst_vlan"]) where attributes["dst_vlan"] != nil
+          - set(attributes["ntopng.flow.dst_port"], attributes["dst_port"]) where attributes["dst_port"] != nil
+          - delete_key(attributes, "dst_host") where attributes["dst_host"] != nil
+          - delete_key(attributes, "dst_vlan") where attributes["dst_vlan"] != nil
+          - delete_key(attributes, "dst_port") where attributes["dst_port"] != nil
 
           # Extract Description
           - merge_maps(attributes, ExtractPatterns(body, "\\]\\s+([^\\n]+)$"), "upsert") where attributes["_is_ntopng"] == "true"
