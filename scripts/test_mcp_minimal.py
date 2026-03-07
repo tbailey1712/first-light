@@ -6,7 +6,7 @@ from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 
 async def main():
-    url = "http://docker.mcducklabs.com:8082/mcp/sse"
+    url = "http://docker.mcducklabs.com:8082/sse"
     print(f"Connecting to {url}...")
 
     try:

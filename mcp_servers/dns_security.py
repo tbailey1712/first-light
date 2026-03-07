@@ -216,22 +216,20 @@ from starlette.routing import Route, Mount
 from starlette.requests import Request
 
 
-# Create SSE transport
+# Create SSE transport with endpoint for POST messages
 sse = SseServerTransport("/messages")
 
 
-class MCPSSEApp:
-    """ASGI app for MCP SSE connections."""
-
-    async def __call__(self, scope, receive, send):
-        """Handle ASGI request."""
-        async with sse.connect_sse(scope, receive, send) as streams:
-            read_stream, write_stream = streams
-            await app.run(
-                read_stream,
-                write_stream,
-                app.create_initialization_options()
-            )
+async def handle_sse(request: Request):
+    """Handle SSE connection for server-to-client messages."""
+    async with sse.connect_sse(
+        request.scope, request.receive, request._send
+    ) as streams:
+        await app.run(
+            streams[0], streams[1], app.create_initialization_options()
+        )
+    # Return empty response to avoid NoneType error on disconnect
+    return Response()
 
 
 async def health_check(request: Request):
@@ -239,11 +237,12 @@ async def health_check(request: Request):
     return Response("OK", status_code=200)
 
 
-# Create Starlette app
+# Create Starlette app with BOTH required routes
 starlette_app = Starlette(
     routes=[
         Route("/health", health_check, methods=["GET"]),
-        Mount("/sse", app=MCPSSEApp()),
+        Route("/sse", handle_sse, methods=["GET"]),  # SSE connection
+        Mount("/messages", app=sse.handle_post_message),  # POST messages
     ]
 )
 
