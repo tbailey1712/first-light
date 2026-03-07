@@ -212,34 +212,34 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 # === HTTP Server Setup ===
 
-async def handle_sse(request):
+sse_transport = SseServerTransport("/messages")
+
+
+async def handle_sse(scope, receive, send):
     """Handle SSE connections for MCP."""
-    sse = SseServerTransport("/mcp/sse")
-    async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
+    async with sse_transport.connect_sse(scope, receive, send) as (read_stream, write_stream):
         await app.run(
-            streams[0],
-            streams[1],
+            read_stream,
+            write_stream,
             app.create_initialization_options()
         )
 
 
-async def health_check(request):
+async def health_check(scope, receive, send):
     """Health check endpoint."""
-    return Response("OK", status_code=200)
+    response = Response("OK", status_code=200)
+    await response(scope, receive, send)
 
 
 # Create Starlette app
+from starlette.routing import Route
+
 starlette_app = Starlette(
     routes=[
-        Mount("/mcp", app=handle_sse),
+        Route("/mcp/sse", handle_sse),
+        Route("/health", health_check),
     ]
 )
-
-
-# Add health check
-@starlette_app.route("/health")
-async def health(request):
-    return Response("OK", status_code=200)
 
 
 if __name__ == "__main__":
