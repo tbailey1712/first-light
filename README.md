@@ -1,171 +1,283 @@
-# First Light — Network Observability & Threat Intelligence
+# First Light — AI-Powered Network Security Platform
 
-Phase 1 MVP: CrowdSec threat detection + SigNoz unified observability platform
+**Production-Ready Network Observability with Hierarchical AI Agents**
 
-## Architecture
+First Light is an AI-powered network security platform that provides real-time threat analysis, DNS security monitoring, and infrastructure observability through a unified interface. The system uses hierarchical AI agents to analyze network data and exposes security tools via Model Context Protocol (MCP) for natural language interaction through Claude Desktop.
+
+## 🎯 Current Status
+
+**✅ DNS Security MVP - COMPLETE**
+
+- 10 DNS security tools exposed via MCP
+- Hierarchical agent system with supervisor + 5 micro-agents
+- Integrated with Claude Desktop for natural language queries
+- Real-time analysis of network traffic, threats, and anomalies
+- Production deployment on docker.mcducklabs.com
+
+[→ DNS Security MVP Documentation](docs/DNS_SECURITY_MVP.md)
+
+## 🏗️ Architecture
 
 ```
-Network Sources (pfSense, QNAP, Proxmox, etc.)
-           │
-           │ syslog UDP/TCP 514
-           ▼
-      ┌─────────┐
-      │ rsyslog │ (fan-out router)
-      └────┬────┘
-           │
-     ┌─────┴──────┐
-     │            │
-     ▼            ▼
-┌────────┐   ┌──────────────┐
-│ SigNoz │   │ /var/log/    │
-│ (OTel) │   │   remote/    │
-│        │   │   {host}/    │
-│ ClickHouse   └──────┬───────┘
-│ Logs UI │          │ tail
-└────────┘           ▼
-              ┌────────────┐
-              │  CrowdSec  │
-              │  (threat   │
-              │ detection) │
-              └────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                     Claude Desktop                           │
+│                    (Natural Language UI)                     │
+└────────────────────────┬─────────────────────────────────────┘
+                         │ MCP Protocol (HTTP/SSE)
+┌────────────────────────▼─────────────────────────────────────┐
+│                  MCP Server (Port 8082)                      │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │          10 DNS Security Tools                         │ │
+│  │  Metrics: top_clients, block_rates, high_risk, etc.   │ │
+│  │  Logs: security_summary, anomalies, wireless_health   │ │
+│  └────────────────────────────────────────────────────────┘ │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │     Hierarchical Agent System (LangGraph)              │ │
+│  │  Supervisor + 5 Specialized Micro-Agents              │ │
+│  └────────────────────────────────────────────────────────┘ │
+└────────────────────────┬─────────────────────────────────────┘
+                         │ ClickHouse HTTP API
+┌────────────────────────▼─────────────────────────────────────┐
+│                 SigNoz / ClickHouse                          │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  Metrics (VictoriaMetrics) + Logs (Loki)              │ │
+│  │  AdGuard DNS, pfSense, UniFi, Infrastructure           │ │
+│  └────────────────────────────────────────────────────────┘ │
+└────────────────────────┬─────────────────────────────────────┘
+                         │ Syslog (UDP 514)
+┌────────────────────────▼─────────────────────────────────────┐
+│              Network Infrastructure                          │
+│  pfSense • AdGuard • UniFi • QNAP • Proxmox • Validators   │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-## Quick Start — Local Dev
+## ✨ Features
 
+### 🤖 AI-Powered Analysis
+- **Hierarchical Agents:** Supervisor coordinates 5 specialized micro-agents
+- **Natural Language Interface:** Query network security via Claude Desktop
+- **Real-time Analysis:** Live threat detection and anomaly identification
+- **Contextual Understanding:** Agents maintain conversation state and history
+
+### 🛡️ DNS Security Tools
+1. **Top DNS Clients** - Identify highest volume clients
+2. **Block Rate Analysis** - Monitor DNS blocking effectiveness
+3. **High Risk Detection** - Flag suspicious client behavior
+4. **Blocked Domains** - Track frequently blocked domains
+5. **Traffic Patterns** - Analyze query types and trends
+6. **Security Summary** - Aggregate threat intelligence
+7. **Anomaly Detection** - Identify unusual DNS patterns
+8. **Wireless Health** - Monitor WiFi network status
+9. **Infrastructure Events** - Track system alerts
+10. **IP Search** - Investigate specific addresses
+
+### 📊 Observability Platform
+- **Unified Logs:** SigNoz/Loki for all network logs
+- **Metrics:** VictoriaMetrics for time-series data
+- **Dashboards:** Pre-built Grafana dashboards
+- **Tracing:** Langfuse integration for agent observability
+- **Alerting:** CrowdSec for threat detection
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Docker & Docker Compose
+- Network devices configured to send syslog
+- Claude Desktop (for natural language interface)
+
+### Deployment
+
+1. **Clone repository:**
 ```bash
-git clone <repo>
+git clone <repo-url>
 cd first-light
-cp .env.example .env
-# Edit .env if you have a CrowdSec enrollment key (optional)
-
-docker compose up -d
-
-# Wait for all services to start (2-3 minutes)
-docker compose ps
-
-# Send test syslog messages
-./scripts/test-syslog.sh
-
-# Open SigNoz UI
-open http://localhost:3301
-
-# Check CrowdSec alerts
-docker exec fl-crowdsec cscli alerts list
 ```
 
-## Production Deployment — Portainer Stack
-
-1. In Portainer: **Stacks → Add Stack → Git Repository**
-2. Repository URL: `<your-git-repo-url>`
-3. Reference: `refs/heads/main`
-4. Compose path: `docker-compose.yml`
-5. Environment variables:
-   - `CROWDSEC_ENROLLMENT_KEY` (optional, from app.crowdsec.net)
-6. Enable **Git auto-update** or use webhook
-
-**Important:** Portainer ignores `docker-compose.override.yml` (which is for local dev only). It uses only `docker-compose.yml`.
-
-## Configure Network Devices
-
-Point your network devices' syslog to the Docker host on port 514:
-
-### pfSense
-`Status → System Logs → Settings → Remote Logging`
-- Remote log servers: `<docker-host-ip>:514` (UDP)
-- Send everything
-
-### QNAP NAS
-`Control Panel → System → System Logs → Syslog`
-- Remote syslog server: `<docker-host-ip>:514` (UDP)
-
-### Proxmox VE
-Edit `/etc/rsyslog.conf` on each PVE host:
+2. **Configure environment:**
 ```bash
-*.* @<docker-host-ip>:514
+cp .env.example .env
+# Edit .env with your credentials
 ```
-Restart: `systemctl restart rsyslog`
 
-### UniFi Controller
-`Settings → System → Remote Logging`
-- IP Address: `<docker-host-ip>`
-- Port: 514
+3. **Start the stack:**
+```bash
+docker compose up -d
+```
 
-## Directory Structure
+4. **Verify services:**
+```bash
+docker compose ps
+curl http://localhost:8082/health  # MCP server
+```
+
+5. **Configure Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "first-light-dns": {
+      "command": "/path/to/mcp-proxy",
+      "env": {
+        "SSE_URL": "http://docker.mcducklabs.com:8082/sse"
+      }
+    }
+  }
+}
+```
+
+6. **Restart Claude Desktop** and start querying!
+
+[→ Full DNS Security MVP Documentation](docs/DNS_SECURITY_MVP.md)
+
+## 💬 Example Queries
+
+Ask Claude Desktop:
+- "What are the top DNS clients in the last 24 hours?"
+- "Show me clients with high block rates"
+- "Are there any high-risk clients with suspicious activity?"
+- "What domains are being blocked most frequently?"
+- "Search logs for IP 192.168.1.50"
+- "What's the security summary for the last 6 hours?"
+- "Show me DNS anomalies and unusual patterns"
+
+## 🗂️ Project Structure
 
 ```
 first-light/
-├── docker-compose.yml              # Production compose (with include)
-├── docker-compose.override.yml     # Local dev overrides (auto-merged)
-├── .env.example                    # Template
-├── .env                            # Your values (gitignored)
+├── agent/                      # AI agent system
+│   ├── graphs/                 # LangGraph definitions
+│   │   └── dns_security_graph.py
+│   ├── tools/                  # Security tools
+│   │   ├── metrics.py          # PromQL queries
+│   │   └── logs.py             # LogQL queries
+│   ├── config.py               # Configuration
+│   ├── state.py                # State management
+│   └── agent_factory.py        # Agent creation
 │
-├── rsyslog/
-│   └── rsyslog.conf                # Fan-out routing config
+├── mcp_servers/                # MCP server
+│   ├── dns_security.py         # HTTP/SSE server
+│   ├── Dockerfile              # Container build
+│   └── README.md               # MCP documentation
 │
-├── crowdsec/
-│   └── acquis.yml                  # Log file → parser mapping
+├── signoz/                     # Observability stack
+│   ├── docker-compose.yaml     # SigNoz services
+│   ├── otel-collector-config.yaml
+│   └── common/                 # Configs & dashboards
 │
-├── signoz/
-│   ├── docker-compose.yaml         # SigNoz's official compose
-│   ├── otel-collector-config.yaml  # Custom config (added syslog receiver)
-│   └── common/                     # SigNoz configs
+├── scripts/                    # Utilities
+│   ├── test_mcp_minimal.py     # Quick MCP test
+│   └── test_mcp_list_tools.py  # List all tools
 │
-└── scripts/
-    └── test-syslog.sh              # Send test messages
+├── tests/                      # Test suite
+│   ├── unit/                   # Unit tests
+│   └── integration/            # Integration tests
+│
+└── docs/                       # Documentation
+    ├── DNS_SECURITY_MVP.md     # DNS Security guide
+    └── ...                     # Other guides
 ```
 
-## Verify Data Flow
+## 📚 Documentation
 
-### Check rsyslog is receiving
+- **[DNS Security MVP](docs/DNS_SECURITY_MVP.md)** - Complete DNS Security guide
+- **[MCP Server](mcp_servers/README.md)** - MCP server implementation
+- **[Configuration Guide](CONFIGURATION_GUIDE.md)** - Network device setup
+- **[Deployment Guide](DEPLOY.md)** - Production deployment
+
+## 🔧 Configuration
+
+### Environment Variables
+
+Key variables in `.env`:
+
 ```bash
-docker logs fl-rsyslog --tail 50
+# SigNoz / ClickHouse
+SIGNOZ_BASE_URL=http://signoz-query-service:8080
+SIGNOZ_CLICKHOUSE_HOST=clickhouse
+SIGNOZ_CLICKHOUSE_USER=default
+SIGNOZ_CLICKHOUSE_PASSWORD=
+
+# AI Agent
+ANTHROPIC_API_KEY=sk-ant-...
+LITELLM_BASE_URL=https://model-router.mcducklabs.com
+LITELLM_MODEL=claude-sonnet-4-5-20250929
+
+# Notifications (optional)
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+
+# CrowdSec (optional)
+CROWDSEC_ENROLLMENT_KEY=
 ```
 
-### Check SigNoz has logs
-1. Open http://localhost:3301 (or 8080 in production)
-2. Navigate to **Logs Explorer**
-3. Should see incoming syslog messages
+### Network Devices
 
-### Check CrowdSec is parsing
+Configure devices to send syslog to Docker host on port 514:
+
+**pfSense:** Status → System Logs → Settings → Remote Logging
+**UniFi:** Settings → System → Remote Logging
+**QNAP:** Control Panel → System → System Logs → Syslog
+**Proxmox:** Edit `/etc/rsyslog.conf`: `*.* @<docker-host-ip>:514`
+
+## 🧪 Testing
+
 ```bash
-# List alerts (simulated brute force from test script should appear)
-docker exec fl-crowdsec cscli alerts list
+# Test MCP server
+python scripts/test_mcp_minimal.py
 
-# Check parsers are loaded
-docker exec fl-crowdsec cscli parsers list
+# List all tools
+python scripts/test_mcp_list_tools.py
 
-# Check scenarios
-docker exec fl-crowdsec cscli scenarios list
+# Run integration tests
+pytest tests/integration/ -v
 ```
 
-### Check log files are being written
-```bash
-docker exec fl-rsyslog ls -lah /var/log/remote/
-# Should see directories for each host sending syslog
-```
+## 📊 Monitoring
 
-## Ports
+- **SigNoz UI:** http://localhost:3301 (dev) or port 8080 (prod)
+- **MCP Health:** http://localhost:8082/health
+- **Langfuse Traces:** https://cloud.langfuse.com (if configured)
+- **Grafana Dashboards:** http://localhost:3000
 
-**Local Development (Mac):**
-- rsyslog: 1514 UDP/TCP (mapped to 514 in container)
-- SigNoz UI: 3301 (mapped to 3000)
-- SigNoz OTel: 4317 (gRPC), 4318 (HTTP)
+## 🛣️ Roadmap
 
-**Production:**
-- rsyslog: 514 UDP/TCP (standard syslog)
-- SigNoz UI: 8080
-- SigNoz OTel: 4317, 4318
+### ✅ Phase 1: DNS Security MVP (Complete)
+- Hierarchical agent system
+- 10 DNS security tools
+- MCP server integration
+- Claude Desktop interface
+- Production deployment
 
-## Next Steps — Phase 2
+### 🔜 Phase 2: Advanced Analytics
+- Statistical anomaly detection engine
+- Threat intelligence enrichment (AbuseIPDB, VirusTotal)
+- Device inventory and tracking
+- ntopng flow data integration
+- Uptime monitoring integration
 
-Once logs are flowing and CrowdSec is detecting threats:
+### 📋 Phase 3: Automation & Alerts
+- Automated security reports
+- Proactive threat notifications
+- Historical trend analysis
+- Predictive anomaly detection
+- Automated remediation actions
 
-1. Add CrowdSec bouncer for pfSense (automated blocking)
-2. Build LLM analysis harness (REST API)
-3. Add scheduler for automated daily/weekly digests
-4. Build custom console UI
+## 🤝 Contributing
+
+This is a personal homelab project, but feedback and suggestions are welcome!
+
+## 📄 License
+
+Private project - All rights reserved
+
+## 🔗 Links
+
+- [Model Context Protocol](https://modelcontextprotocol.io)
+- [LangGraph](https://langchain-ai.github.io/langgraph/)
+- [SigNoz](https://signoz.io)
+- [Claude](https://claude.ai)
 
 ---
 
-**Phase 1 Status:** ✅ MVP Complete (data pipeline + detection)
-**Phase 2 Status:** 🔜 Planning (LLM harness)
+**Status:** ✅ **DNS Security MVP Complete**
+**Deployed:** docker.mcducklabs.com:8082
+**Last Updated:** March 7, 2026
