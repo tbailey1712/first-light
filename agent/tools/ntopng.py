@@ -1,11 +1,8 @@
 """
 Tools for querying ntopng REST API for flow data and network statistics.
 
-NOTE: Some endpoints require ntopng Enterprise Edition and may not work
-with Community Edition. Tested working endpoints:
-- query_ntopng_interfaces()
-- query_ntopng_interface_stats()
-- query_ntopng_flow_summary()
+All endpoints verified against ntopng v6.7 REST API v2 Swagger specification.
+Tested with ntopng Community Edition.
 """
 
 import httpx
@@ -51,22 +48,26 @@ def query_ntopng_interfaces() -> str:
 
 
 @tool
-def query_ntopng_top_talkers(
+def query_ntopng_active_hosts(
     ifid: int = 3,
-    limit: int = 20,
-    sortby: str = "bytes"
+    currentPage: int = 1,
+    perPage: int = 20,
+    sortColumn: str = "bytes",
+    sortOrder: str = "desc"
 ) -> str:
-    """Get top bandwidth users (top talkers) from ntopng.
+    """Get list of active hosts with traffic statistics.
 
-    NOTE: This endpoint may not be available in ntopng Community Edition.
+    This replaces the non-existent 'top_talkers' endpoint.
 
     Args:
         ifid: Interface ID (default: 3 for eth0)
-        limit: Number of results to return (default: 20)
-        sortby: Sort field (bytes, packets, flows) (default: bytes)
+        currentPage: Page number for pagination (default: 1)
+        perPage: Results per page (default: 20)
+        sortColumn: Sort by field - bytes, packets, name (default: bytes)
+        sortOrder: Sort direction - asc or desc (default: desc)
 
     Returns:
-        JSON with top hosts by traffic volume
+        JSON with active hosts list including traffic stats, IPs, MACs
     """
     config = get_config()
 
@@ -75,11 +76,13 @@ def query_ntopng_top_talkers(
 
     params = {
         "ifid": ifid,
-        "limit": limit,
-        "sortby": sortby
+        "currentPage": currentPage,
+        "perPage": perPage,
+        "sortColumn": sortColumn,
+        "sortOrder": sortOrder
     }
 
-    url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/host/top_talkers.lua?{urlencode(params)}"
+    url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/host/active.lua?{urlencode(params)}"
 
     try:
         with httpx.Client(timeout=10.0) as client:
@@ -135,33 +138,39 @@ def query_ntopng_interface_stats(ifid: int = 3) -> str:
 
 
 @tool
-def query_ntopng_active_alerts(
-    ifid: Optional[int] = None,
+def query_ntopng_alerts(
+    ifid: Optional[int] = 3,
+    currentPage: int = 1,
+    perPage: int = 50,
     severity: Optional[str] = None
 ) -> str:
-    """Get currently active/engaged alerts from ntopng.
+    """Get list of all alerts from ntopng.
 
     Args:
-        ifid: Interface ID to filter by (optional, all interfaces if not specified)
-        severity: Alert severity filter (error, warning, info) (optional)
+        ifid: Interface ID to filter by (default: 3, use None for all interfaces)
+        currentPage: Page number for pagination (default: 1)
+        perPage: Results per page (default: 50)
+        severity: Alert severity filter - error, warning, info (optional)
 
     Returns:
-        JSON with active alerts including type, severity, affected hosts
+        JSON with alerts list including type, severity, affected entities
     """
     config = get_config()
 
     if not config.ntopng_host:
         return "Error: ntopng_host not configured in .env"
 
-    params = {}
+    params = {
+        "currentPage": currentPage,
+        "perPage": perPage
+    }
+
     if ifid is not None:
         params["ifid"] = ifid
     if severity:
         params["severity"] = severity
 
-    url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/alert/list_engaged.lua"
-    if params:
-        url += f"?{urlencode(params)}"
+    url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/all/alert/list.lua?{urlencode(params)}"
 
     try:
         with httpx.Client(timeout=10.0) as client:
@@ -193,7 +202,7 @@ def query_ntopng_host_details(
         ifid: Interface ID (default: 3 for eth0)
 
     Returns:
-        JSON with host details (traffic stats, active flows, alerts)
+        JSON with host details (traffic stats, active flows, protocols)
     """
     config = get_config()
 
@@ -226,27 +235,37 @@ def query_ntopng_host_details(
 
 
 @tool
-def query_ntopng_flow_summary(
+def query_ntopng_active_flows(
     ifid: int = 3,
-    protocol: Optional[str] = None
+    currentPage: int = 1,
+    perPage: int = 20,
+    sortColumn: str = "bytes",
+    sortOrder: str = "desc"
 ) -> str:
-    """Get summary of active network flows.
+    """Get list of active network flows.
 
     Args:
         ifid: Interface ID (default: 3 for eth0)
-        protocol: Filter by protocol (TCP, UDP, ICMP) (optional)
+        currentPage: Page number for pagination (default: 1)
+        perPage: Results per page (default: 20)
+        sortColumn: Sort by field - bytes, packets, duration (default: bytes)
+        sortOrder: Sort direction - asc or desc (default: desc)
 
     Returns:
-        JSON with active flows summary by protocol, application, hosts
+        JSON with active flows including client/server IPs, ports, protocols, throughput
     """
     config = get_config()
 
     if not config.ntopng_host:
         return "Error: ntopng_host not configured in .env"
 
-    params = {"ifid": ifid}
-    if protocol:
-        params["protocol"] = protocol
+    params = {
+        "ifid": ifid,
+        "currentPage": currentPage,
+        "perPage": perPage,
+        "sortColumn": sortColumn,
+        "sortOrder": sortOrder
+    }
 
     url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/flow/active.lua?{urlencode(params)}"
 
@@ -270,9 +289,7 @@ def query_ntopng_flow_summary(
 
 @tool
 def query_ntopng_l7_protocols(ifid: int = 3) -> str:
-    """Get Layer 7 (application) protocol breakdown.
-
-    NOTE: This endpoint may not be available in ntopng Community Edition.
+    """Get Layer 7 (application) protocol traffic counters.
 
     Args:
         ifid: Interface ID (default: 3 for eth0)
@@ -285,7 +302,88 @@ def query_ntopng_l7_protocols(ifid: int = 3) -> str:
     if not config.ntopng_host:
         return "Error: ntopng_host not configured in .env"
 
-    url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/interface/l7/stats.lua?ifid={ifid}"
+    url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/flow/l7/counters.lua?ifid={ifid}"
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(
+                url,
+                auth=(config.ntopng_username or "", config.ntopng_password or "")
+            )
+
+            if response.status_code != 200:
+                return f"Error: HTTP {response.status_code} - {response.text[:200]}"
+
+            return response.text
+
+    except httpx.TimeoutException:
+        return "Error: Request timed out after 10 seconds"
+    except Exception as e:
+        return f"Error querying ntopng: {str(e)}"
+
+
+@tool
+def query_ntopng_arp_table(ifid: int = 3) -> str:
+    """Get the ARP (Address Resolution Protocol) table.
+
+    Shows mapping between IP addresses and MAC addresses on the network.
+
+    Args:
+        ifid: Interface ID (default: 3 for eth0)
+
+    Returns:
+        JSON with ARP entries (IP to MAC mappings)
+    """
+    config = get_config()
+
+    if not config.ntopng_host:
+        return "Error: ntopng_host not configured in .env"
+
+    url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/interface/arp.lua?ifid={ifid}"
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(
+                url,
+                auth=(config.ntopng_username or "", config.ntopng_password or "")
+            )
+
+            if response.status_code != 200:
+                return f"Error: HTTP {response.status_code} - {response.text[:200]}"
+
+            return response.text
+
+    except httpx.TimeoutException:
+        return "Error: Request timed out after 10 seconds"
+    except Exception as e:
+        return f"Error querying ntopng: {str(e)}"
+
+
+@tool
+def query_ntopng_host_l7_stats(
+    host: str,
+    ifid: int = 3
+) -> str:
+    """Get Layer 7 protocol statistics for a specific host.
+
+    Args:
+        host: IP address or hostname to query
+        ifid: Interface ID (default: 3 for eth0)
+
+    Returns:
+        JSON with L7 protocol breakdown for the host
+    """
+    config = get_config()
+
+    if not config.ntopng_host:
+        return "Error: ntopng_host not configured in .env"
+
+    params = {
+        "host": host,
+        "ifid": ifid
+    }
+
+    url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/host/l7/stats.lua?{urlencode(params)}"
 
     try:
         with httpx.Client(timeout=10.0) as client:
