@@ -215,17 +215,23 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 from starlette.routing import Route, Mount
 from starlette.requests import Request
 
-sse_transport = SseServerTransport("/messages")
+
+# Create SSE transport
+sse = SseServerTransport("/messages")
 
 
-async def handle_sse(scope, receive, send):
-    """Handle SSE connections for MCP."""
-    async with sse_transport.connect_sse(scope, receive, send) as (read_stream, write_stream):
-        await app.run(
-            read_stream,
-            write_stream,
-            app.create_initialization_options()
-        )
+class MCPSSEApp:
+    """ASGI app for MCP SSE connections."""
+
+    async def __call__(self, scope, receive, send):
+        """Handle ASGI request."""
+        async with sse.connect_sse(scope, receive, send) as streams:
+            read_stream, write_stream = streams
+            await app.run(
+                read_stream,
+                write_stream,
+                app.create_initialization_options()
+            )
 
 
 async def health_check(request: Request):
@@ -236,8 +242,8 @@ async def health_check(request: Request):
 # Create Starlette app
 starlette_app = Starlette(
     routes=[
-        Mount("/mcp/sse", app=handle_sse),
         Route("/health", health_check, methods=["GET"]),
+        Mount("/sse", app=MCPSSEApp()),
     ]
 )
 

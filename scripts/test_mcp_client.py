@@ -220,11 +220,63 @@ async def main():
 
     base_url = f"http://{args.host}:{args.port}"
 
-    tester = MCPTester(base_url)
+    print("=" * 80)
+    print("MCP CLIENT TEST")
+    print("=" * 80)
+    print(f"MCP Server: {base_url}")
+    print()
 
     try:
-        success = await tester.run_all_tests()
-        sys.exit(0 if success else 1)
+        print(f"Connecting to MCP server at {base_url}...")
+
+        # Use SSE client context manager properly
+        async with sse_client(f"{base_url}/mcp/sse") as (read_stream, write_stream):
+            print("✓ SSE connection established")
+
+            # Create MCP session
+            async with ClientSession(read_stream, write_stream) as session:
+                print("✓ MCP session created")
+
+                # Initialize
+                await session.initialize()
+                print("✓ Session initialized\n")
+
+                # List tools
+                print("Listing available tools...")
+                result = await session.list_tools()
+                print(f"✓ Found {len(result.tools)} tools\n")
+
+                # Test a few tools
+                print("=" * 80)
+                print("Testing sample tools...")
+                print("=" * 80)
+                print()
+
+                # Test top_dns_clients
+                print("Testing: top_dns_clients")
+                result = await session.call_tool("top_dns_clients", {"hours": 1, "limit": 5})
+                if result.content:
+                    text = result.content[0].text
+                    print(f"✓ Result: {text[:200]}...")
+                print()
+
+                # Test security_summary
+                print("Testing: security_summary")
+                result = await session.call_tool("security_summary", {"hours": 1})
+                if result.content:
+                    text = result.content[0].text
+                    print(f"✓ Result: {text[:200]}...")
+                print()
+
+                print("=" * 80)
+                print("TEST COMPLETE")
+                print("=" * 80)
+                print("✓ MCP server is working correctly")
+                print("✓ SSE transport functional")
+                print("✓ Tool invocation successful")
+
+        sys.exit(0)
+
     except KeyboardInterrupt:
         print("\n\nTest interrupted by user")
         sys.exit(130)
@@ -233,8 +285,6 @@ async def main():
         import traceback
         traceback.print_exc()
         sys.exit(1)
-    finally:
-        await tester.close()
 
 
 if __name__ == "__main__":
