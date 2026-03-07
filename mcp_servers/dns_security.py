@@ -181,7 +181,6 @@ if __name__ == "__main__":
 
     print("Starting DNS Security MCP Server (FastMCP + HTTP)...", file=sys.stderr)
     print(f"Server will listen on http://0.0.0.0:8080", file=sys.stderr)
-    print(f"Tools registered: {len(mcp.list_tools())}", file=sys.stderr)
     print(file=sys.stderr)
 
     # Run FastMCP server with uvicorn
