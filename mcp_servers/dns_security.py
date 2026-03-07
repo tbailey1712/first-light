@@ -177,16 +177,9 @@ def search_logs_for_ip(ip_address: str, hours: int = 1, limit: int = 100) -> str
 # === Main Entry Point ===
 
 if __name__ == "__main__":
-    import uvicorn
-
     print("Starting DNS Security MCP Server (FastMCP + HTTP)...", file=sys.stderr)
     print(f"Server will listen on http://0.0.0.0:8080", file=sys.stderr)
     print(file=sys.stderr)
 
-    # Run FastMCP server with uvicorn
-    uvicorn.run(
-        mcp.get_asgi_app(),
-        host="0.0.0.0",
-        port=8080,
-        log_level="info"
-    )
+    # Run FastMCP server
+    mcp.run(host="0.0.0.0", port=8080)
