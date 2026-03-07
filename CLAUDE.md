@@ -19,6 +19,101 @@ You are building **NetOps AI**, a unified network observability platform with AI
 
 **Next Phase:** Implement automated threat assessment reports
 
+## Deployment Workflow
+
+**CRITICAL: This project has a LOCAL/REMOTE split. Always follow this workflow.**
+
+### Environment Setup
+
+**LOCAL (Development):**
+- Path: `/Users/tbailey/Dev/first-light`
+- Purpose: Code development, git commits
+- Git: Push to GitHub from here
+- Docker: Do NOT run docker-compose here (runs on remote)
+
+**REMOTE (Production Docker Host):**
+- Hostname: `docker.mcducklabs.com`
+- IP: `192.168.2.106`
+- Path: `/opt/first-light`
+- Purpose: Docker containers run here
+- Git: Pull from GitHub to here
+- Docker: Run docker-compose commands here
+
+### Docker Context
+
+Active context: `signoz-remote` (SSH to tbailey@192.168.2.106)
+
+```bash
+# Check context
+docker context ls
+
+# Should show:
+# signoz-remote *   ssh://tbailey@192.168.2.106
+```
+
+### Standard Deployment Process
+
+**Step 1: LOCAL - Make changes**
+```bash
+cd /Users/tbailey/Dev/first-light
+# Make code changes
+git add .
+git commit -m "description"
+git push origin <branch>
+```
+
+**Step 2: REMOTE - Pull and deploy**
+```bash
+ssh tbailey@192.168.2.106
+cd /opt/first-light
+
+# Check current state
+git status
+git branch
+
+# Pull updates
+git pull origin <branch>   # or git checkout <branch> && git pull
+
+# Deploy
+docker-compose up -d --build <service>
+
+# Check logs
+docker-compose logs -f <service>
+```
+
+**Step 3: Verify**
+```bash
+# From LOCAL using remote context
+docker ps --filter "name=fl-"
+
+# Or SSH and check
+ssh tbailey@192.168.2.106 "docker ps --filter 'name=fl-'"
+```
+
+### Important Notes
+
+- **NEVER run docker-compose on LOCAL** - it should only run on REMOTE
+- **ALWAYS push from LOCAL, pull on REMOTE**
+- **Use signoz-remote docker context** when running docker commands from local that target remote
+- **SSH access:** You have passwordless SSH to tbailey@192.168.2.106
+- **Remote path is always /opt/first-light** - not ~/first-light or anywhere else
+
+### Quick Reference Commands
+
+```bash
+# Check what's running on remote
+docker ps
+
+# View remote logs
+docker logs -f <container-name>
+
+# Rebuild a service on remote
+ssh tbailey@192.168.2.106 "cd /opt/first-light && docker-compose up -d --build <service>"
+
+# Check remote git status
+ssh tbailey@192.168.2.106 "cd /opt/first-light && git status"
+```
+
 ## Architecture Overview
 
 **Current (Deployed):**
