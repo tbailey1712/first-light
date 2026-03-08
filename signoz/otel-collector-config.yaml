@@ -369,6 +369,69 @@ processors:
           - delete_key(attributes, "_is_ha") where attributes["_is_ha"] != nil
           - delete_key(attributes, "component") where attributes["component"] != nil
 
+  # ===== UniFi AP Log Parser =====
+  transform/unifi:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(attributes["_is_unifi"], "true") where IsMatch(body, "[a-f0-9]{12},[A-Z0-9]+-")
+          - merge_maps(attributes, ExtractPatterns(body, "(?P<ap_mac>[a-f0-9]{12}),"), "upsert") where attributes["_is_unifi"] == "true"
+          - set(attributes["unifi.ap_mac"], attributes["ap_mac"]) where attributes["ap_mac"] != nil
+          - delete_key(attributes, "ap_mac") where attributes["ap_mac"] != nil
+          - merge_maps(attributes, ExtractPatterns(body, ",(?P<model>[A-Z][A-Z0-9]+-[A-Z0-9-]+)-"), "upsert") where attributes["_is_unifi"] == "true"
+          - set(attributes["unifi.ap_model"], attributes["model"]) where attributes["model"] != nil
+          - delete_key(attributes, "model") where attributes["model"] != nil
+          - merge_maps(attributes, ExtractPatterns(body, "-(?P<firmware>\\d+\\.\\d+\\.\\d+\\+\\d+):"), "upsert") where attributes["_is_unifi"] == "true"
+          - set(attributes["unifi.firmware"], attributes["firmware"]) where attributes["firmware"] != nil
+          - delete_key(attributes, "firmware") where attributes["firmware"] != nil
+          - merge_maps(attributes, ExtractPatterns(body, "\\d{2}:\\d{2}:\\d{2}\\s+(?P<ap_hostname>[A-Za-z0-9_-]+)\\s+[a-f0-9]{12}"), "upsert") where attributes["_is_unifi"] == "true"
+          - set(attributes["unifi.ap_hostname"], attributes["ap_hostname"]) where attributes["ap_hostname"] != nil
+          - delete_key(attributes, "ap_hostname") where attributes["ap_hostname"] != nil
+          - merge_maps(attributes, ExtractPatterns(body, ":\\s+(?P<daemon>\\w+)\\[\\d+\\]:"), "upsert") where attributes["_is_unifi"] == "true"
+          - set(attributes["unifi.daemon"], attributes["daemon"]) where attributes["daemon"] != nil
+          - delete_key(attributes, "daemon") where attributes["daemon"] != nil
+          - merge_maps(attributes, ExtractPatterns(body, "\\[\\d+\\]:\\s+(?P<interface>(?:ra|wifi|wlan)[a-z0-9]+):"), "upsert") where attributes["_is_unifi"] == "true"
+          - set(attributes["unifi.interface"], attributes["interface"]) where attributes["interface"] != nil
+          - delete_key(attributes, "interface") where attributes["interface"] != nil
+          - merge_maps(attributes, ExtractPatterns(body, "STA\\s+(?P<client_mac>[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2})"), "upsert") where attributes["_is_unifi"] == "true"
+          - set(attributes["unifi.client_mac"], attributes["client_mac"]) where attributes["client_mac"] != nil
+          - delete_key(attributes, "client_mac") where attributes["client_mac"] != nil
+          - set(attributes["unifi.event_type"], "association") where attributes["_is_unifi"] == "true" and IsMatch(body, "IEEE 802\\.11: associated")
+          - set(attributes["unifi.event_type"], "disassociation") where attributes["_is_unifi"] == "true" and IsMatch(body, "IEEE 802\\.11: disassociated")
+          - set(attributes["unifi.event_type"], "deauthentication") where attributes["_is_unifi"] == "true" and IsMatch(body, "IEEE 802\\.11: deauthenticated")
+          - set(attributes["unifi.event_type"], "reassociation") where attributes["_is_unifi"] == "true" and IsMatch(body, "IEEE 802\\.11: reassociated")
+          - set(attributes["unifi.event_type"], "authentication") where attributes["_is_unifi"] == "true" and IsMatch(body, "IEEE 802\\.11: authenticated")
+          - set(attributes["unifi.event_type"], "radius_session_start") where attributes["_is_unifi"] == "true" and IsMatch(body, "RADIUS: starting accounting session")
+          - set(attributes["unifi.event_type"], "radius_session_stop") where attributes["_is_unifi"] == "true" and IsMatch(body, "RADIUS:.*?session.*?stop")
+          - set(attributes["unifi.event_type"], "wpa_handshake") where attributes["_is_unifi"] == "true" and IsMatch(body, "WPA:")
+          - set(attributes["unifi.event_type"], "roaming") where attributes["_is_unifi"] == "true" and IsMatch(body, "UBNT_ROAM")
+          - set(attributes["unifi.event_type"], "sta_authorized") where attributes["_is_unifi"] == "true" and IsMatch(body, "AP-STA-CONNECTED")
+          - set(attributes["unifi.event_type"], "sta_unauthorized") where attributes["_is_unifi"] == "true" and IsMatch(body, "AP-STA-DISCONNECTED")
+          - merge_maps(attributes, ExtractPatterns(body, "from_ap=(?P<from_ap_mac>[a-f0-9]{12})"), "upsert") where IsMatch(body, "UBNT_ROAM")
+          - set(attributes["unifi.roam_from_ap"], attributes["from_ap_mac"]) where attributes["from_ap_mac"] != nil
+          - delete_key(attributes, "from_ap_mac") where attributes["from_ap_mac"] != nil
+          - merge_maps(attributes, ExtractPatterns(body, "reason=(?P<reason_code>\\d+)"), "upsert") where attributes["_is_unifi"] == "true"
+          - set(attributes["unifi.reason_code"], attributes["reason_code"]) where attributes["reason_code"] != nil
+          - delete_key(attributes, "reason_code") where attributes["reason_code"] != nil
+          - merge_maps(attributes, ExtractPatterns(body, "signal=(?P<signal>-?\\d+)dBm"), "upsert") where attributes["_is_unifi"] == "true"
+          - set(attributes["unifi.signal_dbm"], attributes["signal"]) where attributes["signal"] != nil
+          - delete_key(attributes, "signal") where attributes["signal"] != nil
+          - merge_maps(attributes, ExtractPatterns(body, "\\]:\\s+(?:[a-z0-9]+:)?\\s*(?P<message>.+)$"), "upsert") where attributes["_is_unifi"] == "true"
+          - set(attributes["unifi.message"], attributes["message"]) where attributes["message"] != nil
+          - delete_key(attributes, "message") where attributes["message"] != nil
+          - set(attributes["severity"], "info") where attributes["unifi.event_type"] == "association"
+          - set(attributes["severity"], "info") where attributes["unifi.event_type"] == "reassociation"
+          - set(attributes["severity"], "info") where attributes["unifi.event_type"] == "authentication"
+          - set(attributes["severity"], "info") where attributes["unifi.event_type"] == "roaming"
+          - set(attributes["severity"], "debug") where attributes["unifi.event_type"] == "radius_session_start"
+          - set(attributes["severity"], "debug") where attributes["unifi.event_type"] == "wpa_handshake"
+          - set(attributes["severity"], "warning") where attributes["unifi.event_type"] == "disassociation"
+          - set(attributes["severity"], "warning") where attributes["unifi.event_type"] == "deauthentication"
+          - set(attributes["unifi.notable"], "true") where attributes["unifi.event_type"] == "roaming"
+          - set(attributes["unifi.notable"], "true") where attributes["unifi.reason_code"] != nil and attributes["unifi.reason_code"] != "3"
+          - delete_key(attributes, "_is_unifi") where attributes["_is_unifi"] != nil
+
   signozspanmetrics/delta:
     metrics_exporter: signozclickhousemetrics
     metrics_flush_interval: 60s
@@ -437,7 +500,7 @@ service:
       exporters: [signozclickhousemetrics, signozmeter]
     logs:
       receivers: [otlp, syslog]
-      processors: [transform/syslog, filter/noise_reduction, transform/device_context, transform/pfsense, transform/ssh_sudo, transform/ntopng, transform/homeassistant, batch]
+      processors: [transform/syslog, filter/noise_reduction, transform/device_context, transform/pfsense, transform/ssh_sudo, transform/ntopng, transform/homeassistant, transform/unifi, batch]
       exporters: [clickhouselogsexporter, signozmeter]
     metrics/meter:
       receivers: [signozmeter]
