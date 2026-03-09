@@ -432,6 +432,88 @@ processors:
           - set(attributes["unifi.notable"], "true") where attributes["unifi.reason_code"] != nil and attributes["unifi.reason_code"] != "3"
           - delete_key(attributes, "_is_unifi") where attributes["_is_unifi"] != nil
 
+  # ===== Proxmox VE Log Parser =====
+  transform/proxmox:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          # Only process Proxmox logs
+          - set(attributes["_is_pve"], "true") where resource.attributes["host.name"] == "pve"
+
+          # Extract daemon name and PID: pvedaemon[1413], pveproxy[1428], kernel
+          - merge_maps(attributes, ExtractPatterns(body, "pve\\s+(?P<daemon>[a-z]+)\\[(?P<pid>\\d+)\\]:"), "upsert") where attributes["_is_pve"] == "true"
+          - set(attributes["pve.daemon"], attributes["daemon"]) where attributes["daemon"] != nil
+          - set(attributes["pve.pid"], attributes["pid"]) where attributes["pid"] != nil
+          - delete_key(attributes, "daemon") where attributes["daemon"] != nil
+          - delete_key(attributes, "pid") where attributes["pid"] != nil
+
+          # Extract kernel events
+          - set(attributes["pve.daemon"], "kernel") where attributes["_is_pve"] == "true" and IsMatch(body, "pve kernel:")
+
+          # === Authentication Events ===
+          # Format: <root@pam> successful auth for user 'root@pam'
+          - merge_maps(attributes, ExtractPatterns(body, "<(?P<auth_user>[^>]+)>\\s+successful auth"), "upsert") where attributes["_is_pve"] == "true" and IsMatch(body, "successful auth")
+          - set(attributes["pve.auth.user"], attributes["auth_user"]) where attributes["auth_user"] != nil
+          - set(attributes["pve.auth.status"], "success") where attributes["auth_user"] != nil
+          - delete_key(attributes, "auth_user") where attributes["auth_user"] != nil
+
+          # Failed auth
+          - set(attributes["pve.auth.status"], "failure") where attributes["_is_pve"] == "true" and IsMatch(body, "authentication failure")
+
+          # === Security Events - AppArmor ===
+          # Format: audit: type=1400 audit(timestamp:id): apparmor="DENIED" operation="sendmsg" class="unix_stream_socket" ...
+          - merge_maps(attributes, ExtractPatterns(body, 'apparmor="(?P<apparmor_action>[^"]+)"'), "upsert") where attributes["_is_pve"] == "true" and IsMatch(body, "apparmor=")
+          - set(attributes["pve.security.apparmor"], attributes["apparmor_action"]) where attributes["apparmor_action"] != nil
+          - delete_key(attributes, "apparmor_action") where attributes["apparmor_action"] != nil
+
+          - merge_maps(attributes, ExtractPatterns(body, 'operation="(?P<operation>[^"]+)"'), "upsert") where attributes["pve.security.apparmor"] != nil
+          - set(attributes["pve.security.operation"], attributes["operation"]) where attributes["operation"] != nil
+          - delete_key(attributes, "operation") where attributes["operation"] != nil
+
+          - merge_maps(attributes, ExtractPatterns(body, 'profile="(?P<profile>[^"]+)"'), "upsert") where attributes["pve.security.apparmor"] != nil
+          - set(attributes["pve.security.profile"], attributes["profile"]) where attributes["profile"] != nil
+          - delete_key(attributes, "profile") where attributes["profile"] != nil
+
+          # === VM/Container Task Events ===
+          # Extract UPID (Unique Proxmox ID) format: UPID:pve:00003E8A:00123456:5F8D3A2B:vz...
+          - merge_maps(attributes, ExtractPatterns(body, "UPID:(?P<upid>[^:]+:[^:]+:[^:]+:[^:]+:[^:]+:[^\\s]+)"), "upsert") where attributes["_is_pve"] == "true" and IsMatch(body, "UPID:")
+          - set(attributes["pve.task.upid"], attributes["upid"]) where attributes["upid"] != nil
+          - delete_key(attributes, "upid") where attributes["upid"] != nil
+
+          # Extract VM/CT ID from common patterns: "VM 100", "CT 101", "vmid=100"
+          - merge_maps(attributes, ExtractPatterns(body, "(?:VM|CT)\\s+(?P<vmid>\\d+)"), "upsert") where attributes["_is_pve"] == "true" and IsMatch(body, "(?:VM|CT)\\s+\\d+")
+          - set(attributes["pve.vmid"], attributes["vmid"]) where attributes["vmid"] != nil
+          - delete_key(attributes, "vmid") where attributes["vmid"] != nil
+
+          # Alternative pattern: vmid=100
+          - merge_maps(attributes, ExtractPatterns(body, "vmid=(?P<vmid>\\d+)"), "upsert") where attributes["_is_pve"] == "true" and IsMatch(body, "vmid=") and attributes["pve.vmid"] == nil
+          - set(attributes["pve.vmid"], attributes["vmid"]) where attributes["vmid"] != nil
+          - delete_key(attributes, "vmid") where attributes["vmid"] != nil
+
+          # Extract task type: starting, stopping, migrating, backup, restore
+          - set(attributes["pve.task.type"], "start") where attributes["_is_pve"] == "true" and IsMatch(body, "start(?:ing|ed)")
+          - set(attributes["pve.task.type"], "stop") where attributes["_is_pve"] == "true" and IsMatch(body, "stop(?:ping|ped)")
+          - set(attributes["pve.task.type"], "migrate") where attributes["_is_pve"] == "true" and IsMatch(body, "migrat(?:ing|ed)")
+          - set(attributes["pve.task.type"], "backup") where attributes["_is_pve"] == "true" and IsMatch(body, "backup")
+          - set(attributes["pve.task.type"], "restore") where attributes["_is_pve"] == "true" and IsMatch(body, "restore")
+          - set(attributes["pve.task.type"], "create") where attributes["_is_pve"] == "true" and IsMatch(body, "creat(?:ing|ed)")
+          - set(attributes["pve.task.type"], "destroy") where attributes["_is_pve"] == "true" and IsMatch(body, "destroy(?:ing|ed)")
+
+          # === Event Classification ===
+          - set(attributes["pve.event.category"], "auth") where attributes["pve.auth.status"] != nil
+          - set(attributes["pve.event.category"], "security") where attributes["pve.security.apparmor"] != nil
+          - set(attributes["pve.event.category"], "vm_lifecycle") where attributes["pve.task.type"] != nil
+          - set(attributes["pve.event.category"], "daemon") where attributes["pve.daemon"] != nil and attributes["pve.event.category"] == nil
+
+          # Severity mapping
+          - set(attributes["security.severity"], "critical") where attributes["pve.security.apparmor"] == "DENIED"
+          - set(attributes["security.severity"], "warning") where attributes["pve.auth.status"] == "failure"
+          - set(attributes["security.severity"], "info") where attributes["pve.auth.status"] == "success"
+
+          # Cleanup
+          - delete_key(attributes, "_is_pve") where attributes["_is_pve"] != nil
+
   signozspanmetrics/delta:
     metrics_exporter: signozclickhousemetrics
     metrics_flush_interval: 60s
@@ -500,7 +582,7 @@ service:
       exporters: [signozclickhousemetrics, signozmeter]
     logs:
       receivers: [otlp, syslog]
-      processors: [transform/syslog, filter/noise_reduction, transform/device_context, transform/pfsense, transform/ssh_sudo, transform/ntopng, transform/homeassistant, transform/unifi, batch]
+      processors: [transform/syslog, filter/noise_reduction, transform/device_context, transform/pfsense, transform/ssh_sudo, transform/ntopng, transform/homeassistant, transform/unifi, transform/proxmox, batch]
       exporters: [clickhouselogsexporter, signozmeter]
     metrics/meter:
       receivers: [signozmeter]
