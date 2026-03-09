@@ -397,14 +397,14 @@ processors:
           - merge_maps(attributes, ExtractPatterns(body, "STA\\s+(?P<client_mac>[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2})"), "upsert") where attributes["_is_unifi"] == "true"
           - set(attributes["unifi.client_mac"], attributes["client_mac"]) where attributes["client_mac"] != nil
           - delete_key(attributes, "client_mac") where attributes["client_mac"] != nil
-          - "set(attributes[\"unifi.event_type\"], \"association\") where attributes[\"_is_unifi\"] == \"true\" and IsMatch(body, 'IEEE 802\\.11: associated')"
-          - "set(attributes[\"unifi.event_type\"], \"disassociation\") where attributes[\"_is_unifi\"] == \"true\" and IsMatch(body, 'IEEE 802\\.11: disassociated')"
-          - "set(attributes[\"unifi.event_type\"], \"deauthentication\") where attributes[\"_is_unifi\"] == \"true\" and IsMatch(body, 'IEEE 802\\.11: deauthenticated')"
-          - "set(attributes[\"unifi.event_type\"], \"reassociation\") where attributes[\"_is_unifi\"] == \"true\" and IsMatch(body, 'IEEE 802\\.11: reassociated')"
-          - "set(attributes[\"unifi.event_type\"], \"authentication\") where attributes[\"_is_unifi\"] == \"true\" and IsMatch(body, 'IEEE 802\\.11: authenticated')"
-          - "set(attributes[\"unifi.event_type\"], \"radius_session_start\") where attributes[\"_is_unifi\"] == \"true\" and IsMatch(body, 'RADIUS: starting accounting session')"
-          - "set(attributes[\"unifi.event_type\"], \"radius_session_stop\") where attributes[\"_is_unifi\"] == \"true\" and IsMatch(body, 'RADIUS:.*?session.*?stop')"
-          - "set(attributes[\"unifi.event_type\"], \"wpa_handshake\") where attributes[\"_is_unifi\"] == \"true\" and IsMatch(body, 'WPA:')"
+          - "set(attributes[\"unifi.event_type\"], \"association\") where attributes[\"_is_unifi\"] == \"true\" and IsMatch(body, \"IEEE 802\\\\.11: associated\")"
+          - "set(attributes[\"unifi.event_type\"], \"disassociation\") where attributes[\"_is_unifi\"] == \"true\" and IsMatch(body, \"IEEE 802\\\\.11: disassociated\")"
+          - "set(attributes[\"unifi.event_type\"], \"deauthentication\") where attributes[\"_is_unifi\"] == \"true\" and IsMatch(body, \"IEEE 802\\\\.11: deauthenticated\")"
+          - "set(attributes[\"unifi.event_type\"], \"reassociation\") where attributes[\"_is_unifi\"] == \"true\" and IsMatch(body, \"IEEE 802\\\\.11: reassociated\")"
+          - "set(attributes[\"unifi.event_type\"], \"authentication\") where attributes[\"_is_unifi\"] == \"true\" and IsMatch(body, \"IEEE 802\\\\.11: authenticated\")"
+          - "set(attributes[\"unifi.event_type\"], \"radius_session_start\") where attributes[\"_is_unifi\"] == \"true\" and IsMatch(body, \"RADIUS: starting accounting session\")"
+          - "set(attributes[\"unifi.event_type\"], \"radius_session_stop\") where attributes[\"_is_unifi\"] == \"true\" and IsMatch(body, \"RADIUS:.*?session.*?stop\")"
+          - "set(attributes[\"unifi.event_type\"], \"wpa_handshake\") where attributes[\"_is_unifi\"] == \"true\" and IsMatch(body, \"WPA:\")"
           - set(attributes["unifi.event_type"], "roaming") where attributes["_is_unifi"] == "true" and IsMatch(body, "UBNT_ROAM")
           - set(attributes["unifi.event_type"], "sta_authorized") where attributes["_is_unifi"] == "true" and IsMatch(body, "AP-STA-CONNECTED")
           - set(attributes["unifi.event_type"], "sta_unauthorized") where attributes["_is_unifi"] == "true" and IsMatch(body, "AP-STA-DISCONNECTED")
