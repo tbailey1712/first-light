@@ -463,15 +463,15 @@ processors:
 
           # === Security Events - AppArmor ===
           # Format: audit: type=1400 audit(timestamp:id): apparmor="DENIED" operation="sendmsg" class="unix_stream_socket" ...
-          - merge_maps(attributes, ExtractPatterns(body, 'apparmor="(?P<apparmor_action>[^"]+)"'), "upsert") where attributes["_is_pve"] == "true" and IsMatch(body, "apparmor=")
+          - merge_maps(attributes, ExtractPatterns(body, "apparmor=\\\"(?P<apparmor_action>[^\\\"]+)\\\""), "upsert") where attributes["_is_pve"] == "true" and IsMatch(body, "apparmor=")
           - set(attributes["pve.security.apparmor"], attributes["apparmor_action"]) where attributes["apparmor_action"] != nil
           - delete_key(attributes, "apparmor_action") where attributes["apparmor_action"] != nil
 
-          - merge_maps(attributes, ExtractPatterns(body, 'operation="(?P<operation>[^"]+)"'), "upsert") where attributes["pve.security.apparmor"] != nil
+          - merge_maps(attributes, ExtractPatterns(body, "operation=\\\"(?P<operation>[^\\\"]+)\\\""), "upsert") where attributes["pve.security.apparmor"] != nil
           - set(attributes["pve.security.operation"], attributes["operation"]) where attributes["operation"] != nil
           - delete_key(attributes, "operation") where attributes["operation"] != nil
 
-          - merge_maps(attributes, ExtractPatterns(body, 'profile="(?P<profile>[^"]+)"'), "upsert") where attributes["pve.security.apparmor"] != nil
+          - merge_maps(attributes, ExtractPatterns(body, "profile=\\\"(?P<profile>[^\\\"]+)\\\""), "upsert") where attributes["pve.security.apparmor"] != nil
           - set(attributes["pve.security.profile"], attributes["profile"]) where attributes["profile"] != nil
           - delete_key(attributes, "profile") where attributes["profile"] != nil
 
