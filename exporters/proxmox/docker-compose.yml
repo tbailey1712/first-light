@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  proxmox-exporter:
+    build: .
+    container_name: fl-proxmox-exporter
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      - EXPORTER_PORT=9002
+      - SCRAPE_INTERVAL=60
+    ports:
+      - "9002:9002"
+    networks:
+      - signoz-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:9002/metrics')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  signoz-net:
+    external: true
+    name: signoz-net
