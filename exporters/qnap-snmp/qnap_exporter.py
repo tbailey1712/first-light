@@ -16,7 +16,10 @@ import time
 import logging
 import re
 from typing import Dict, List, Any, Optional
-from pysnmp.hlapi import *
+from pysnmp.hlapi import (
+    getCmd, nextCmd, SnmpEngine, CommunityData, UdpTransportTarget,
+    ContextData, ObjectType, ObjectIdentity
+)
 from prometheus_client import start_http_server, Gauge, Counter, Info
 
 # Configure logging
