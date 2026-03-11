@@ -1,0 +1,2 @@
+pysnmp==7.1.8
+prometheus-client==0.21.0

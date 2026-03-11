@@ -1,0 +1,31 @@
+services:
+  qnap-snmp-exporter:
+    build: .
+    container_name: fl-qnap-snmp-exporter
+    restart: unless-stopped
+    environment:
+      - QNAP_HOST=nas.mcducklabs.com
+      - SNMP_COMMUNITY=public
+      - SNMP_PORT=161
+      - EXPORTER_PORT=9003
+      - SCRAPE_INTERVAL=60
+    ports:
+      - "9003:9003"
+    networks:
+      - signoz-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:9003/metrics')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  signoz-net:
+    external: true
+    name: signoz-net
