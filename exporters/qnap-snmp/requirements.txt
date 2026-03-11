@@ -1,2 +1,2 @@
-pysnmp==7.1.8
+pysnmp-lextudio==6.2.6
 prometheus-client==0.21.0
