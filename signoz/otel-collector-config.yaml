@@ -37,6 +37,13 @@ receivers:
             labels:
               job_name: proxmox
           scrape_interval: 60s
+        - job_name: qnap-nas
+          static_configs:
+          - targets:
+              - fl-qnap-snmp-exporter:9003
+            labels:
+              job_name: qnap-nas
+          scrape_interval: 60s
 processors:
   batch:
     send_batch_size: 10000
