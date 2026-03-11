@@ -15,11 +15,8 @@ import os
 import time
 import logging
 import re
+import subprocess
 from typing import Dict, List, Any, Optional
-from pysnmp.hlapi import (
-    getCmd, nextCmd, SnmpEngine, CommunityData, UdpTransportTarget,
-    ContextData, ObjectType, ObjectIdentity
-)
 from prometheus_client import start_http_server, Gauge, Counter, Info
 
 # Configure logging
@@ -69,7 +66,7 @@ qnap_memory_used = Gauge('qnap_memory_used_bytes', 'Used memory', ['host'])
 
 
 class QNAPSNMPClient:
-    """SNMP client for QNAP NAS."""
+    """SNMP client for QNAP NAS using subprocess."""
 
     def __init__(self, host: str, community: str, port: int = 161):
         self.host = host
@@ -77,52 +74,71 @@ class QNAPSNMPClient:
         self.port = port
 
     def get(self, oid: str) -> Optional[str]:
-        """Get single SNMP value."""
+        """Get single SNMP value using snmpget."""
         try:
-            iterator = getCmd(
-                SnmpEngine(),
-                CommunityData(self.community),
-                UdpTransportTarget((self.host, self.port), timeout=5, retries=1),
-                ContextData(),
-                ObjectType(ObjectIdentity(oid))
+            cmd = [
+                'snmpget', '-v', '2c', '-c', self.community,
+                '-Oqv',  # Output: quick, value only
+                f'{self.host}:{self.port}',
+                oid
+            ]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=5
             )
 
-            errorIndication, errorStatus, errorIndex, varBinds = next(iterator)
-
-            if errorIndication:
-                logger.error(f"SNMP error: {errorIndication}")
-                return None
-            elif errorStatus:
-                logger.error(f"SNMP error: {errorStatus.prettyPrint()}")
-                return None
+            if result.returncode == 0:
+                return result.stdout.strip()
             else:
-                for varBind in varBinds:
-                    return str(varBind[1])
+                logger.debug(f"SNMP get error for {oid}: {result.stderr}")
+                return None
+        except subprocess.TimeoutExpired:
+            logger.error(f"Timeout querying {oid}")
+            return None
         except Exception as e:
             logger.error(f"Error querying {oid}: {e}")
             return None
 
     def walk(self, oid: str) -> List[tuple]:
-        """Walk SNMP tree."""
+        """Walk SNMP tree using snmpwalk."""
         results = []
         try:
-            for (errorIndication, errorStatus, errorIndex, varBinds) in nextCmd(
-                SnmpEngine(),
-                CommunityData(self.community),
-                UdpTransportTarget((self.host, self.port), timeout=5, retries=1),
-                ContextData(),
-                ObjectType(ObjectIdentity(oid)),
-                lexicographicMode=False
-            ):
-                if errorIndication:
-                    logger.error(f"SNMP walk error: {errorIndication}")
-                    break
-                elif errorStatus:
-                    logger.error(f"SNMP walk error: {errorStatus.prettyPrint()}")
-                    break
-                else:
-                    for varBind in varBinds:
-                        results.append((str(varBind[0]), str(varBind[1])))
+            cmd = [
+                'snmpwalk', '-v', '2c', '-c', self.community,
+                '-Oen',  # Output: OID in numeric form
+                f'{self.host}:{self.port}',
+                oid
+            ]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if not line:
+                        continue
+                    # Parse format: OID = TYPE: value
+                    parts = line.split(' = ', 1)
+                    if len(parts) == 2:
+                        oid_part = parts[0].strip()
+                        value_part = parts[1].strip()
+                        # Remove type prefix (e.g., "STRING: ", "INTEGER: ")
+                        if ': ' in value_part:
+                            value = value_part.split(': ', 1)[1]
+                        else:
+                            value = value_part
+                        # Remove quotes from strings
+                        value = value.strip('"')
+                        results.append((oid_part, value))
+            else:
+                logger.debug(f"SNMP walk error for {oid}: {result.stderr}")
+        except subprocess.TimeoutExpired:
+            logger.error(f"Timeout walking {oid}")
         except Exception as e:
             logger.error(f"Error walking {oid}: {e}")
         return results
