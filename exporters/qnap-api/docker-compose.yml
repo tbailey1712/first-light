@@ -1,0 +1,33 @@
+services:
+  qnap-api-exporter:
+    build: .
+    container_name: fl-qnap-api-exporter
+    restart: unless-stopped
+    environment:
+      - QNAP_HOST=192.168.2.9
+      - QNAP_USERNAME=firstlight
+      - QNAP_PASSWORD=f1rstl1ght
+      - QNAP_PORT=8080
+      - QNAP_PROTOCOL=http
+      - EXPORTER_PORT=9004
+      - SCRAPE_INTERVAL=60
+    ports:
+      - "9004:9004"
+    networks:
+      - signoz-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:9004/metrics')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  signoz-net:
+    external: true
+    name: signoz-net

@@ -41,6 +41,7 @@ receivers:
           static_configs:
           - targets:
               - fl-qnap-snmp-exporter:9003
+              - fl-qnap-api-exporter:9004
             labels:
               job_name: qnap-nas
           scrape_interval: 60s
