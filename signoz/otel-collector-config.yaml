@@ -130,15 +130,16 @@ processors:
           - set(attributes["pfsense.raw"], body) where resource.attributes["service.name"] == "filterlog"
           # Split CSV and extract fields (filterlog format)
           # Field positions: 0=rule,1=subrule,2=anchor,3=tracker,4=interface,5=reason,6=action,7=direction,8=ipver,...,15=proto_num,16=proto_name,17=length,18=src_ip,19=dst_ip
-          - set(attributes["pfsense.interface"], Split(body, ",")[4]) where resource.attributes["service.name"] == "filterlog"
-          - set(attributes["pfsense.action"], Split(body, ",")[6]) where resource.attributes["service.name"] == "filterlog"
-          - set(attributes["pfsense.direction"], Split(body, ",")[7]) where resource.attributes["service.name"] == "filterlog"
-          - set(attributes["pfsense.protocol"], Split(body, ",")[16]) where resource.attributes["service.name"] == "filterlog"
-          - set(attributes["pfsense.src_ip"], Split(body, ",")[18]) where resource.attributes["service.name"] == "filterlog"
-          - set(attributes["pfsense.dst_ip"], Split(body, ",")[19]) where resource.attributes["service.name"] == "filterlog"
+          # NOTE: pfSense filterlog format varies by protocol (IPv4/IPv6, TCP/UDP/ICMP), so we check array bounds before accessing
+          - set(attributes["pfsense.interface"], Split(body, ",")[4]) where resource.attributes["service.name"] == "filterlog" and Len(Split(body, ",")) > 4
+          - set(attributes["pfsense.action"], Split(body, ",")[6]) where resource.attributes["service.name"] == "filterlog" and Len(Split(body, ",")) > 6
+          - set(attributes["pfsense.direction"], Split(body, ",")[7]) where resource.attributes["service.name"] == "filterlog" and Len(Split(body, ",")) > 7
+          - set(attributes["pfsense.protocol"], Split(body, ",")[16]) where resource.attributes["service.name"] == "filterlog" and Len(Split(body, ",")) > 16
+          - set(attributes["pfsense.src_ip"], Split(body, ",")[18]) where resource.attributes["service.name"] == "filterlog" and Len(Split(body, ",")) > 18
+          - set(attributes["pfsense.dst_ip"], Split(body, ",")[19]) where resource.attributes["service.name"] == "filterlog" and Len(Split(body, ",")) > 19
           # Extract ports for TCP/UDP (field 20 and 21)
-          - set(attributes["pfsense.src_port"], Split(body, ",")[20]) where resource.attributes["service.name"] == "filterlog" and (attributes["pfsense.protocol"] == "tcp" or attributes["pfsense.protocol"] == "udp")
-          - set(attributes["pfsense.dst_port"], Split(body, ",")[21]) where resource.attributes["service.name"] == "filterlog" and (attributes["pfsense.protocol"] == "tcp" or attributes["pfsense.protocol"] == "udp")
+          - set(attributes["pfsense.src_port"], Split(body, ",")[20]) where resource.attributes["service.name"] == "filterlog" and Len(Split(body, ",")) > 20 and (attributes["pfsense.protocol"] == "tcp" or attributes["pfsense.protocol"] == "udp")
+          - set(attributes["pfsense.dst_port"], Split(body, ",")[21]) where resource.attributes["service.name"] == "filterlog" and Len(Split(body, ",")) > 21 and (attributes["pfsense.protocol"] == "tcp" or attributes["pfsense.protocol"] == "udp")
           # Tag VLAN/network zone from interface name
           - set(attributes["network.vlan"], "trusted") where IsMatch(attributes["pfsense.interface"], "mvneta0.2")
           - set(attributes["network.vlan"], "iot") where IsMatch(attributes["pfsense.interface"], "mvneta0.3")
