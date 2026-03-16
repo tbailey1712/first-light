@@ -156,13 +156,18 @@ class QNAPAPIClient:
             return None
 
     def _xml_to_dict(self, element: ET.Element) -> Dict:
-        """Convert XML element to dictionary."""
+        """Convert XML element to dictionary, handling multiple elements with same tag."""
         result = {}
         for child in element:
-            if len(child) > 0:
-                result[child.tag] = self._xml_to_dict(child)
+            child_data = self._xml_to_dict(child) if len(child) > 0 else child.text
+
+            # If tag already exists, convert to list or append
+            if child.tag in result:
+                if not isinstance(result[child.tag], list):
+                    result[child.tag] = [result[child.tag]]
+                result[child.tag].append(child_data)
             else:
-                result[child.tag] = child.text
+                result[child.tag] = child_data
         return result
 
     def get_system_info(self) -> Optional[Dict]:
@@ -182,11 +187,11 @@ class QNAPAPIClient:
         })
 
     def get_volume_info(self) -> Optional[Dict]:
-        """Get volume/pool information."""
-        return self._request('/cgi-bin/disk/disk_manage.cgi', {
-            'store': 'poolInfo',
-            'func': 'vol_info',
-            'Pool': 'all'
+        """Get volume/pool information and usage."""
+        return self._request('/cgi-bin/management/chartReq.cgi', {
+            'chart_func': 'disk_usage',
+            'disk_select': 'all',
+            'include': 'all'
         })
 
     def get_containers(self) -> Optional[List]:
@@ -302,19 +307,69 @@ def collect_metrics(client: QNAPAPIClient, hostname: str):
                         qnap_network_tx_bytes.labels(host=hostname, interface=ifname).set(tx_packets)
                         logger.debug(f"Interface {ifname}: RX={rx_packets}, TX={tx_packets}")
 
-        # Disk info
-        disk_info = client.get_disk_info()
-        if disk_info:
-            logger.debug(f"Disk info response: {list(disk_info.keys())[:5]}")
-            # QNAP disk API structure varies - log for debugging
-            # Will implement once we see actual structure
-
         # Volume info
         vol_info = client.get_volume_info()
         if vol_info:
-            logger.debug(f"Volume info response: {list(vol_info.keys())[:5]}")
-            # QNAP volume API structure varies - log for debugging
-            # Will implement once we see actual structure
+            # Parse volumeUseList which contains usage data
+            volume_use_list = vol_info.get('volumeUseList', {})
+            volume_use = volume_use_list.get('volumeUse', [])
+
+            # volumeUse can be a single dict or a list
+            if isinstance(volume_use, dict):
+                volume_use = [volume_use]
+
+            # Also get volume list for labels
+            volume_list = vol_info.get('volumeList', {})
+            volumes = volume_list.get('volume', [])
+            if isinstance(volumes, dict):
+                volumes = [volumes]
+
+            # Create a map of volumeValue to volumeLabel
+            volume_labels = {}
+            for vol in volumes:
+                vol_value = vol.get('volumeValue')
+                vol_label = vol.get('volumeLabel', f'Volume{vol_value}')
+                vol_stat = vol.get('volumeStat', 'unknown')  # raid5, single, etc.
+                if vol_value:
+                    volume_labels[vol_value] = {
+                        'label': vol_label,
+                        'type': vol_stat
+                    }
+
+            logger.info(f"Found {len(volume_use)} volumes")
+            for vol_use in volume_use:
+                vol_value = vol_use.get('volumeValue')
+                total_size = parse_value(vol_use.get('total_size'))
+                free_size = parse_value(vol_use.get('free_size'))
+
+                if total_size > 0:
+                    used_size = total_size - free_size
+
+                    # Get volume label
+                    vol_info_data = volume_labels.get(vol_value, {'label': f'Volume{vol_value}', 'type': 'unknown'})
+                    vol_label = vol_info_data['label']
+                    vol_type = vol_info_data['type']
+
+                    qnap_volume_capacity.labels(
+                        host=hostname,
+                        volume=vol_label,
+                        pool=vol_type
+                    ).set(total_size)
+
+                    qnap_volume_used.labels(
+                        host=hostname,
+                        volume=vol_label,
+                        pool=vol_type
+                    ).set(used_size)
+
+                    qnap_volume_free.labels(
+                        host=hostname,
+                        volume=vol_label,
+                        pool=vol_type
+                    ).set(free_size)
+
+                    usage_pct = (used_size / total_size) * 100 if total_size > 0 else 0
+                    logger.debug(f"Volume {vol_label} ({vol_type}): {used_size/(1024**3):.1f}GB / {total_size/(1024**3):.1f}GB ({usage_pct:.1f}% used)")
 
         # Container Station
         containers = client.get_containers()
