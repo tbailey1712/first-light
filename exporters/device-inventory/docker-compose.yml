@@ -1,0 +1,32 @@
+services:
+  device-inventory:
+    build: .
+    container_name: fl-device-inventory
+    restart: unless-stopped
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - device_data:/data
+    ports:
+      - "9005:9005"
+    networks:
+      - signoz-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:9005/metrics')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  device_data:
+    name: fl-device-inventory-data
+
+networks:
+  signoz-net:
+    external: true
+    name: signoz-net

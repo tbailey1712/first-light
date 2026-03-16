@@ -1,0 +1,80 @@
+# Device Inventory Configuration
+# Copy this to config.yaml and fill in your actual values
+
+# UniFi Controller settings
+unifi:
+  enabled: true
+  host: "unifi.example.com"  # UniFi Controller hostname or IP
+  port: 8443
+  username: "admin"
+  password: "your-password-here"
+  site: "default"  # UniFi site name
+  verify_ssl: false
+
+# DHCP sources
+dhcp:
+  # pfSense DHCP leases
+  pfsense:
+    enabled: false
+    host: "192.168.1.1"
+    username: "admin"
+    password: "pfsense"
+    api_key: ""
+    api_secret: ""
+
+  # AdGuard Home DHCP
+  adguard:
+    enabled: false
+    host: "192.168.1.3"
+    port: 3000
+    username: "admin"
+    password: "adguard"
+
+# Inventory database
+database:
+  type: "sqlite"  # sqlite or postgresql
+  path: "/data/device_inventory.db"
+
+# Discovery settings
+discovery:
+  interval: 300  # Seconds between discovery runs
+  retain_days: 90  # How long to keep historical device data
+
+# Prometheus metrics
+metrics:
+  enabled: true
+  port: 9005
+
+# Device classification rules
+classification:
+  # Manufacturer-based classification (from MAC OUI)
+  manufacturer_rules:
+    "Apple": "laptop"
+    "Samsung": "phone"
+    "Google": "phone"
+    "Amazon": "iot"
+    "Philips": "iot"
+    "Sonos": "iot"
+    "Ring": "iot"
+    "Nest": "iot"
+    "Ubiquiti": "network"
+    "TP-Link": "network"
+
+  # Hostname pattern-based classification
+  hostname_rules:
+    "(?i)^pve": "server"
+    "(?i)^nas|qnap": "nas"
+    "(?i)^switch": "switch"
+    "(?i)^ap|unifi": "access-point"
+    "(?i)^fw|firewall|pfsense": "firewall"
+    "(?i)iphone|ipad": "phone"
+    "(?i)macbook|laptop": "laptop"
+    "(?i)desktop|imac": "desktop"
+    "(?i)tv|roku|chromecast": "media"
+    "(?i)printer": "printer"
+
+# Alert conditions
+alerts:
+  new_device: true  # Alert on new unknown devices
+  device_offline: true  # Alert when known device goes offline
+  unauthorized_vlan: true  # Alert on device in unexpected VLAN
