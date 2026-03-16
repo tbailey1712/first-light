@@ -136,6 +136,40 @@ services:
       timeout: 10s
       retries: 3
 
+  # ── Threat Intel Enricher — Batch IP enrichment ──────────────
+  # Queries ClickHouse for security events, enriches IPs via threat intel APIs
+  # Stores results in ClickHouse for query-time joins
+  threat-intel-enricher:
+    build: ./services/threat-intel-enricher
+    container_name: fl-threat-intel-enricher
+    restart: unless-stopped
+    environment:
+      - CLICKHOUSE_URL=http://clickhouse:8123
+      - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY}
+      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY}
+      - ALIENVAULT_API_KEY=${ALIENVAULT_API_KEY}
+      - THREAT_INTEL_CACHE_DIR=/data/threat_intel_cache
+      - ENRICHMENT_BATCH_SIZE=50
+      - ENRICHMENT_INTERVAL_MINUTES=30
+      - ENRICHMENT_LOOKBACK_HOURS=24
+      - ENRICHMENT_MAX_AGE_HOURS=24
+      - METRICS_PORT=9006
+      - TZ=America/Chicago
+    volumes:
+      - threat_intel_cache:/data/threat_intel_cache
+      - ./agent/tools:/app/agent/tools:ro
+    ports:
+      - "9006:9006"  # Prometheus metrics
+    networks:
+      - signoz-net
+    depends_on:
+      - clickhouse
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9006"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
 volumes:
   syslog_files:
     name: fl-syslog-files
@@ -143,6 +177,8 @@ volumes:
     name: fl-crowdsec-data
   crowdsec_config:
     name: fl-crowdsec-config
+  threat_intel_cache:
+    name: fl-threat-intel-cache
 
 networks:
   signoz-net:
