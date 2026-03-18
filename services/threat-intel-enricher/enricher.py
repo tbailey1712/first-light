@@ -22,9 +22,10 @@ from prometheus_client import Counter, Gauge, Histogram, start_http_server
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-# Add parent directory to path to import threat_intel module
-sys.path.append('/app/agent')
-from tools.threat_intel import ThreatIntelligence
+# Import threat_intel directly from tools dir to avoid loading agent's __init__.py
+# (which would require langchain_core, not present in this lightweight container)
+sys.path.insert(0, '/app/agent/tools')
+from threat_intel import ThreatIntelligence
 
 logging.basicConfig(
     level=logging.INFO,
