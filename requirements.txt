@@ -3,6 +3,7 @@
 # Core AI and Agent Framework
 langgraph>=0.2.50  # Used with ThreadPoolExecutor for parallel agent execution
 langchain-openai>=0.3.0
+openai>=1.0.0,<2.0.0  # langchain-openai 1.x not yet compatible with openai 2.x
 langchain-core>=0.3.0
 
 # LLM Routing and Observability
