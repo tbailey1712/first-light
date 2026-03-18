@@ -26,6 +26,11 @@ from agent.tools.logs import (
     query_infrastructure_events,
     search_logs_by_ip,
 )
+from agent.tools.threat_intel_tools import (
+    query_threat_intel_summary,
+    lookup_ip_threat_intel,
+    query_threat_intel_coverage,
+)
 
 
 def create_system_prompt() -> str:
@@ -89,13 +94,23 @@ You have tools to query:
 - **Wireless Health**: UniFi deauth events, client anomalies, roaming issues (query_wireless_health)
 - **Infrastructure**: Docker health checks, Home Assistant errors, Proxmox operations (query_infrastructure_events)
 - **IP Investigation**: Search all logs for a specific IP address (search_logs_by_ip)
+- **Threat Intelligence**: Enriched IP reputation from AbuseIPDB, VirusTotal, AlienVault:
+  - query_threat_intel_summary(hours, min_score) — blocked IPs joined with threat scores, sorted by severity
+  - lookup_ip_threat_intel(ip) — full reputation profile for a specific IP
+  - query_threat_intel_coverage() — how many blocked IPs have been enriched
 
-When analyzing:
-1. Start with security_summary for recent threats
-2. Use wireless_health to check WiFi stability
-3. Use infrastructure_events to verify service health
-4. Use search_logs_by_ip to investigate suspicious IPs
-5. Cross-reference AdGuard DNS data with firewall blocks
+When analyzing security:
+1. Call query_threat_intel_summary(hours=24) — this is the highest signal view, showing confirmed malicious IPs hitting the firewall
+2. Call query_security_summary(hours=24) for raw firewall and ntopng context
+3. For any high-scoring IPs (threat_score > 50), call lookup_ip_threat_intel for full details
+4. Use wireless_health and infrastructure_events for non-security health checks
+5. Cross-reference AdGuard DNS data with firewall block patterns
+
+Threat score interpretation:
+- 0-25: Low risk, likely benign scanner or crawler
+- 25-50: Moderate risk, monitor
+- 50-75: High risk, known bad actor
+- 75-100: Confirmed malicious, immediate attention warranted
 
 Always query tools to gather current data. Don't rely on assumptions or cached knowledge.
 
@@ -128,6 +143,10 @@ def create_agent():
         query_wireless_health,
         query_infrastructure_events,
         search_logs_by_ip,
+        # Threat Intelligence (queries enriched IP reputation from ClickHouse)
+        query_threat_intel_summary,
+        lookup_ip_threat_intel,
+        query_threat_intel_coverage,
     ]
     llm_with_tools = llm.bind_tools(tools)
 

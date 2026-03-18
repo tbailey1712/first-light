@@ -61,57 +61,46 @@ async def generate_daily_report() -> Dict[str, Any]:
     # Construct analysis prompt for the AI agent
     analysis_prompt = """Generate a comprehensive daily threat assessment report for the past 24 hours.
 
+Use these tools in this order:
+1. query_threat_intel_summary(hours=24) — START HERE. This shows confirmed threats hitting the firewall with reputation scores.
+2. query_security_summary(hours=24) — raw firewall block counts and ntopng alerts
+3. For any IPs with threat_score > 50 from step 1, call lookup_ip_threat_intel(ip) for full details
+4. query_adguard_block_rates(hours=24) — DNS filtering metrics
+5. query_infrastructure_events(hours=24) — Docker/HA/Proxmox health
+6. query_wireless_health(hours=24) — WiFi issues
+
 Include the following sections:
 
-1. **Executive Summary** (2-3 sentences)
-   - Overall security posture
-   - Critical threats or all-clear status
-   - Key findings
+## Executive Summary
+2-3 sentences: Overall security posture, any confirmed malicious IPs, all-clear or action required.
 
-2. **Security Metrics (24h)**
-   - Firewall blocks (count, top source IPs)
-   - DNS blocks (total, high-risk count)
-   - ntopng alerts (critical, warnings, types)
-   - SSH failures (if any >10)
+## Threat Intelligence Highlights
+- Confirmed malicious IPs blocked (threat_score > 50): count, top IPs with scores
+- High-confidence threats: IP, score, country, ASN, what they tried to do (target port/protocol)
+- Any IPs with AbuseIPDB score > 50 or VirusTotal malicious vendors > 2: call them out specifically
+- Enrichment coverage: X of Y blocked IPs enriched
 
-3. **Infrastructure Health**
-   - Docker container health
-   - Home Assistant errors (if any)
-   - Disk usage status
+## Security Metrics (24h)
+- Total firewall blocks, unique attacker IPs
+- DNS blocks (total, high-risk count from AdGuard)
+- ntopng alerts (if any)
 
-4. **Notable Events**
-   - List any significant security events
-   - Include: timestamp, source, target, action taken, context
-   - Only include if there ARE notable events (not routine blocks)
+## Infrastructure Health
+- Docker container health
+- Home Assistant errors (if any)
 
-5. **Cross-VLAN Traffic Alerts**
-   - Check for ANY traffic from Camera VLAN (3) or Validator VLAN (4)
-   - This is CRITICAL - these VLANs should be isolated
+## Notable Events
+Only include if genuinely notable (confirmed malicious actor, unusual pattern, cross-VLAN traffic).
+Cross-VLAN traffic from Camera VLAN (3) or Validator VLAN (4) is CRITICAL.
 
-6. **Action Items**
-   - Critical: Immediate action required
-   - Warning: Review within 24h
-   - Info: Low priority observations
-   - Only include if actions are ACTUALLY required
+## Action Items
+Only include if actions are ACTUALLY required:
+- CRITICAL: Block this IP, immediate investigation needed
+- WARNING: Monitor this pattern, review within 24h
+- INFO: Low priority
 
-7. **Trend Analysis**
-   - Compare today's metrics to 7-day average (if available)
-   - Highlight significant changes (>20% variance)
-
-Use the following tools to gather data:
-- query_security_summary(hours=24) for firewall and ntopng data
-- query_infrastructure_events(hours=24) for Docker/HA health
-- query_wireless_health(hours=24) for UniFi issues
-- query_adguard_block_rates(hours=24) for DNS metrics
-
-Format the report in clean Markdown with:
-- Clear section headers (##)
-- Bullet points for lists
-- **Bold** for emphasis
-- Emojis for quick visual scanning (🛡️ 🚨 ✅ ⚠️ 📊)
-- Specific numbers, IPs, timestamps
-
-Be concise but thorough. Focus on actionable intelligence.
+Format: clean Markdown, emojis for scanning (🛡️ 🚨 ✅ ⚠️ 🔴 🟡 🟢), specific IPs/counts/scores.
+Be concise. Skip sections that have nothing to report.
 """
     
     print("\n🤖 Querying AI agent for analysis...")
