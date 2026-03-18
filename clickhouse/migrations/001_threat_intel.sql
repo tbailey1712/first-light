@@ -79,8 +79,8 @@ AS SELECT
     argMax(version, enriched_at) as version,
     argMax(deleted, enriched_at) as deleted
 FROM threat_intel.enrichments
-WHERE deleted = 0
-GROUP BY ip;
+GROUP BY ip
+HAVING argMax(deleted, enriched_at) = 0;
 
 -- Index for fast lookups by threat score
 CREATE INDEX IF NOT EXISTS idx_threat_score ON threat_intel.enrichments (threat_score) TYPE minmax GRANULARITY 1;
