@@ -175,54 +175,53 @@ class ThreatIntelEnricher:
         """Query ClickHouse for IPs that need enrichment."""
         logger.info("Querying for IPs needing enrichment...")
 
-        # Query 1: Blocked IPs from pfSense (last 24h, not enriched or stale)
+        # Subquery: IPs already enriched recently (use raw table, not AggregatingMergeTree MV)
+        already_enriched = f"""
+            SELECT DISTINCT ip FROM threat_intel.enrichments
+            WHERE toDateTime(enriched_at) >= now() - INTERVAL {self.config.max_age_hours} HOUR
+        """
+
+        # Query 1: Blocked IPs from pfSense filterlog (SigNoz schema)
         blocked_query = f"""
-        SELECT DISTINCT src_ip as ip
-        FROM otel_logs
-        WHERE timestamp >= now() - INTERVAL {self.config.lookback_hours} HOUR
-          AND service_name = 'filterlog'
-          AND action = 'block'
-          AND src_ip NOT IN (
-              SELECT ip FROM threat_intel.enrichments_latest
-              WHERE enriched_at >= now() - INTERVAL {self.config.max_age_hours} HOUR
-          )
+        SELECT DISTINCT attributes_string['pfsense.src_ip'] as ip
+        FROM signoz_logs.logs_v2
+        WHERE toDateTime(timestamp / 1000000000) >= now() - INTERVAL {self.config.lookback_hours} HOUR
+          AND resources_string['service.name'] = 'filterlog'
+          AND attributes_string['pfsense.action'] = 'block'
+          AND attributes_string['pfsense.src_ip'] != ''
+          AND attributes_string['pfsense.src_ip'] NOT IN ({already_enriched})
         LIMIT {self.config.batch_size}
         """
 
-        # Query 2: Failed SSH attempts
+        # Query 2: Failed SSH attempts (parse IP from log body)
         ssh_query = f"""
-        SELECT DISTINCT source_ip as ip
-        FROM otel_logs
-        WHERE timestamp >= now() - INTERVAL {self.config.lookback_hours} HOUR
+        SELECT DISTINCT extract(body, 'from ([0-9]{{1,3}}\\.[0-9]{{1,3}}\\.[0-9]{{1,3}}\\.[0-9]{{1,3}})') as ip
+        FROM signoz_logs.logs_v2
+        WHERE toDateTime(timestamp / 1000000000) >= now() - INTERVAL {self.config.lookback_hours} HOUR
           AND (body LIKE '%Failed password%' OR body LIKE '%Invalid user%')
-          AND source_ip != ''
-          AND source_ip NOT IN (
-              SELECT ip FROM threat_intel.enrichments_latest
-              WHERE enriched_at >= now() - INTERVAL {self.config.max_age_hours} HOUR
-          )
+          AND ip != ''
+          AND ip NOT IN ({already_enriched})
         LIMIT {self.config.batch_size}
         """
 
-        # Query 3: DNS blocks from AdGuard
-        dns_query = f"""
-        SELECT DISTINCT client as ip
-        FROM otel_logs
-        WHERE timestamp >= now() - INTERVAL {self.config.lookback_hours} HOUR
-          AND service_name = 'adguard'
-          AND reason LIKE '%blocked%'
-          AND client NOT IN (
-              SELECT ip FROM threat_intel.enrichments_latest
-              WHERE enriched_at >= now() - INTERVAL {self.config.max_age_hours} HOUR
-          )
+        # Query 3: ntopng flow alerts (top external IPs with alerts)
+        ntopng_query = f"""
+        SELECT DISTINCT attributes_string['remote_ip'] as ip
+        FROM signoz_logs.logs_v2
+        WHERE toDateTime(timestamp / 1000000000) >= now() - INTERVAL {self.config.lookback_hours} HOUR
+          AND resources_string['service.name'] = 'ntopng'
+          AND attributes_string['alert_severity'] IN ('error', 'warning')
+          AND attributes_string['remote_ip'] != ''
+          AND ip NOT IN ({already_enriched})
         LIMIT {self.config.batch_size}
         """
 
         ips = set()
 
         for query_name, query in [
-            ('blocked', blocked_query),
+            ('pfsense_blocked', blocked_query),
             ('ssh_failed', ssh_query),
-            ('dns_blocked', dns_query)
+            ('ntopng_alerts', ntopng_query)
         ]:
             try:
                 results = self.ch_client.query(query)
