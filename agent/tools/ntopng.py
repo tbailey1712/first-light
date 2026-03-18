@@ -3,11 +3,15 @@ Tools for querying ntopng REST API for flow data and network statistics.
 
 All endpoints verified against ntopng v6.7 REST API v2 Swagger specification.
 Tested with ntopng Community Edition.
+
+Auth: ntopng v6 requires session cookie auth (Basic Auth returns 302).
+      _ntopng_client() handles login and returns an authenticated httpx.Client.
 """
 
 import httpx
 import json
-from typing import Optional, Literal
+from contextlib import contextmanager
+from typing import Optional
 from urllib.parse import urlencode
 
 from langchain_core.tools import tool
@@ -15,36 +19,50 @@ from langchain_core.tools import tool
 from agent.config import get_config
 
 
+@contextmanager
+def _ntopng_client():
+    """Yield an httpx.Client authenticated to ntopng via session cookie."""
+    config = get_config()
+    host = f"http://{config.ntopng_host}:{config.ntopng_port}"
+
+    with httpx.Client(timeout=15.0, follow_redirects=True) as client:
+        resp = client.post(
+            f"{host}/authorize.html",
+            data={
+                "user": config.ntopng_username or "admin",
+                "password": config.ntopng_password or "",
+            },
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"ntopng login failed: HTTP {resp.status_code}")
+        yield client, host
+
+
+def _get(path: str, params: Optional[dict] = None) -> str:
+    """Authenticated GET against ntopng REST API. Returns response text."""
+    try:
+        with _ntopng_client() as (client, host):
+            r = client.get(f"{host}{path}", params=params)
+            if r.status_code != 200:
+                return json.dumps({"error": f"HTTP {r.status_code}", "body": r.text[:200]})
+            return r.text
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ── Tools ──────────────────────────────────────────────────────────────────────
+
 @tool
 def query_ntopng_interfaces() -> str:
     """Get list of network interfaces monitored by ntopng.
 
     Returns:
-        JSON with interface names, IDs, and basic stats
+        JSON with interface names, IDs, and basic stats.
     """
     config = get_config()
-
     if not config.ntopng_host:
         return "Error: ntopng_host not configured in .env"
-
-    url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/ntopng/interfaces.lua"
-
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(
-                url,
-                auth=(config.ntopng_username or "", config.ntopng_password or "")
-            )
-
-            if response.status_code != 200:
-                return f"Error: HTTP {response.status_code} - {response.text[:200]}"
-
-            return response.text
-
-    except httpx.TimeoutException:
-        return "Error: Request timed out after 10 seconds"
-    except Exception as e:
-        return f"Error querying ntopng: {str(e)}"
+    return _get("/lua/rest/v2/get/ntopng/interfaces.lua")
 
 
 @tool
@@ -53,185 +71,91 @@ def query_ntopng_active_hosts(
     currentPage: int = 1,
     perPage: int = 20,
     sortColumn: str = "bytes",
-    sortOrder: str = "desc"
+    sortOrder: str = "desc",
 ) -> str:
-    """Get list of active hosts with traffic statistics.
-
-    This replaces the non-existent 'top_talkers' endpoint.
+    """Get active hosts sorted by traffic volume.
 
     Args:
         ifid: Interface ID (default: 3 for eth0)
-        currentPage: Page number for pagination (default: 1)
+        currentPage: Page number (default: 1)
         perPage: Results per page (default: 20)
-        sortColumn: Sort by field - bytes, packets, name (default: bytes)
-        sortOrder: Sort direction - asc or desc (default: desc)
+        sortColumn: Sort by bytes, packets, or name (default: bytes)
+        sortOrder: asc or desc (default: desc)
 
     Returns:
-        JSON with active hosts list including traffic stats, IPs, MACs
+        JSON with active hosts including traffic stats and IPs.
     """
     config = get_config()
-
     if not config.ntopng_host:
         return "Error: ntopng_host not configured in .env"
-
-    params = {
-        "ifid": ifid,
-        "currentPage": currentPage,
-        "perPage": perPage,
-        "sortColumn": sortColumn,
-        "sortOrder": sortOrder
-    }
-
-    url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/host/active.lua?{urlencode(params)}"
-
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(
-                url,
-                auth=(config.ntopng_username or "", config.ntopng_password or "")
-            )
-
-            if response.status_code != 200:
-                return f"Error: HTTP {response.status_code} - {response.text[:200]}"
-
-            return response.text
-
-    except httpx.TimeoutException:
-        return "Error: Request timed out after 10 seconds"
-    except Exception as e:
-        return f"Error querying ntopng: {str(e)}"
+    return _get("/lua/rest/v2/get/host/active.lua", {
+        "ifid": ifid, "currentPage": currentPage,
+        "perPage": perPage, "sortColumn": sortColumn, "sortOrder": sortOrder,
+    })
 
 
 @tool
 def query_ntopng_interface_stats(ifid: int = 3) -> str:
-    """Get detailed statistics for a specific network interface.
+    """Get traffic and flow statistics for a network interface.
 
     Args:
         ifid: Interface ID (default: 3 for eth0)
 
     Returns:
-        JSON with interface stats (bytes, packets, active hosts, flows)
+        JSON with bytes, packets, active hosts, flows, and alert counters.
     """
     config = get_config()
-
     if not config.ntopng_host:
         return "Error: ntopng_host not configured in .env"
-
-    url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/interface/data.lua?ifid={ifid}"
-
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(
-                url,
-                auth=(config.ntopng_username or "", config.ntopng_password or "")
-            )
-
-            if response.status_code != 200:
-                return f"Error: HTTP {response.status_code} - {response.text[:200]}"
-
-            return response.text
-
-    except httpx.TimeoutException:
-        return "Error: Request timed out after 10 seconds"
-    except Exception as e:
-        return f"Error querying ntopng: {str(e)}"
+    return _get("/lua/rest/v2/get/interface/data.lua", {"ifid": ifid})
 
 
 @tool
 def query_ntopng_alerts(
-    ifid: Optional[int] = 3,
+    ifid: int = 3,
     currentPage: int = 1,
-    perPage: int = 50,
-    severity: Optional[str] = None
+    perPage: int = 30,
+    severity: Optional[str] = None,
+    alert_type: Optional[str] = None,
 ) -> str:
-    """Get list of all alerts from ntopng.
+    """Get alerts from ntopng, filtered by severity.
 
     Args:
-        ifid: Interface ID to filter by (default: 3, use None for all interfaces)
-        currentPage: Page number for pagination (default: 1)
-        perPage: Results per page (default: 50)
-        severity: Alert severity filter - error, warning, info (optional)
+        ifid: Interface ID (default: 3)
+        currentPage: Page number (default: 1)
+        perPage: Results per page — keep low to avoid timeout (default: 30)
+        severity: Filter by severity: emergency, alert, critical, error, warning, notice, info, debug
+        alert_type: Optional alert type name to filter (e.g. 'flow_flood')
 
     Returns:
-        JSON with alerts list including type, severity, affected entities
+        JSON with alert list including type, severity, and affected entities.
     """
     config = get_config()
-
     if not config.ntopng_host:
         return "Error: ntopng_host not configured in .env"
-
-    params = {
-        "currentPage": currentPage,
-        "perPage": perPage
-    }
-
-    if ifid is not None:
-        params["ifid"] = ifid
+    params: dict = {"ifid": ifid, "currentPage": currentPage, "perPage": perPage}
     if severity:
         params["severity"] = severity
-
-    url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/all/alert/list.lua?{urlencode(params)}"
-
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(
-                url,
-                auth=(config.ntopng_username or "", config.ntopng_password or "")
-            )
-
-            if response.status_code != 200:
-                return f"Error: HTTP {response.status_code} - {response.text[:200]}"
-
-            return response.text
-
-    except httpx.TimeoutException:
-        return "Error: Request timed out after 10 seconds"
-    except Exception as e:
-        return f"Error querying ntopng: {str(e)}"
+    if alert_type:
+        params["alert_type"] = alert_type
+    return _get("/lua/rest/v2/get/all/alert/list.lua", params)
 
 
 @tool
-def query_ntopng_host_details(
-    host: str,
-    ifid: int = 3
-) -> str:
-    """Get detailed information about a specific host.
+def query_ntopng_host_details(host: str, ifid: int = 3) -> str:
+    """Get detailed traffic and flow information for a specific host.
 
     Args:
-        host: IP address or hostname to query
-        ifid: Interface ID (default: 3 for eth0)
+        host: IP address to query
+        ifid: Interface ID (default: 3)
 
     Returns:
-        JSON with host details (traffic stats, active flows, protocols)
+        JSON with host traffic stats, active flows, and protocol breakdown.
     """
     config = get_config()
-
     if not config.ntopng_host:
         return "Error: ntopng_host not configured in .env"
-
-    params = {
-        "host": host,
-        "ifid": ifid
-    }
-
-    url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/host/data.lua?{urlencode(params)}"
-
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(
-                url,
-                auth=(config.ntopng_username or "", config.ntopng_password or "")
-            )
-
-            if response.status_code != 200:
-                return f"Error: HTTP {response.status_code} - {response.text[:200]}"
-
-            return response.text
-
-    except httpx.TimeoutException:
-        return "Error: Request timed out after 10 seconds"
-    except Exception as e:
-        return f"Error querying ntopng: {str(e)}"
+    return _get("/lua/rest/v2/get/host/data.lua", {"host": host, "ifid": ifid})
 
 
 @tool
@@ -240,164 +164,73 @@ def query_ntopng_active_flows(
     currentPage: int = 1,
     perPage: int = 20,
     sortColumn: str = "bytes",
-    sortOrder: str = "desc"
+    sortOrder: str = "desc",
 ) -> str:
-    """Get list of active network flows.
+    """Get active network flows sorted by volume.
 
     Args:
-        ifid: Interface ID (default: 3 for eth0)
-        currentPage: Page number for pagination (default: 1)
+        ifid: Interface ID (default: 3)
+        currentPage: Page number (default: 1)
         perPage: Results per page (default: 20)
-        sortColumn: Sort by field - bytes, packets, duration (default: bytes)
-        sortOrder: Sort direction - asc or desc (default: desc)
+        sortColumn: Sort by bytes, packets, or duration (default: bytes)
+        sortOrder: asc or desc (default: desc)
 
     Returns:
-        JSON with active flows including client/server IPs, ports, protocols, throughput
+        JSON with active flows including client/server IPs, ports, protocols.
     """
     config = get_config()
-
     if not config.ntopng_host:
         return "Error: ntopng_host not configured in .env"
-
-    params = {
-        "ifid": ifid,
-        "currentPage": currentPage,
-        "perPage": perPage,
-        "sortColumn": sortColumn,
-        "sortOrder": sortOrder
-    }
-
-    url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/flow/active.lua?{urlencode(params)}"
-
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(
-                url,
-                auth=(config.ntopng_username or "", config.ntopng_password or "")
-            )
-
-            if response.status_code != 200:
-                return f"Error: HTTP {response.status_code} - {response.text[:200]}"
-
-            return response.text
-
-    except httpx.TimeoutException:
-        return "Error: Request timed out after 10 seconds"
-    except Exception as e:
-        return f"Error querying ntopng: {str(e)}"
+    return _get("/lua/rest/v2/get/flow/active.lua", {
+        "ifid": ifid, "currentPage": currentPage,
+        "perPage": perPage, "sortColumn": sortColumn, "sortOrder": sortOrder,
+    })
 
 
 @tool
 def query_ntopng_l7_protocols(ifid: int = 3) -> str:
-    """Get Layer 7 (application) protocol traffic counters.
+    """Get Layer 7 application protocol traffic counters.
 
     Args:
-        ifid: Interface ID (default: 3 for eth0)
+        ifid: Interface ID (default: 3)
 
     Returns:
-        JSON with traffic breakdown by application protocol (HTTP, DNS, TLS, SSH, etc.)
+        JSON with traffic breakdown by application protocol (HTTP, DNS, TLS, etc.)
     """
     config = get_config()
-
     if not config.ntopng_host:
         return "Error: ntopng_host not configured in .env"
-
-    url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/flow/l7/counters.lua?ifid={ifid}"
-
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(
-                url,
-                auth=(config.ntopng_username or "", config.ntopng_password or "")
-            )
-
-            if response.status_code != 200:
-                return f"Error: HTTP {response.status_code} - {response.text[:200]}"
-
-            return response.text
-
-    except httpx.TimeoutException:
-        return "Error: Request timed out after 10 seconds"
-    except Exception as e:
-        return f"Error querying ntopng: {str(e)}"
+    return _get("/lua/rest/v2/get/flow/l7/counters.lua", {"ifid": ifid})
 
 
 @tool
 def query_ntopng_arp_table(ifid: int = 3) -> str:
-    """Get the ARP (Address Resolution Protocol) table.
-
-    Shows mapping between IP addresses and MAC addresses on the network.
+    """Get the ARP table showing IP-to-MAC mappings.
 
     Args:
-        ifid: Interface ID (default: 3 for eth0)
+        ifid: Interface ID (default: 3)
 
     Returns:
-        JSON with ARP entries (IP to MAC mappings)
+        JSON with ARP entries.
     """
     config = get_config()
-
     if not config.ntopng_host:
         return "Error: ntopng_host not configured in .env"
-
-    url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/interface/arp.lua?ifid={ifid}"
-
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(
-                url,
-                auth=(config.ntopng_username or "", config.ntopng_password or "")
-            )
-
-            if response.status_code != 200:
-                return f"Error: HTTP {response.status_code} - {response.text[:200]}"
-
-            return response.text
-
-    except httpx.TimeoutException:
-        return "Error: Request timed out after 10 seconds"
-    except Exception as e:
-        return f"Error querying ntopng: {str(e)}"
+    return _get("/lua/rest/v2/get/interface/arp.lua", {"ifid": ifid})
 
 
 @tool
-def query_ntopng_host_l7_stats(
-    host: str,
-    ifid: int = 3
-) -> str:
-    """Get Layer 7 protocol statistics for a specific host.
+def query_ntopng_host_l7_stats(host: str, ifid: int = 3) -> str:
+    """Get Layer 7 protocol breakdown for a specific host.
 
     Args:
-        host: IP address or hostname to query
-        ifid: Interface ID (default: 3 for eth0)
+        host: IP address to query
+        ifid: Interface ID (default: 3)
 
     Returns:
-        JSON with L7 protocol breakdown for the host
+        JSON with L7 protocol stats for the host.
     """
     config = get_config()
-
     if not config.ntopng_host:
         return "Error: ntopng_host not configured in .env"
-
-    params = {
-        "host": host,
-        "ifid": ifid
-    }
-
-    url = f"http://{config.ntopng_host}:{config.ntopng_port}/lua/rest/v2/get/host/l7/stats.lua?{urlencode(params)}"
-
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(
-                url,
-                auth=(config.ntopng_username or "", config.ntopng_password or "")
-            )
-
-            if response.status_code != 200:
-                return f"Error: HTTP {response.status_code} - {response.text[:200]}"
-
-            return response.text
-
-    except httpx.TimeoutException:
-        return "Error: Request timed out after 10 seconds"
-    except Exception as e:
-        return f"Error querying ntopng: {str(e)}"
+    return _get("/lua/rest/v2/get/host/l7/stats.lua", {"host": host, "ifid": ifid})
