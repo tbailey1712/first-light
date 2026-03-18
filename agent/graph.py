@@ -31,6 +31,8 @@ from agent.tools.threat_intel_tools import (
     lookup_ip_threat_intel,
     query_threat_intel_coverage,
 )
+from agent.tools.qnap_tools import query_qnap_health
+from agent.tools.proxmox_tools import query_proxmox_health
 
 
 def create_system_prompt() -> str:
@@ -94,6 +96,7 @@ You have tools to query:
 - **Wireless Health**: UniFi deauth events, client anomalies, roaming issues (query_wireless_health)
 - **Infrastructure**: Docker health checks, Home Assistant errors, Proxmox operations (query_infrastructure_events)
 - **IP Investigation**: Search all logs for a specific IP address (search_logs_by_ip)
+- **Hardware Health**: query_qnap_health (NAS volumes/disks/temps), query_proxmox_health (VMs/containers/storage)
 - **Threat Intelligence**: Enriched IP reputation from AbuseIPDB, VirusTotal, AlienVault:
   - query_threat_intel_summary(hours, min_score) — blocked IPs joined with threat scores, sorted by severity
   - lookup_ip_threat_intel(ip) — full reputation profile for a specific IP
@@ -147,6 +150,9 @@ def create_agent():
         query_threat_intel_summary,
         lookup_ip_threat_intel,
         query_threat_intel_coverage,
+        # Hardware health (Prometheus endpoints)
+        query_qnap_health,
+        query_proxmox_health,
     ]
     llm_with_tools = llm.bind_tools(tools)
 
