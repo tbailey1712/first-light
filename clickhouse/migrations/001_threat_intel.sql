@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS threat_intel.enrichments (
 ENGINE = ReplacingMergeTree(enriched_at, deleted)
 PARTITION BY toYYYYMM(enriched_at)
 ORDER BY (ip, enriched_at)
-TTL enriched_at + INTERVAL 90 DAY
+TTL toDateTime(enriched_at) + INTERVAL 90 DAY
 SETTINGS index_granularity = 8192;
 
 -- Query-optimized view for latest enrichments (non-deleted only)
