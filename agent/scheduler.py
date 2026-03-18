@@ -62,8 +62,8 @@ async def _notify_failure(job_name: str, error: str):
         pass
 
 
-def main():
-    """Entry point: start the scheduler."""
+async def _run():
+    """Async main loop."""
     tz = os.getenv("TZ", "America/Chicago")
     report_hour = int(os.getenv("DAILY_REPORT_HOUR", "8"))
     report_minute = int(os.getenv("DAILY_REPORT_MINUTE", "0"))
@@ -72,41 +72,39 @@ def main():
     logger.info(f"Daily report scheduled at {report_hour:02d}:{report_minute:02d} {tz}")
 
     scheduler = AsyncIOScheduler(timezone=tz)
-
     scheduler.add_job(
         run_daily_report,
         trigger=CronTrigger(hour=report_hour, minute=report_minute, timezone=tz),
         id="daily_report",
         name="Daily Threat Assessment",
         max_instances=1,
-        misfire_grace_time=3600,  # Run up to 1h late if missed
+        misfire_grace_time=3600,
     )
-
-    loop = asyncio.get_event_loop()
-
-    def shutdown(sig, frame):
-        logger.info(f"Received {signal.Signals(sig).name}, shutting down...")
-        scheduler.shutdown(wait=False)
-        loop.stop()
-
-    signal.signal(signal.SIGTERM, shutdown)
-    signal.signal(signal.SIGINT, shutdown)
-
     scheduler.start()
-    logger.info("Scheduler running. Press Ctrl+C to stop.")
+    logger.info("Scheduler running.")
 
-    # Run the daily report immediately on startup if RUN_ON_STARTUP=true
+    # Run immediately on startup if requested
     if os.getenv("RUN_ON_STARTUP", "false").lower() == "true":
         logger.info("RUN_ON_STARTUP=true — running daily report now...")
-        loop.run_until_complete(run_daily_report())
+        await run_daily_report()
 
-    try:
-        loop.run_forever()
-    except (KeyboardInterrupt, SystemExit):
-        pass
-    finally:
+    # Keep alive until SIGTERM/SIGINT
+    stop_event = asyncio.Event()
+
+    def _stop(sig, frame):
+        logger.info(f"Received {signal.Signals(sig).name}, shutting down...")
         scheduler.shutdown(wait=False)
-        logger.info("Scheduler stopped.")
+        stop_event.set()
+
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
+
+    await stop_event.wait()
+    logger.info("Scheduler stopped.")
+
+
+def main():
+    asyncio.run(_run())
 
 
 if __name__ == "__main__":
