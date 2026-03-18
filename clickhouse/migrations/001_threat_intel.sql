@@ -55,7 +55,7 @@ ENGINE = AggregatingMergeTree()
 ORDER BY ip
 AS SELECT
     ip,
-    maxState(enriched_at) as enriched_at,
+    maxState(enriched_at) as last_seen,
     argMaxState(abuseipdb_score, enriched_at) as abuseipdb_score,
     argMaxState(abuseipdb_reports, enriched_at) as abuseipdb_reports,
     argMaxState(abuseipdb_distinct_users, enriched_at) as abuseipdb_distinct_users,
