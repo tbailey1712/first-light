@@ -48,39 +48,39 @@ ORDER BY (ip, enriched_at)
 TTL toDateTime(enriched_at) + INTERVAL 90 DAY
 SETTINGS index_granularity = 8192;
 
--- Query-optimized view for latest enrichments (non-deleted only)
+-- Query-optimized view for latest enrichment per IP
+-- Use WHERE deleted = 0 at query time to exclude soft-deleted records
 CREATE MATERIALIZED VIEW IF NOT EXISTS threat_intel.enrichments_latest
-ENGINE = ReplacingMergeTree(enriched_at, deleted)
+ENGINE = AggregatingMergeTree()
 ORDER BY ip
 AS SELECT
     ip,
-    argMax(enriched_at, enriched_at) as enriched_at,
-    argMax(abuseipdb_score, enriched_at) as abuseipdb_score,
-    argMax(abuseipdb_reports, enriched_at) as abuseipdb_reports,
-    argMax(abuseipdb_distinct_users, enriched_at) as abuseipdb_distinct_users,
-    argMax(abuseipdb_country_code, enriched_at) as abuseipdb_country_code,
-    argMax(abuseipdb_usage_type, enriched_at) as abuseipdb_usage_type,
-    argMax(abuseipdb_is_whitelisted, enriched_at) as abuseipdb_is_whitelisted,
-    argMax(virustotal_malicious, enriched_at) as virustotal_malicious,
-    argMax(virustotal_suspicious, enriched_at) as virustotal_suspicious,
-    argMax(virustotal_harmless, enriched_at) as virustotal_harmless,
-    argMax(virustotal_reputation, enriched_at) as virustotal_reputation,
-    argMax(virustotal_as_owner, enriched_at) as virustotal_as_owner,
-    argMax(virustotal_country, enriched_at) as virustotal_country,
-    argMax(alienvault_pulse_count, enriched_at) as alienvault_pulse_count,
-    argMax(alienvault_pulses, enriched_at) as alienvault_pulses,
-    argMax(alienvault_country_code, enriched_at) as alienvault_country_code,
-    argMax(threat_score, enriched_at) as threat_score,
-    argMax(is_malicious, enriched_at) as is_malicious,
-    argMax(confidence, enriched_at) as confidence,
-    argMax(categories, enriched_at) as categories,
-    argMax(recommendation, enriched_at) as recommendation,
-    argMax(error_sources, enriched_at) as error_sources,
-    argMax(version, enriched_at) as version,
-    argMax(deleted, enriched_at) as deleted
+    maxState(enriched_at) as enriched_at,
+    argMaxState(abuseipdb_score, enriched_at) as abuseipdb_score,
+    argMaxState(abuseipdb_reports, enriched_at) as abuseipdb_reports,
+    argMaxState(abuseipdb_distinct_users, enriched_at) as abuseipdb_distinct_users,
+    argMaxState(abuseipdb_country_code, enriched_at) as abuseipdb_country_code,
+    argMaxState(abuseipdb_usage_type, enriched_at) as abuseipdb_usage_type,
+    argMaxState(abuseipdb_is_whitelisted, enriched_at) as abuseipdb_is_whitelisted,
+    argMaxState(virustotal_malicious, enriched_at) as virustotal_malicious,
+    argMaxState(virustotal_suspicious, enriched_at) as virustotal_suspicious,
+    argMaxState(virustotal_harmless, enriched_at) as virustotal_harmless,
+    argMaxState(virustotal_reputation, enriched_at) as virustotal_reputation,
+    argMaxState(virustotal_as_owner, enriched_at) as virustotal_as_owner,
+    argMaxState(virustotal_country, enriched_at) as virustotal_country,
+    argMaxState(alienvault_pulse_count, enriched_at) as alienvault_pulse_count,
+    argMaxState(alienvault_pulses, enriched_at) as alienvault_pulses,
+    argMaxState(alienvault_country_code, enriched_at) as alienvault_country_code,
+    argMaxState(threat_score, enriched_at) as threat_score,
+    argMaxState(is_malicious, enriched_at) as is_malicious,
+    argMaxState(confidence, enriched_at) as confidence,
+    argMaxState(categories, enriched_at) as categories,
+    argMaxState(recommendation, enriched_at) as recommendation,
+    argMaxState(error_sources, enriched_at) as error_sources,
+    argMaxState(version, enriched_at) as version,
+    argMaxState(deleted, enriched_at) as deleted
 FROM threat_intel.enrichments
-GROUP BY ip
-HAVING argMax(deleted, enriched_at) = 0;
+GROUP BY ip;
 
 -- Index for fast lookups by threat score
 CREATE INDEX IF NOT EXISTS idx_threat_score ON threat_intel.enrichments (threat_score) TYPE minmax GRANULARITY 1;
