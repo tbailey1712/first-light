@@ -153,6 +153,44 @@ def get_agent_prompt(
     return manager.get_prompt(agent_type, version=version)
 
 
+def get_agent_prompt_with_fallback(
+    agent_type: str,
+    fallback: str,
+    version: Optional[int] = None,
+    **vars,
+) -> str:
+    """
+    Fetch a prompt from Langfuse, returning fallback on any failure.
+
+    Use this in automated pipelines where Langfuse being unreachable should
+    not halt execution. get_agent_prompt() remains available for tooling that
+    needs hard failures.
+
+    Args:
+        agent_type: Prompt slug in Langfuse (e.g., "first-light-dns")
+        fallback: String to return if Langfuse is unreachable or prompt not found
+        version: Specific version (None = latest production label)
+        **vars: Template variables to compile into the prompt
+
+    Returns:
+        Compiled prompt text from Langfuse, or fallback string
+    """
+    import logging as _logging
+    try:
+        manager = get_prompt_manager()
+        return manager.get_prompt(agent_type, version=version, **vars)
+    except Exception as e:
+        _logging.getLogger(__name__).warning(
+            f"Langfuse prompt fetch failed for '{agent_type}', using fallback: {e}"
+        )
+        if vars:
+            try:
+                return fallback.format(**vars)
+            except KeyError:
+                pass
+        return fallback
+
+
 # Decorator for tracing agent execution
 def trace_agent(
     agent_type: str,
