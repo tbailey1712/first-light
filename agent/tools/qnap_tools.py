@@ -17,7 +17,6 @@ def _parse_prometheus(text: str) -> Dict[str, List[Tuple[Dict, float]]]:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        # metric_name{label="v",...} value [timestamp]
         m = re.match(r'^([a-zA-Z_:][a-zA-Z0-9_:]*)\{([^}]*)\}\s+([\d.eE+\-]+)', line)
         if m:
             name, labels_str, val = m.group(1), m.group(2), m.group(3)
@@ -35,7 +34,6 @@ def _parse_prometheus(text: str) -> Dict[str, List[Tuple[Dict, float]]]:
 
 
 def _first(metrics, name, labels_filter=None):
-    """Get first matching metric value."""
     for labels, val in metrics.get(name, []):
         if labels_filter is None or all(labels.get(k) == v for k, v in labels_filter.items()):
             return val
@@ -46,6 +44,12 @@ def _gb(bytes_val):
     if bytes_val is None:
         return None
     return round(bytes_val / 1e9, 1)
+
+
+def _pct(used, total):
+    if used and total:
+        return round(used / total * 100, 1)
+    return None
 
 
 @tool
@@ -65,65 +69,83 @@ def query_qnap_health() -> str:
     m = _parse_prometheus(resp.text)
 
     # --- CPU / Memory ---
-    cpu = _first(m, "qnap_system_cpu_usage_percent")
-    mem_used = _first(m, "qnap_system_memory_used_bytes")
-    mem_total = _first(m, "qnap_system_memory_total_bytes")
-    mem_pct = round(mem_used / mem_total * 100, 1) if mem_used and mem_total else None
+    cpu = _first(m, "qnap_cpu_usage_percent")
+    mem_used = _first(m, "qnap_memory_used_bytes")
+    mem_total = _first(m, "qnap_memory_total_bytes")
+    mem_free = _first(m, "qnap_memory_free_bytes")
+    mem_pct = _pct(mem_used, mem_total)
+    uptime_days = None
+    uptime_s = _first(m, "qnap_uptime_seconds")
+    if uptime_s:
+        uptime_days = round(uptime_s / 86400, 1)
 
     # --- Temperatures ---
     temps = {}
-    for labels, val in m.get("qnap_temperature_celsius", []):
-        comp = labels.get("component", labels.get("sensor", "unknown"))
-        temps[comp] = val
+    cpu_temp = _first(m, "qnap_cpu_temperature_celsius")
+    sys_temp = _first(m, "qnap_system_temperature_celsius")
+    if cpu_temp is not None:
+        temps["cpu"] = cpu_temp
+    if sys_temp is not None:
+        temps["system"] = sys_temp
+    # Per-disk temps
+    for labels, val in m.get("qnap_disk_temperature_celsius", []):
+        disk = labels.get("disk", labels.get("slot", "unknown"))
+        temps[f"disk_{disk}"] = val
 
     # --- Volumes ---
     volumes = {}
-    for labels, val in m.get("qnap_volume_size_total_bytes", []):
-        vol = labels.get("volume", labels.get("name", "unknown"))
-        volumes.setdefault(vol, {})["total_gb"] = _gb(val)
-    for labels, val in m.get("qnap_volume_size_used_bytes", []):
-        vol = labels.get("volume", labels.get("name", "unknown"))
-        volumes.setdefault(vol, {})["used_gb"] = _gb(val)
-    for labels, val in m.get("qnap_volume_status", []):
-        vol = labels.get("volume", labels.get("name", "unknown"))
-        volumes.setdefault(vol, {})["status"] = "ready" if val == 1 else "degraded"
+    for labels, val in m.get("qnap_volume_capacity_bytes", []):
+        vol = labels.get("volume", "unknown")
+        pool = labels.get("pool", "")
+        key = f"{vol} ({pool})" if pool and pool != "unknown" else vol
+        volumes.setdefault(key, {})["total_gb"] = _gb(val)
+    for labels, val in m.get("qnap_volume_used_bytes", []):
+        vol = labels.get("volume", "unknown")
+        pool = labels.get("pool", "")
+        key = f"{vol} ({pool})" if pool and pool != "unknown" else vol
+        volumes.setdefault(key, {})["used_gb"] = _gb(val)
+    for labels, val in m.get("qnap_volume_free_bytes", []):
+        vol = labels.get("volume", "unknown")
+        pool = labels.get("pool", "")
+        key = f"{vol} ({pool})" if pool and pool != "unknown" else vol
+        volumes.setdefault(key, {})["free_gb"] = _gb(val)
 
     for vol, info in volumes.items():
-        if info.get("total_gb") and info.get("used_gb"):
-            info["used_pct"] = round(info["used_gb"] / info["total_gb"] * 100, 1)
+        info["used_pct"] = _pct(info.get("used_gb"), info.get("total_gb"))
 
     # --- Disks ---
     disks = {}
     for labels, val in m.get("qnap_disk_smart_status", []):
         disk = labels.get("disk", labels.get("slot", "unknown"))
-        disks[disk] = "ok" if val == 1 else "warn"
+        disks[disk] = {"smart": "ok" if val == 1 else "warn"}
     for labels, val in m.get("qnap_disk_temperature_celsius", []):
         disk = labels.get("disk", labels.get("slot", "unknown"))
-        disks.setdefault(disk, {})
-        if isinstance(disks[disk], str):
-            disks[disk] = {"smart": disks[disk], "temp_c": val}
+        disks.setdefault(disk, {})["temp_c"] = val
 
     # --- Alerts ---
     alerts = []
-    if cpu and cpu > 85:
+    if cpu is not None and cpu > 85:
         alerts.append(f"CPU high: {cpu}%")
-    if mem_pct and mem_pct > 90:
+    if mem_pct is not None and mem_pct > 90:
         alerts.append(f"Memory high: {mem_pct}%")
     for vol, info in volumes.items():
-        if info.get("used_pct", 0) > 85:
-            alerts.append(f"Volume {vol} disk usage: {info['used_pct']}%")
-        if info.get("status") == "degraded":
-            alerts.append(f"Volume {vol} is DEGRADED")
+        if info.get("used_pct") and info["used_pct"] > 85:
+            alerts.append(f"Volume '{vol}' usage: {info['used_pct']}%")
     for temp_name, temp_val in temps.items():
         if temp_val > 65:
             alerts.append(f"High temperature {temp_name}: {temp_val}°C")
+    for disk, info in disks.items():
+        if isinstance(info, dict) and info.get("smart") == "warn":
+            alerts.append(f"Disk {disk} SMART warning")
 
     return json.dumps({
         "system": {
             "cpu_pct": cpu,
             "memory_used_gb": _gb(mem_used),
             "memory_total_gb": _gb(mem_total),
+            "memory_free_gb": _gb(mem_free),
             "memory_pct": mem_pct,
+            "uptime_days": uptime_days,
         },
         "temperatures_c": temps,
         "volumes": volumes,
