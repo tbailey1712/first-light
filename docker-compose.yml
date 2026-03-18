@@ -131,8 +131,35 @@ services:
     depends_on:
       - clickhouse
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Agent Scheduler — Daily threat assessment reports ─────────
+  # Runs the LangGraph agent on a schedule to generate and send reports
+  # Daily report: 08:00 America/Chicago
+  agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    container_name: fl-agent
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - TZ=America/Chicago
+      - DAILY_REPORT_HOUR=8
+      - DAILY_REPORT_MINUTE=0
+      - FIRST_LIGHT_REPORTS_DIR=/data/reports
+    volumes:
+      - agent_reports:/data/reports
+    networks:
+      - signoz-net
+    depends_on:
+      - clickhouse
+    healthcheck:
+      test: ["CMD", "python", "-c", "import apscheduler; print('ok')"]
+      interval: 60s
       timeout: 10s
       retries: 3
 
@@ -165,7 +192,7 @@ services:
     depends_on:
       - clickhouse
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9006"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9006')"]
       interval: 60s
       timeout: 10s
       retries: 3
@@ -179,6 +206,8 @@ volumes:
     name: fl-crowdsec-config
   threat_intel_cache:
     name: fl-threat-intel-cache
+  agent_reports:
+    name: fl-agent-reports
 
 networks:
   signoz-net:
