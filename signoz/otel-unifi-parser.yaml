@@ -96,8 +96,8 @@ transform/unifi:
         # ===== Extract Message Text =====
         # Get everything after the interface name
         - merge_maps(attributes, ExtractPatterns(body, "\\]:\\s+(?:[a-z0-9]+:)?\\s*(?P<message>.+)$"), "upsert") where attributes["_is_unifi"] == "true"
-        - set(attributes["unifi.message"], attributes["message"]) where attributes["message"] != nil
-        - delete_key(attributes, "message") where attributes["message"] != nil
+        - set(attributes["unifi.message"], attributes["message"]) where attributes["message"] != nil and attributes["_is_unifi"] == "true"
+        - delete_key(attributes, "message") where attributes["message"] != nil and attributes["_is_unifi"] == "true"
 
         # ===== Categorize Event Severity =====
         - set(attributes["severity"], "info") where attributes["unifi.event_type"] == "association"

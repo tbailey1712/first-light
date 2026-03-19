@@ -39,10 +39,10 @@ transform/ssh_sudo:
         - set(attributes["ssh.event"], "disconnect") where IsMatch(body, "Connection closed|Disconnected from")
 
         # Session opened
-        - set(attributes["ssh.event"], "session_opened") where IsMatch(body, "session opened for user")
+        - set(attributes["ssh.event"], "session_opened") where IsMatch(body, "session opened for user") and IsMatch(body, "sshd\\[\\d+\\]")
 
         # Session closed
-        - set(attributes["ssh.event"], "session_closed") where IsMatch(body, "session closed for user")
+        - set(attributes["ssh.event"], "session_closed") where IsMatch(body, "session closed for user") and IsMatch(body, "sshd\\[\\d+\\]")
 
         # Extract SSH fields using ExtractPatterns with named groups
         # Successful login: "Accepted password for USER from IP port PORT"
