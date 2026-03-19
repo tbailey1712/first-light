@@ -8,7 +8,7 @@ langchain-core>=0.3.0
 
 # LLM Routing and Observability
 litellm>=1.50.0
-langfuse>=3.0  # Compatible with v3.139 server
+langfuse>=4.0  # 4.0 uses @observe decorator + OTel attributes API
 
 # HTTP and Networking
 httpx>=0.27.0

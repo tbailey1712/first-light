@@ -33,6 +33,7 @@ from agent.domains.daily_report import (
     run_wireless_agent,
     run_validator_agent,
 )
+from langfuse import observe
 from agent.langfuse_integration import get_agent_prompt_with_fallback
 from agent.llm import chat
 
@@ -277,6 +278,7 @@ graph = _builder.compile()
 
 # ── Public entrypoint ──────────────────────────────────────────────────────────
 
+@observe(as_type="span", capture_input=False, capture_output=False)
 def generate_daily_report(hours: int = 24) -> str:
     """
     Run the full daily report pipeline via LangGraph.
@@ -288,35 +290,34 @@ def generate_daily_report(hours: int = 24) -> str:
         Final report markdown string
     """
     import uuid
-    from langfuse import get_client as get_langfuse_client
+    from langfuse import get_client as get_langfuse_client, LangfuseOtelSpanAttributes
+    from opentelemetry import trace as otel_trace
 
     start = datetime.utcnow()
     session_id = f"daily-report-{start.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
     logger.info("=== Daily Report Generation Start (LangGraph) session=%s ===", session_id)
 
+    # Tag this trace in Langfuse
     lf = get_langfuse_client()
+    span = otel_trace.get_current_span()
+    span.set_attribute(LangfuseOtelSpanAttributes.TRACE_NAME, session_id)
+    span.set_attribute(LangfuseOtelSpanAttributes.TRACE_SESSION_ID, session_id)
+    span.set_attribute(LangfuseOtelSpanAttributes.TRACE_TAGS, ["daily-report"])
+    lf.update_current_span(name="daily-report", input={"hours": hours})
 
-    with lf.start_as_current_span(name="daily-report"):
-        lf.update_current_trace(
-            name=session_id,
-            session_id=session_id,
-            metadata={"hours": hours},
-            tags=["daily-report"],
-        )
+    initial_state: DailyReportState = {
+        "hours": hours,
+        "session_id": session_id,
+        "domain_results": [],
+        "prompts": {},
+        "final_report": None,
+    }
 
-        initial_state: DailyReportState = {
-            "hours": hours,
-            "session_id": session_id,
-            "domain_results": [],
-            "prompts": {},
-            "final_report": None,
-        }
+    result = graph.invoke(initial_state)
+    final_report = result.get("final_report") or ""
 
-        result = graph.invoke(initial_state)
-        final_report = result.get("final_report") or ""
-
-        lf.update_current_span(output=final_report[:500])  # summary in trace
-        lf.flush()
+    lf.update_current_span(output=final_report[:500])
+    lf.flush()
 
     elapsed = (datetime.utcnow() - start).total_seconds()
     logger.info("=== Daily Report Complete in %.1fs session=%s ===", elapsed, session_id)
