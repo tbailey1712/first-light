@@ -7,17 +7,18 @@ via operator.add reducer, then passed to a synthesis node.
 Flow:
   START
     └─ initialize  (fetch Langfuse prompts)
-         └─ [Send x6]  run_domain  (parallel fan-out, sequential in sync invoke)
-              └─ synthesize  (Opus — reads all summaries, writes final report)
+         └─ [Send x6]  run_domain  (fan-out)
+              └─ synthesize  (writes final report)
                    └─ END
 
-Public interface (unchanged from ThreadPoolExecutor version):
+All LLM calls go through agent.llm — tracing handled there.
+
+Public interface:
     generate_daily_report(hours=24) -> str
 """
 
 import logging
 import operator
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Annotated, Optional, TypedDict
 
@@ -33,7 +34,7 @@ from agent.domains.daily_report import (
     run_validator_agent,
 )
 from agent.langfuse_integration import get_agent_prompt_with_fallback
-from agent.model_config import create_llm_for_agent_type
+from agent.llm import chat
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +60,6 @@ LANGFUSE_PROMPT_NAMES = {
     "synthesis":       "first-light-synthesis",
 }
 
-# Hardcoded fallbacks (from agent/domains/daily_report.py constants)
-# Empty string = domain node uses its own hardcoded constant
-FALLBACK_PROMPTS = {k: "" for k in DOMAIN_AGENTS}
-
 
 # ── State ──────────────────────────────────────────────────────────────────────
 
@@ -74,17 +71,19 @@ class DomainResult(TypedDict):
 class DomainNodeInput(TypedDict):
     domain: str
     hours: int
-    prompt_override: str   # empty = use domain function's hardcoded constant
+    session_id: str
+    prompt_override: str
 
 
 class DailyReportState(TypedDict):
     hours: int
+    session_id: str
     domain_results: Annotated[list[DomainResult], operator.add]
     prompts: dict[str, str]
     final_report: Optional[str]
 
 
-# ── Synthesis prompt (Langfuse fallback) ───────────────────────────────────────
+# ── Synthesis prompt fallback ──────────────────────────────────────────────────
 
 SYNTHESIS_SYSTEM = """You are First Light AI, the synthesis agent for a home/prosumer network observability platform.
 
@@ -102,13 +101,7 @@ Network context:
 - VLAN 3: CCTV — fully isolated, no WAN, no cross-VLAN (any external traffic = CRITICAL)
 - VLAN 4: DMZ — WAN only (Ethereum validator)
 - VLAN 10: WiFi Guest
-
-Cross-VLAN rules:
-- VLAN 3 (CCTV) generating ANY external or cross-VLAN traffic = CRITICAL
-- VLAN 4 (DMZ) receiving inbound connections beyond Ethereum P2P ports (9000, 30303) = investigate
 - VLAN 2 IoT devices with high DNS block rates may be normal telemetry — check device type before escalating
-
-All IPs should be referred to by hostname where known.
 
 Severity levels:
 - 🔴 CRITICAL: Active threat, service down, validator offline, cross-VLAN breach
@@ -180,9 +173,14 @@ Write the final synthesized report now.
 
 def initialize(state: DailyReportState) -> dict:
     """Fetch Langfuse prompts for all domains. Falls back gracefully."""
+    hours = state["hours"]
     prompts = {}
+
     for domain, slug in LANGFUSE_PROMPT_NAMES.items():
-        prompts[domain] = get_agent_prompt_with_fallback(slug, fallback="")
+        if domain == "synthesis":
+            prompts[domain] = get_agent_prompt_with_fallback(slug, fallback="")
+        else:
+            prompts[domain] = get_agent_prompt_with_fallback(slug, fallback="", hours=hours)
 
     fetched = [k for k, v in prompts.items() if v]
     if fetched:
@@ -195,17 +193,21 @@ def initialize(state: DailyReportState) -> dict:
 
 def run_domain(state: DomainNodeInput) -> dict:
     """
-    Single domain node, invoked 6 times in parallel via Send fan-out.
+    Single domain node, invoked 6 times via Send fan-out.
     Returns one DomainResult appended into domain_results via operator.add.
     """
     domain_name = state["domain"]
     hours = state["hours"]
-    # TODO Phase 2: pass state["prompt_override"] into domain fn when supported
+    session_id = state["session_id"]
+    prompt_override = state.get("prompt_override") or ""
 
     fn = DOMAIN_AGENTS[domain_name]
-    logger.info(f"Running {domain_name}...")
+    logger.info(
+        "Running %s%s...", domain_name,
+        " (Langfuse prompt)" if prompt_override else " (hardcoded prompt)"
+    )
     try:
-        summary = fn(hours)
+        summary = fn(hours, prompt_override=prompt_override, session_id=session_id)
     except Exception as e:
         logger.error(f"Domain node '{domain_name}' failed: {e}", exc_info=True)
         summary = f"**{domain_name}**: Agent failed — {e}"
@@ -217,7 +219,6 @@ def synthesize(state: DailyReportState) -> dict:
     """Synthesis node — reads all domain results, writes final markdown report."""
     domain_summaries = {r["domain"]: r["summary"] for r in state["domain_results"]}
 
-    # Use Langfuse synthesis prompt if available, otherwise hardcoded fallback
     synthesis_system = state["prompts"].get("synthesis") or SYNTHESIS_SYSTEM
 
     date_str = datetime.now().strftime("%Y-%m-%d")
@@ -237,12 +238,11 @@ def synthesize(state: DailyReportState) -> dict:
         {"role": "user", "content": user_message},
     ]
 
-    llm = create_llm_for_agent_type("synthesis")
     logger.info("Running synthesis node...")
-    response = llm.invoke(messages)
+    response = chat(messages, "synthesis", session_id=state["session_id"], agent_name="synthesis")
     logger.info("Synthesis complete.")
 
-    return {"final_report": response.content}
+    return {"final_report": response.choices[0].message.content}
 
 
 # ── Routing ────────────────────────────────────────────────────────────────────
@@ -253,6 +253,7 @@ def dispatch_domains(state: DailyReportState) -> list[Send]:
         Send("run_domain", {
             "domain": domain_name,
             "hours": state["hours"],
+            "session_id": state["session_id"],
             "prompt_override": state["prompts"].get(domain_name, ""),
         })
         for domain_name in DOMAIN_AGENTS
@@ -274,14 +275,11 @@ _builder.add_edge("synthesize", END)
 graph = _builder.compile()
 
 
-# ── Public entrypoint (interface unchanged) ────────────────────────────────────
+# ── Public entrypoint ──────────────────────────────────────────────────────────
 
 def generate_daily_report(hours: int = 24) -> str:
     """
     Run the full daily report pipeline via LangGraph.
-
-    Interface preserved from the ThreadPoolExecutor implementation.
-    Called by agent/reports/daily_threat_assessment.py via run_in_executor.
 
     Args:
         hours: Lookback window (default 24h)
@@ -289,22 +287,41 @@ def generate_daily_report(hours: int = 24) -> str:
     Returns:
         Final report markdown string
     """
+    import uuid
+    from langfuse import get_client as get_langfuse_client
+
     start = datetime.utcnow()
-    logger.info("=== Daily Report Generation Start (LangGraph) ===")
+    session_id = f"daily-report-{start.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    logger.info("=== Daily Report Generation Start (LangGraph) session=%s ===", session_id)
 
-    initial_state: DailyReportState = {
-        "hours": hours,
-        "domain_results": [],
-        "prompts": {},
-        "final_report": None,
-    }
+    lf = get_langfuse_client()
 
-    result = graph.invoke(initial_state)
+    with lf.start_as_current_span(name="daily-report"):
+        lf.update_current_trace(
+            name=session_id,
+            session_id=session_id,
+            metadata={"hours": hours},
+            tags=["daily-report"],
+        )
+
+        initial_state: DailyReportState = {
+            "hours": hours,
+            "session_id": session_id,
+            "domain_results": [],
+            "prompts": {},
+            "final_report": None,
+        }
+
+        result = graph.invoke(initial_state)
+        final_report = result.get("final_report") or ""
+
+        lf.update_current_span(output=final_report[:500])  # summary in trace
+        lf.flush()
 
     elapsed = (datetime.utcnow() - start).total_seconds()
-    logger.info(f"=== Daily Report Complete in {elapsed:.1f}s ===")
+    logger.info("=== Daily Report Complete in %.1fs session=%s ===", elapsed, session_id)
 
-    return result.get("final_report") or ""
+    return final_report
 
 
 # ── CLI test entrypoint ────────────────────────────────────────────────────────
@@ -317,7 +334,7 @@ if __name__ == "__main__":
         stream=sys.stderr,
     )
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(override=True)
 
     hours = int(sys.argv[1]) if len(sys.argv) > 1 else 24
 

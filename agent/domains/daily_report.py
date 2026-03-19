@@ -13,80 +13,12 @@ These summaries are collected and handed to the synthesis agent in
 agent/graphs/daily_report_graph.py.
 """
 
-import json
 import logging
-from typing import List
+from typing import Optional
 
-from langchain_core.tools import BaseTool
-
-from agent.model_config import create_llm_for_agent_type
+from agent.llm import run_react_loop
 
 logger = logging.getLogger(__name__)
-
-MAX_TOOL_ITERATIONS = 12
-
-
-def _run_react_loop(
-    system_prompt: str,
-    user_prompt: str,
-    tools: List[BaseTool],
-    agent_name: str,
-) -> str:
-    """
-    Run a ReAct tool-calling loop and return the final text response.
-
-    Args:
-        system_prompt: Domain-specific system prompt
-        user_prompt: Analysis request
-        tools: Tools available to the agent
-        agent_name: Name for logging
-
-    Returns:
-        Final text response from the agent
-    """
-    llm = create_llm_for_agent_type("micro")
-    llm_with_tools = llm.bind_tools(tools)
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
-
-    iteration = 0
-    while iteration < MAX_TOOL_ITERATIONS:
-        response = llm_with_tools.invoke(messages)
-
-        if not (hasattr(response, "tool_calls") and response.tool_calls):
-            # No more tool calls — return the final text
-            return response.content or f"[{agent_name}: no content returned]"
-
-        # Execute tool calls
-        messages.append(response)
-        for tc in response.tool_calls:
-            tool = next((t for t in tools if t.name == tc["name"]), None)
-            if tool:
-                try:
-                    result = tool.invoke(tc["args"])
-                except Exception as e:
-                    result = f"Tool error: {e}"
-            else:
-                result = f"Unknown tool: {tc['name']}"
-
-            messages.append({
-                "role": "tool",
-                "content": str(result),
-                "tool_call_id": tc["id"],
-            })
-
-        iteration += 1
-
-    # Hit iteration limit — ask for a final answer
-    messages.append({
-        "role": "user",
-        "content": "Provide your final summary now based on the data collected.",
-    })
-    final = llm_with_tools.invoke(messages)
-    return final.content or f"[{agent_name}: no final content]"
 
 
 # ─────────────────────────────────────────────
@@ -121,7 +53,11 @@ Be specific: include IPs, counts, ports. Skip generic commentary.
 FIREWALL_THREAT_USER = "Analyse firewall blocks and threat intelligence for the past {hours} hours."
 
 
-def run_firewall_threat_agent(hours: int = 24) -> str:
+def run_firewall_threat_agent(
+    hours: int = 24,
+    prompt_override: str = "",
+    session_id: Optional[str] = None,
+) -> str:
     """Run the firewall + threat intelligence domain agent."""
     from agent.tools.logs import query_security_summary
     from agent.tools.threat_intel_tools import (
@@ -131,12 +67,12 @@ def run_firewall_threat_agent(hours: int = 24) -> str:
     )
 
     tools = [query_threat_intel_summary, query_security_summary, lookup_ip_threat_intel, query_threat_intel_coverage]
-    system = FIREWALL_THREAT_SYSTEM.format(hours=hours)
+    system = prompt_override or FIREWALL_THREAT_SYSTEM.format(hours=hours)
     user = FIREWALL_THREAT_USER.format(hours=hours)
 
     logger.info("Running firewall_threat_agent...")
     try:
-        return _run_react_loop(system, user, tools, "firewall_threat_agent")
+        return run_react_loop(system, user, tools, "firewall_threat", session_id=session_id)
     except Exception as e:
         logger.error(f"firewall_threat_agent failed: {e}", exc_info=True)
         return f"**Firewall/Threat Intel**: Agent failed — {e}"
@@ -173,7 +109,11 @@ Be specific: include client IPs, domain names, counts. Skip normal/expected acti
 DNS_USER = "Analyse DNS security activity for the past {hours} hours."
 
 
-def run_dns_agent(hours: int = 24) -> str:
+def run_dns_agent(
+    hours: int = 24,
+    prompt_override: str = "",
+    session_id: Optional[str] = None,
+) -> str:
     """Run the DNS security domain agent."""
     from agent.tools.metrics import (
         query_adguard_top_clients,
@@ -190,12 +130,12 @@ def run_dns_agent(hours: int = 24) -> str:
         query_adguard_top_clients,
         query_adguard_traffic_by_type,
     ]
-    system = DNS_SYSTEM.format(hours=hours)
+    system = prompt_override or DNS_SYSTEM.format(hours=hours)
     user = DNS_USER.format(hours=hours)
 
     logger.info("Running dns_agent...")
     try:
-        return _run_react_loop(system, user, tools, "dns_agent")
+        return run_react_loop(system, user, tools, "dns_security", session_id=session_id)
     except Exception as e:
         logger.error(f"dns_agent failed: {e}", exc_info=True)
         return f"**DNS Security**: Agent failed — {e}"
@@ -232,7 +172,11 @@ Skip normal traffic. Only surface what's unusual or noteworthy.
 NETWORK_FLOW_USER = "Analyse network flow data and ntopng alerts for the past 24 hours."
 
 
-def run_network_flow_agent(hours: int = 24) -> str:
+def run_network_flow_agent(
+    hours: int = 24,
+    prompt_override: str = "",
+    session_id: Optional[str] = None,
+) -> str:
     """Run the network flow (ntopng) domain agent."""
     from agent.tools.ntopng import (
         query_ntopng_alerts,
@@ -251,12 +195,12 @@ def run_network_flow_agent(hours: int = 24) -> str:
         query_ntopng_active_flows,
         query_ntopng_interfaces,
     ]
-    system = NETWORK_FLOW_SYSTEM
+    system = prompt_override or NETWORK_FLOW_SYSTEM
     user = NETWORK_FLOW_USER
 
     logger.info("Running network_flow_agent...")
     try:
-        return _run_react_loop(system, user, tools, "network_flow_agent")
+        return run_react_loop(system, user, tools, "network_flow", session_id=session_id)
     except Exception as e:
         logger.error(f"network_flow_agent failed: {e}", exc_info=True)
         return f"**Network Flow**: Agent failed — {e}"
@@ -292,19 +236,23 @@ Skip routine/healthy items. Focus on what needs attention.
 INFRASTRUCTURE_USER = "Analyse infrastructure health for the past {hours} hours."
 
 
-def run_infrastructure_agent(hours: int = 24) -> str:
+def run_infrastructure_agent(
+    hours: int = 24,
+    prompt_override: str = "",
+    session_id: Optional[str] = None,
+) -> str:
     """Run the infrastructure health domain agent."""
     from agent.tools.logs import query_infrastructure_events
     from agent.tools.qnap_tools import query_qnap_health
     from agent.tools.proxmox_tools import query_proxmox_health
 
     tools = [query_infrastructure_events, query_qnap_health, query_proxmox_health]
-    system = INFRASTRUCTURE_SYSTEM.format(hours=hours)
+    system = prompt_override or INFRASTRUCTURE_SYSTEM.format(hours=hours)
     user = INFRASTRUCTURE_USER.format(hours=hours)
 
     logger.info("Running infrastructure_agent...")
     try:
-        return _run_react_loop(system, user, tools, "infrastructure_agent")
+        return run_react_loop(system, user, tools, "infrastructure", session_id=session_id)
     except Exception as e:
         logger.error(f"infrastructure_agent failed: {e}", exc_info=True)
         return f"**Infrastructure**: Agent failed — {e}"
@@ -337,17 +285,21 @@ Skip normal association/disassociation events. Only surface anomalies.
 WIRELESS_USER = "Analyse wireless network health for the past {hours} hours."
 
 
-def run_wireless_agent(hours: int = 24) -> str:
+def run_wireless_agent(
+    hours: int = 24,
+    prompt_override: str = "",
+    session_id: Optional[str] = None,
+) -> str:
     """Run the wireless health domain agent."""
     from agent.tools.logs import query_wireless_health
 
     tools = [query_wireless_health]
-    system = WIRELESS_SYSTEM.format(hours=hours)
+    system = prompt_override or WIRELESS_SYSTEM.format(hours=hours)
     user = WIRELESS_USER.format(hours=hours)
 
     logger.info("Running wireless_agent...")
     try:
-        return _run_react_loop(system, user, tools, "wireless_agent")
+        return run_react_loop(system, user, tools, "wireless", session_id=session_id)
     except Exception as e:
         logger.error(f"wireless_agent failed: {e}", exc_info=True)
         return f"**Wireless**: Agent failed — {e}"
@@ -380,17 +332,21 @@ Be specific with numbers. Note if everything is nominal.
 VALIDATOR_USER = "Analyse Ethereum validator health for the past {hours} hours."
 
 
-def run_validator_agent(hours: int = 24) -> str:
+def run_validator_agent(
+    hours: int = 24,
+    prompt_override: str = "",
+    session_id: Optional[str] = None,
+) -> str:
     """Run the Ethereum validator domain agent."""
     from agent.tools.validator import query_validator_health
 
     tools = [query_validator_health]
-    system = VALIDATOR_SYSTEM.format(hours=hours)
+    system = prompt_override or VALIDATOR_SYSTEM.format(hours=hours)
     user = VALIDATOR_USER.format(hours=hours)
 
     logger.info("Running validator_agent...")
     try:
-        return _run_react_loop(system, user, tools, "validator_agent")
+        return run_react_loop(system, user, tools, "validator", session_id=session_id)
     except Exception as e:
         logger.error(f"validator_agent failed: {e}", exc_info=True)
         return f"**Validator**: Agent failed — {e}"

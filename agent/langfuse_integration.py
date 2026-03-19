@@ -55,23 +55,28 @@ class PromptManager:
         self,
         prompt_name: str,
         version: Optional[int] = None,
-        use_cache: bool = True
+        use_cache: bool = True,
+        **vars,
     ) -> str:
         """
-        Fetch a versioned prompt from Langfuse.
+        Fetch a versioned prompt from Langfuse, optionally compiling template variables.
 
         Args:
-            prompt_name: Name of the prompt in Langfuse (e.g., "dns_block_rate_analyzer")
+            prompt_name: Name of the prompt in Langfuse (e.g., "first-light-dns")
             version: Specific version to fetch (None = latest production)
             use_cache: Whether to use local cache for this request
+            **vars: Template variables to compile into the prompt (e.g., hours=24).
+                    Langfuse uses {{variable}} double-brace syntax.
 
         Returns:
-            Prompt text from Langfuse
+            Compiled prompt text from Langfuse
 
         Raises:
             ValueError: If prompt not found in Langfuse - NO FALLBACKS
         """
-        cache_key = f"{prompt_name}:v{version}" if version else f"{prompt_name}:latest"
+        var_key = ":".join(f"{k}={v}" for k, v in sorted(vars.items())) if vars else ""
+        base_key = f"{prompt_name}:v{version}" if version else f"{prompt_name}:latest"
+        cache_key = f"{base_key}:{var_key}" if var_key else base_key
 
         if use_cache and cache_key in self._cache:
             return self._cache[cache_key]
@@ -83,7 +88,7 @@ class PromptManager:
                 # Get latest production version
                 prompt = self.client.get_prompt(prompt_name, label="production")
 
-            prompt_text = prompt.prompt
+            prompt_text = prompt.compile(**vars) if vars else prompt.prompt
             self._cache[cache_key] = prompt_text
             return prompt_text
 
