@@ -165,9 +165,8 @@ def query_proxmox_health() -> str:
         if info.get("mem_pct", 0) > 90:
             alerts.append(f"Node {node} memory high: {info['mem_pct']}%")
 
-    stopped_vms = [v["name"] for v in vm_list if not v.get("running", True)]
-    if stopped_vms:
-        alerts.append(f"Stopped VMs: {', '.join(stopped_vms)}")
+    # Stopped VMs are reported in the vm_list data but NOT raised as alerts —
+    # the agent cannot distinguish intentionally-stopped from unexpectedly-stopped.
 
     for v in vm_list:
         if v.get("disk_pct", 0) and v["disk_pct"] > 85:
