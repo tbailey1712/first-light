@@ -245,8 +245,20 @@ def run_infrastructure_agent(
     from agent.tools.logs import query_infrastructure_events
     from agent.tools.qnap_tools import query_qnap_health
     from agent.tools.proxmox_tools import query_proxmox_health
+    from agent.tools.uptime_kuma import (
+        query_uptime_kuma_status,
+        query_uptime_kuma_uptime,
+        query_uptime_kuma_incidents,
+    )
 
-    tools = [query_infrastructure_events, query_qnap_health, query_proxmox_health]
+    tools = [
+        query_infrastructure_events,
+        query_qnap_health,
+        query_proxmox_health,
+        query_uptime_kuma_status,
+        query_uptime_kuma_uptime,
+        query_uptime_kuma_incidents,
+    ]
     system = prompt_override or INFRASTRUCTURE_SYSTEM.format(hours=hours)
     user = INFRASTRUCTURE_USER.format(hours=hours)
 

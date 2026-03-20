@@ -153,6 +153,7 @@ services:
       - FIRST_LIGHT_REPORTS_DIR=/data/reports
     volumes:
       - agent_reports:/data/reports
+      - /data/compose/7/uptimekuma_data:/data/uptimekuma:ro
     networks:
       - signoz-net
     depends_on:
