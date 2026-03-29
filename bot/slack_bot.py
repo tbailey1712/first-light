@@ -163,6 +163,21 @@ async def handle_mention(event, say):
     await _post_chunks(say, answer)
 
 
+async def handle_dm(event, say):
+    """Handle direct messages to the bot."""
+    # Ignore bot messages and message edits
+    if event.get("bot_id") or event.get("subtype"):
+        return
+    text = (event.get("text") or "").strip()
+    if not text:
+        return
+
+    channel = event.get("channel", "unknown")
+    await say(":hourglass_flowing_sand: Querying the network data...")
+    answer = await _run_query(question=text, channel=channel, session_prefix="slack-dm")
+    await _post_chunks(say, answer)
+
+
 def _can_acquire_report_lock() -> bool:
     """Try to acquire the shared report lock. Returns True if acquired, False if already held."""
     from agent.scheduler import REPORT_LOCK_KEY, REPORT_LOCK_TTL
@@ -265,6 +280,7 @@ async def _main():
 
     app = AsyncApp(token=bot_token)
     app.event("app_mention")(handle_mention)
+    app.event({"type": "message", "channel_type": "im"})(handle_dm)
     app.command("/firstlight")(handle_slash)
 
     logger.info("First Light Slack bot starting (Socket Mode)...")
