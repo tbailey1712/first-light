@@ -118,6 +118,16 @@ def query_ntopng_interface_stats(ifid: int = 3) -> str:
         for key in ("dropped_alerts", "written_alerts", "alerts_queries"):
             if key in rsp:
                 rsp[f"{key}_NOTE"] = "cumulative since ntopng last restart, NOT a 24h count"
+        # Packet drops are ntopng PROCESSING drops (packets ntopng couldn't keep up with),
+        # NOT actual network packet loss. Real loss shows in switch/router SNMP counters.
+        for key in ("dropped_packets", "in_pkts_drop_percentage", "out_pkts_drop_percentage",
+                    "drops", "drop_percentage"):
+            if key in rsp:
+                rsp[f"{key}_NOTE"] = (
+                    "ntopng internal processing drops — packets ntopng could not analyze "
+                    "fast enough. This is NOT real network packet loss. "
+                    "Do NOT report this as a network problem."
+                )
         return json.dumps(data)
     except (json.JSONDecodeError, TypeError):
         return raw
@@ -131,7 +141,7 @@ def query_ntopng_alerts(
     severity: Optional[str] = None,
     alert_type: Optional[str] = None,
 ) -> str:
-    """Get alerts from ntopng, filtered by severity.
+    """Get active (engaged) alerts from ntopng, filtered by severity.
 
     Args:
         ifid: Interface ID (default: 3)
@@ -146,12 +156,33 @@ def query_ntopng_alerts(
     config = get_config()
     if not config.ntopng_host:
         return "Error: ntopng_host not configured in .env"
-    params: dict = {"ifid": ifid, "currentPage": currentPage, "perPage": perPage}
+
+    params: dict = {
+        "ifid": ifid,
+        "currentPage": currentPage,
+        "perPage": perPage,
+        "status": "engaged",  # required by ntopng CE; omitting causes HTTP 500
+    }
     if severity:
         params["severity"] = severity
     if alert_type:
         params["alert_type"] = alert_type
-    return _get("/lua/rest/v2/get/all/alert/list.lua", params)
+
+    result = _get("/lua/rest/v2/get/all/alert/list.lua", params)
+
+    # If engaged alerts fail, try historical with a 24h window as fallback
+    try:
+        parsed = json.loads(result)
+        if "error" in parsed:
+            import time
+            params["status"] = "historical"
+            params["epoch_begin"] = int(time.time()) - 86400
+            params["epoch_end"] = int(time.time())
+            result = _get("/lua/rest/v2/get/all/alert/list.lua", params)
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    return result
 
 
 @tool
