@@ -67,7 +67,7 @@ class FirstLightConfig(BaseSettings):
     # Ethereum Validator
     validator_host: Optional[str] = None
     consensus_client: str = "lighthouse"
-    consensus_metrics_port: int = 5054
+    consensus_metrics_port: int = 8008
     beacon_api_port: int = 5052
     execution_client: str = "geth"
     execution_metrics_port: int = 6060
