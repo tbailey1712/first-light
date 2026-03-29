@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}First Light — Status{% endblock %}
+{% block content %}
+<h1 class="page-title">System Status</h1>
+
+<div class="grid2">
+  <div class="card">
+    <div class="card-title">Infrastructure</div>
+    <table>
+      <tr>
+        <td>Redis</td>
+        <td>
+          {% if status.redis %}
+            <span class="badge badge-green">connected</span>
+          {% else %}
+            <span class="badge badge-red">unavailable</span>
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td>Reports Directory</td>
+        <td style="color:var(--muted);font-size:12px">{{ status.reports_dir }}</td>
+      </tr>
+      <tr>
+        <td>Stored Reports</td>
+        <td>{{ status.report_count }}</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Notification Channels</div>
+    {% if status.notification_channels %}
+      {% for ch in status.notification_channels %}
+        <div style="margin-bottom:8px">
+          <span class="dot dot-green"></span>
+          <span style="text-transform:capitalize">{{ ch }}</span>
+          <span class="badge badge-green" style="margin-left:8px">active</span>
+        </div>
+      {% endfor %}
+    {% else %}
+      <p style="color:var(--muted)">No channels registered yet.</p>
+      <p style="color:var(--muted);font-size:12px;margin-top:4px">Channels are registered at scheduler startup.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Integrations</div>
+  <div class="grid3">
+    {% for name, active in status.integrations.items() %}
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 0">
+      <span class="dot {% if active %}dot-green{% else %}dot-gray{% endif %}"></span>
+      <span>{{ name.replace('_', ' ').title() }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div style="margin-top:16px">
+  <button class="btn btn-ghost"
+          hx-get="/api/status"
+          hx-target="body"
+          hx-swap="none"
+          onclick="location.reload()">
+    ↻ Refresh
+  </button>
+  <span style="color:var(--muted);font-size:12px;margin-left:12px">Last updated: {{ status.timestamp }}</span>
+</div>
+{% endblock %}

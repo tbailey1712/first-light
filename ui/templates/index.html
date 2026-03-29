@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}First Light — Dashboard{% endblock %}
+{% block content %}
+<h1 class="page-title">Dashboard</h1>
+
+<div class="grid3">
+  <div class="card">
+    <div class="card-title">Redis</div>
+    {% if status.redis %}
+      <span class="dot dot-green"></span> Connected
+    {% else %}
+      <span class="dot dot-red"></span> Unavailable
+    {% endif %}
+  </div>
+  <div class="card">
+    <div class="card-title">Notifications</div>
+    {% if status.notification_channels %}
+      {% for ch in status.notification_channels %}
+        <span class="badge badge-green" style="margin-right:4px">{{ ch }}</span>
+      {% endfor %}
+    {% else %}
+      <span class="badge badge-gray">none configured</span>
+    {% endif %}
+  </div>
+  <div class="card">
+    <div class="card-title">Reports</div>
+    <span style="font-size:24px;font-weight:700">{{ status.report_count }}</span>
+    <span style="color:var(--muted);font-size:13px"> stored</span>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <div class="card-title">Integrations</div>
+    <table>
+      {% for name, active in status.integrations.items() %}
+      <tr>
+        <td>{{ name.replace('_', ' ').title() }}</td>
+        <td>
+          {% if active %}
+            <span class="badge badge-green">active</span>
+          {% else %}
+            <span class="badge badge-gray">not configured</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Recent Reports</div>
+    {% if reports %}
+    <table>
+      <tr><th>Date</th><th>Size</th><th></th></tr>
+      {% for r in reports %}
+      <tr>
+        <td><a href="/reports/{{ r.date }}">{{ r.date }}</a></td>
+        <td style="color:var(--muted)">{{ r.size_kb }} KB</td>
+        <td><a href="/reports/{{ r.date }}/raw" style="color:var(--muted);font-size:12px">↓ raw</a></td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:var(--muted)">No reports yet.</p>
+    {% endif %}
+    <div style="margin-top:16px">
+      <button class="btn btn-primary"
+              hx-post="/api/report/trigger"
+              hx-swap="none">
+        Run Report Now
+      </button>
+    </div>
+  </div>
+</div>
+
+<p style="color:var(--muted);font-size:12px;margin-top:8px">Last updated: {{ status.timestamp }}</p>
+{% endblock %}

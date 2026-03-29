@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}First Light — Report {{ date }}{% endblock %}
+{% block content %}
+<div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;flex-wrap:wrap">
+  <a href="/reports" style="color:var(--muted);font-size:13px">← Reports</a>
+  <h1 class="page-title" style="margin:0;flex:1">{{ date }}</h1>
+  <a href="/reports/{{ date }}/raw" class="btn btn-ghost">↓ Download</a>
+</div>
+<div class="card">
+  <pre>{{ content }}</pre>
+</div>
+{% endblock %}

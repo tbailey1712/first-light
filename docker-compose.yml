@@ -181,6 +181,93 @@ services:
       timeout: 5s
       retries: 3
 
+  # ── Telegram Bot — Interactive AI assistant ──────────────────
+  # Handles /status /report /ask commands + free-text queries
+  # Reuses the agent Dockerfile with a command override
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    container_name: fl-telegram-bot
+    restart: unless-stopped
+    command: ["python", "-m", "bot.telegram_bot"]
+    env_file: .env
+    environment:
+      - TZ=America/Chicago
+    volumes:
+      - agent_reports:/data/reports:ro
+      - /data/compose/7/uptimekuma_data:/data/uptimekuma:ro
+    networks:
+      - signoz-net
+    depends_on:
+      - clickhouse
+      - redis
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    profiles:
+      - bots
+
+  # ── Slack Bot — Interactive AI assistant (Socket Mode) ────────
+  # Handles /firstlight slash command + @mentions
+  # Requires SLACK_BOT_TOKEN and SLACK_APP_TOKEN
+  slack-bot:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    container_name: fl-slack-bot
+    restart: unless-stopped
+    command: ["python", "-m", "bot.slack_bot"]
+    env_file: .env
+    environment:
+      - TZ=America/Chicago
+    volumes:
+      - agent_reports:/data/reports:ro
+      - /data/compose/7/uptimekuma_data:/data/uptimekuma:ro
+    networks:
+      - signoz-net
+    depends_on:
+      - clickhouse
+      - redis
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    profiles:
+      - bots
+
+  # ── Management UI — FastAPI + HTMX dashboard ─────────────────
+  # Reports browser, on-demand triggers, system status
+  # Access at: http://<host>:8085
+  ui:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    container_name: fl-ui
+    restart: unless-stopped
+    command: ["python", "-m", "uvicorn", "ui.app:app", "--host", "0.0.0.0", "--port", "8085"]
+    env_file: .env
+    environment:
+      - TZ=America/Chicago
+      - FIRST_LIGHT_REPORTS_DIR=/data/reports
+    volumes:
+      - agent_reports:/data/reports
+      - /data/compose/7/uptimekuma_data:/data/uptimekuma:ro
+    ports:
+      - "8085:8085"
+    networks:
+      - signoz-net
+    depends_on:
+      - redis
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8085/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   # ── Threat Intel Enricher — Batch IP enrichment ──────────────
   # Queries ClickHouse for security events, enriches IPs via threat intel APIs
   # Stores results in ClickHouse for query-time joins

@@ -91,7 +91,12 @@ class FirstLightConfig(BaseSettings):
     # Telegram Bot
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
-    telegram_allowed_user_ids: Optional[str] = None
+    telegram_allowed_chat_ids: Optional[str] = None  # renamed from telegram_allowed_user_ids
+
+    # Slack
+    slack_webhook_url: Optional[str] = None   # incoming webhook for outbound notifications
+    slack_bot_token: Optional[str] = None     # xoxb-... for Socket Mode interactive bot
+    slack_app_token: Optional[str] = None     # xapp-... for Socket Mode
 
     # Notifications
     smtp_host: Optional[str] = None

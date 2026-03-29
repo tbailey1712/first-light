@@ -25,8 +25,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("scheduler")
 
-_REPORT_LOCK_KEY = "report:lock:daily"
-_REPORT_LOCK_TTL = 600  # 10 minutes
+REPORT_LOCK_KEY = "report:lock:daily"
+REPORT_LOCK_TTL = 600  # 10 minutes
+
+# Keep private aliases for backward compatibility within this module
+_REPORT_LOCK_KEY = REPORT_LOCK_KEY
+_REPORT_LOCK_TTL = REPORT_LOCK_TTL
 
 
 def _get_redis_client():
@@ -58,9 +62,10 @@ async def run_daily_report():
 
     logger.info("Starting daily threat assessment report...")
     try:
-        from agent.reports.daily_threat_assessment import generate_daily_report, send_report_notification
+        from agent.reports.daily_threat_assessment import generate_daily_report
+        from agent.notifications import broadcast_report
         report = await generate_daily_report()
-        await send_report_notification(report)
+        await broadcast_report(report)
         logger.info(f"Daily report complete: {report['report_path']}")
     except Exception as e:
         logger.error(f"Daily report failed: {e}", exc_info=True)
@@ -74,23 +79,11 @@ async def run_daily_report():
 
 
 async def _notify_failure(job_name: str, error: str):
-    """Send a failure notification to Telegram."""
+    """Send a failure alert to all registered notification channels."""
     try:
-        import httpx
-        from agent.config import get_config
-        config = get_config()
-        if not config.telegram_bot_token or not config.telegram_chat_id:
-            return
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                f"https://api.telegram.org/bot{config.telegram_bot_token}/sendMessage",
-                json={
-                    "chat_id": config.telegram_chat_id,
-                    "text": f"🔴 *First Light scheduler error*\n*Job:* {job_name}\n*Error:* `{error[:200]}`",
-                    "parse_mode": "Markdown",
-                },
-                timeout=10,
-            )
+        from agent.notifications import broadcast_alert
+        message = f"🔴 *First Light scheduler error*\n*Job:* {job_name}\n*Error:* `{error[:200]}`"
+        await broadcast_alert(message)
     except Exception:
         pass
 
@@ -100,6 +93,10 @@ async def _run():
     tz = os.getenv("TZ", "America/Chicago")
     report_hour = int(os.getenv("DAILY_REPORT_HOUR", "8"))
     report_minute = int(os.getenv("DAILY_REPORT_MINUTE", "0"))
+
+    # Initialise notification channels once at startup
+    from agent.notifications import register_defaults
+    await register_defaults()
 
     logger.info(f"First Light scheduler starting (tz={tz})")
     logger.info(f"Daily report scheduled at {report_hour:02d}:{report_minute:02d} {tz}")

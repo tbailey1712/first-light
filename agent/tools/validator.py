@@ -9,10 +9,11 @@ import json
 import re
 import time
 from datetime import datetime, timezone
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import httpx
 from langchain_core.tools import tool
+from langfuse import observe
 
 from agent.config import get_config
 
@@ -64,7 +65,26 @@ def _sum_all(metrics, name):
     return sum(v for _, v in metrics.get(name, [])) or None
 
 
+@observe(as_type="span", name="validator.fetch_nimbus")
+def _fetch_nimbus_metrics() -> Optional[Dict]:
+    """Fetch and parse Nimbus consensus client Prometheus metrics."""
+    with httpx.Client(timeout=10.0) as client:
+        resp = client.get(_nimbus_url())
+        resp.raise_for_status()
+    return _parse_prometheus(resp.text)
+
+
+@observe(as_type="span", name="validator.fetch_nethermind")
+def _fetch_nethermind_metrics() -> Optional[Dict]:
+    """Fetch and parse Nethermind execution client Prometheus metrics."""
+    with httpx.Client(timeout=10.0) as client:
+        resp = client.get(_nethermind_url())
+        resp.raise_for_status()
+    return _parse_prometheus(resp.text)
+
+
 @tool
+@observe(as_type="span", name="validator.query_health")
 def query_validator_health(hours: int = 24) -> str:
     """Get Ethereum validator health: Nimbus consensus client and Nethermind execution client.
 
@@ -82,10 +102,7 @@ def query_validator_health(hours: int = 24) -> str:
 
     # ── Nimbus (consensus) ──────────────────────────────────────────────────
     try:
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.get(_nimbus_url())
-            resp.raise_for_status()
-        nm = _parse_prometheus(resp.text)
+        nm = _fetch_nimbus_metrics()
 
         head_slot = _first(nm, "beacon_head_slot")
         finalized_epoch = _first(nm, "beacon_finalized_epoch")
@@ -164,10 +181,7 @@ def query_validator_health(hours: int = 24) -> str:
 
     # ── Nethermind (execution) ──────────────────────────────────────────────
     try:
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.get(_nethermind_url())
-            resp.raise_for_status()
-        em = _parse_prometheus(resp.text)
+        em = _fetch_nethermind_metrics()
 
         # Total peers across all client types
         total_peers = int(_sum_all(em, "nethermind_sync_peers") or 0)

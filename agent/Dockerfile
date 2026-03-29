@@ -6,8 +6,13 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy agent source
+# Copy all application source
+# agent/ — scheduler, tools, graph, notifications
+# bot/   — telegram and slack bots
+# ui/    — management FastAPI app
 COPY agent/ ./agent/
+COPY bot/ ./bot/
+COPY ui/ ./ui/
 
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "from apscheduler.schedulers.asyncio import AsyncIOScheduler; print('ok')" || exit 1

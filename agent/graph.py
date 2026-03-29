@@ -4,11 +4,18 @@ First Light AI Agent — interactive query entrypoint.
 create_system_prompt() builds the topology-aware system prompt used by both
 the daily report pipeline and the interactive Telegram bot.
 
-run_interactive_query() will be implemented in Sprint 3 (S3-01) once the
-Telegram bot and Redis conversation history are in place.
+run_interactive_query() drives the interactive bot experience: it accepts
+a user question plus conversation history and returns an answer string by
+running the full ReAct loop against INTERACTIVE_TOOLS.
 """
 
+import asyncio
+import logging
+from typing import Optional
+
 from agent.config import get_config, load_topology
+
+logger = logging.getLogger(__name__)
 from agent.tools.metrics import (
     query_adguard_top_clients,
     query_adguard_block_rates,
@@ -135,3 +142,72 @@ Always query tools to gather current data. Don't rely on assumptions or cached k
 
 Be concise but thorough. Network operators appreciate brevity with substance.
 """
+
+
+def run_interactive_query_sync(
+    question: str,
+    history: Optional[list[dict]] = None,
+    session_id: Optional[str] = None,
+) -> str:
+    """
+    Synchronous interactive query — runs the ReAct loop with the full tool set.
+
+    Args:
+        question:   The user's question or request.
+        history:    Optional prior conversation turns as OpenAI-format messages
+                    [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
+                    The question is appended as the final user turn.
+        session_id: Groups Langfuse traces under one session (e.g. Telegram chat_id).
+
+    Returns:
+        Answer string from the agent.
+    """
+    from agent.llm import run_react_loop
+
+    system_prompt = create_system_prompt()
+
+    # Build a user prompt that includes condensed history if provided
+    if history:
+        history_text = "\n".join(
+            f"{m['role'].upper()}: {m['content']}"
+            for m in history[-10:]  # last 10 turns to avoid context overflow
+            if m.get("content")
+        )
+        user_prompt = f"Conversation history:\n{history_text}\n\nCurrent question: {question}"
+    else:
+        user_prompt = question
+
+    return run_react_loop(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        tools=INTERACTIVE_TOOLS,
+        agent_name="interactive",
+        agent_type="micro",
+        session_id=session_id,
+    )
+
+
+async def run_interactive_query(
+    question: str,
+    history: Optional[list[dict]] = None,
+    session_id: Optional[str] = None,
+) -> str:
+    """
+    Async interactive query — wraps the synchronous ReAct loop in a thread
+    so it doesn't block the asyncio event loop used by the Telegram/Slack bots.
+
+    Args:
+        question:   The user's question or request.
+        history:    Optional prior conversation turns (OpenAI message format).
+        session_id: Groups Langfuse traces under one session.
+
+    Returns:
+        Answer string from the agent.
+    """
+    return await asyncio.get_running_loop().run_in_executor(
+        None,
+        run_interactive_query_sync,
+        question,
+        history,
+        session_id,
+    )
