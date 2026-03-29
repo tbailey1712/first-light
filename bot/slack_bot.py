@@ -163,6 +163,9 @@ async def handle_mention(event, say):
     await _post_chunks(say, answer)
 
 
+_GREETINGS = {"hi", "hey", "hello", "yo", "sup", "howdy"}
+
+
 async def handle_dm(event, say):
     """Handle direct messages to the bot."""
     # Ignore bot messages and message edits
@@ -170,6 +173,10 @@ async def handle_dm(event, say):
         return
     text = (event.get("text") or "").strip()
     if not text:
+        return
+
+    if text.lower().rstrip("!,.?") in _GREETINGS:
+        await say("Hey! Ask me anything about your network — threats, infrastructure, validator status, you name it.")
         return
 
     channel = event.get("channel", "unknown")
