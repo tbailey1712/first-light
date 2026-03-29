@@ -19,7 +19,7 @@ Public interface:
 
 import logging
 import operator
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Optional, TypedDict
 
 from langgraph.graph import StateGraph, START, END
@@ -293,7 +293,7 @@ def generate_daily_report(hours: int = 24) -> str:
     from langfuse import get_client as get_langfuse_client, LangfuseOtelSpanAttributes
     from opentelemetry import trace as otel_trace
 
-    start = datetime.utcnow()
+    start = datetime.now(timezone.utc)
     session_id = f"daily-report-{start.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
     logger.info("=== Daily Report Generation Start (LangGraph) session=%s ===", session_id)
 
@@ -319,7 +319,7 @@ def generate_daily_report(hours: int = 24) -> str:
     lf.update_current_span(output=final_report[:500])
     lf.flush()
 
-    elapsed = (datetime.utcnow() - start).total_seconds()
+    elapsed = (datetime.now(timezone.utc) - start).total_seconds()
     logger.info("=== Daily Report Complete in %.1fs session=%s ===", elapsed, session_id)
 
     return final_report
@@ -343,12 +343,12 @@ if __name__ == "__main__":
 
     print(f"\n{SEPARATOR}")
     print(f"FIRST LIGHT DAILY REPORT — LangGraph  ({hours}h window)")
-    print(f"Started: {datetime.utcnow().isoformat()}Z")
+    print(f"Started: {datetime.now(timezone.utc).isoformat()}")
     print(SEPARATOR)
 
     report = generate_daily_report(hours)
     print(report)
 
     print(f"\n{SEPARATOR}")
-    print(f"Done: {datetime.utcnow().isoformat()}Z")
+    print(f"Done: {datetime.now(timezone.utc).isoformat()}")
     print(SEPARATOR)

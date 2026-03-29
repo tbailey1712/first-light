@@ -14,8 +14,19 @@ from typing import Dict, List, Tuple
 import httpx
 from langchain_core.tools import tool
 
-NIMBUS_URL = "http://vldtr.mcducklabs.com:8008/metrics"
-NETHERMIND_URL = "http://vldtr.mcducklabs.com:6060/metrics"
+from agent.config import get_config
+
+
+def _nimbus_url() -> str:
+    cfg = get_config()
+    host = cfg.validator_host or "vldtr.mcducklabs.com"
+    return f"http://{host}:{cfg.consensus_metrics_port}/metrics"
+
+
+def _nethermind_url() -> str:
+    cfg = get_config()
+    host = cfg.validator_host or "vldtr.mcducklabs.com"
+    return f"http://{host}:{cfg.execution_metrics_port}/metrics"
 
 
 def _parse_prometheus(text: str) -> Dict[str, List[Tuple[Dict, float]]]:
@@ -72,7 +83,7 @@ def query_validator_health(hours: int = 24) -> str:
     # ── Nimbus (consensus) ──────────────────────────────────────────────────
     try:
         with httpx.Client(timeout=10.0) as client:
-            resp = client.get(NIMBUS_URL)
+            resp = client.get(_nimbus_url())
             resp.raise_for_status()
         nm = _parse_prometheus(resp.text)
 
@@ -154,7 +165,7 @@ def query_validator_health(hours: int = 24) -> str:
     # ── Nethermind (execution) ──────────────────────────────────────────────
     try:
         with httpx.Client(timeout=10.0) as client:
-            resp = client.get(NETHERMIND_URL)
+            resp = client.get(_nethermind_url())
             resp.raise_for_status()
         em = _parse_prometheus(resp.text)
 

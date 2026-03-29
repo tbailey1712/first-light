@@ -8,13 +8,15 @@ import os
 from typing import Optional, Dict, Any
 from functools import lru_cache
 
-from langfuse import Langfuse, observe
+from langfuse import get_client, observe
 
 
 # Initialize Langfuse client
 @lru_cache(maxsize=1)
-def get_langfuse_client() -> Langfuse:
-    """Get singleton Langfuse client.
+def get_langfuse_client():
+    """Get the Langfuse v4 OTel singleton client.
+
+    Uses the same client instance as llm.py so all traces are correlated.
 
     Raises:
         ValueError: If required Langfuse environment variables are not set
@@ -37,11 +39,7 @@ def get_langfuse_client() -> Langfuse:
             f"Set these in your .env file. NO FALLBACKS - configuration must be explicit."
         )
 
-    return Langfuse(
-        secret_key=secret_key,
-        public_key=public_key,
-        host=host
-    )
+    return get_client()
 
 
 class PromptManager:
@@ -234,10 +232,6 @@ def init_langfuse() -> None:
 
     Raises:
         ValueError: If Langfuse configuration is missing - NO FALLBACKS
-
-    Note: Skips auth_check due to SDK/server version mismatch (SDK 3.14.5 vs server v3.139).
-          Actual auth will be tested on first prompt fetch.
     """
     client = get_langfuse_client()
     print(f"✓ Langfuse client initialized for {os.getenv('LANGFUSE_HOST')}")
-    print(f"  Note: Using SDK 3.14.5 with server v3.139 (auth tested on first prompt fetch)")

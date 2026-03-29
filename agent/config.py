@@ -79,7 +79,6 @@ class FirstLightConfig(BaseSettings):
     # LiteLLM Router
     litellm_base_url: str = "https://model-router.mcducklabs.com"
     litellm_api_key: Optional[str] = None
-    litellm_model: str = "claude-sonnet-4-5-20250929"
 
     # Telegram Bot
     telegram_bot_token: Optional[str] = None

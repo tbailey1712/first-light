@@ -169,7 +169,7 @@ Return a focused markdown summary with:
 Skip normal traffic. Only surface what's unusual or noteworthy.
 """
 
-NETWORK_FLOW_USER = "Analyse network flow data and ntopng alerts for the past 24 hours."
+NETWORK_FLOW_USER = "Analyse network flow data and ntopng alerts for the past {hours} hours."
 
 
 def run_network_flow_agent(
@@ -196,7 +196,7 @@ def run_network_flow_agent(
         query_ntopng_interfaces,
     ]
     system = prompt_override or NETWORK_FLOW_SYSTEM
-    user = NETWORK_FLOW_USER
+    user = NETWORK_FLOW_USER.format(hours=hours)
 
     logger.info("Running network_flow_agent...")
     try:

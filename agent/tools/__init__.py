@@ -9,7 +9,6 @@ from langchain_core.tools import BaseTool
 
 from agent.tools.logs import (
     query_security_summary,
-    query_adguard_anomalies,
     query_wireless_health,
     query_infrastructure_events,
     search_logs_by_ip,
@@ -38,7 +37,6 @@ def get_all_tools() -> List[BaseTool]:
     return [
         # Log query tools
         query_security_summary,
-        query_adguard_anomalies,
         query_wireless_health,
         query_infrastructure_events,
         search_logs_by_ip,

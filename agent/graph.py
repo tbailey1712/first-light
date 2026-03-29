@@ -1,16 +1,12 @@
 """
-First Light AI Agent - LangGraph implementation.
+First Light AI Agent — interactive query entrypoint.
 
-A ReAct-style agent that queries network observability data and provides analysis.
+create_system_prompt() builds the topology-aware system prompt used by both
+the daily report pipeline and the interactive Telegram bot.
+
+run_interactive_query() will be implemented in Sprint 3 (S3-01) once the
+Telegram bot and Redis conversation history are in place.
 """
-
-from typing import Annotated, Literal
-
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import BaseMessage, SystemMessage
-from langgraph.graph import StateGraph, MessagesState, START, END
-from langgraph.prebuilt import ToolNode, tools_condition
-from langgraph.checkpoint.memory import MemorySaver
 
 from agent.config import get_config, load_topology
 from agent.tools.metrics import (
@@ -33,6 +29,25 @@ from agent.tools.threat_intel_tools import (
 )
 from agent.tools.qnap_tools import query_qnap_health
 from agent.tools.proxmox_tools import query_proxmox_health
+
+
+# Full tool set available to the interactive agent (Sprint 3 adds validator + qnap directory)
+INTERACTIVE_TOOLS = [
+    query_adguard_top_clients,
+    query_adguard_block_rates,
+    query_adguard_high_risk_clients,
+    query_adguard_blocked_domains,
+    query_adguard_traffic_by_type,
+    query_security_summary,
+    query_wireless_health,
+    query_infrastructure_events,
+    search_logs_by_ip,
+    query_threat_intel_summary,
+    lookup_ip_threat_intel,
+    query_threat_intel_coverage,
+    query_qnap_health,
+    query_proxmox_health,
+]
 
 
 def create_system_prompt() -> str:
@@ -119,81 +134,3 @@ Always query tools to gather current data. Don't rely on assumptions or cached k
 
 Be concise but thorough. Network operators appreciate brevity with substance.
 """
-
-
-def create_agent():
-    """Create the First Light agent graph."""
-    config = get_config()
-
-    # Initialize LLM via LiteLLM router
-    llm = ChatOpenAI(
-        model=config.litellm_model,
-        api_key=config.litellm_api_key or "dummy-key",  # LiteLLM may not require auth
-        base_url=config.litellm_base_url,
-        temperature=0.1,
-    )
-
-    # Bind tools to LLM
-    tools = [
-        # AdGuard DNS metrics
-        query_adguard_top_clients,
-        query_adguard_block_rates,
-        query_adguard_high_risk_clients,
-        query_adguard_blocked_domains,
-        query_adguard_traffic_by_type,
-        # Security & Infrastructure logs
-        query_security_summary,
-        query_wireless_health,
-        query_infrastructure_events,
-        search_logs_by_ip,
-        # Threat Intelligence (queries enriched IP reputation from ClickHouse)
-        query_threat_intel_summary,
-        lookup_ip_threat_intel,
-        query_threat_intel_coverage,
-        # Hardware health (Prometheus endpoints)
-        query_qnap_health,
-        query_proxmox_health,
-    ]
-    llm_with_tools = llm.bind_tools(tools)
-
-    # System message
-    system_message = SystemMessage(content=create_system_prompt())
-
-    def call_model(state: MessagesState):
-        """Call the LLM with tools."""
-        messages = [system_message] + state["messages"]
-        response = llm_with_tools.invoke(messages)
-        return {"messages": [response]}
-
-    # Build graph
-    graph_builder = StateGraph(MessagesState)
-
-    # Add nodes
-    graph_builder.add_node("agent", call_model)
-    graph_builder.add_node("tools", ToolNode(tools))
-
-    # Add edges
-    graph_builder.add_edge(START, "agent")
-    graph_builder.add_conditional_edges(
-        "agent",
-        tools_condition,
-    )
-    graph_builder.add_edge("tools", "agent")
-
-    # Compile with checkpointer for conversation memory
-    checkpointer = MemorySaver()
-    graph = graph_builder.compile(checkpointer=checkpointer)
-
-    return graph
-
-
-# Global agent instance
-_agent = None
-
-
-def get_agent():
-    """Get or create the agent instance."""
-    global _agent
-    if _agent is None:
-        _agent = create_agent()
-    return _agent
