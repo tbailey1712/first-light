@@ -98,6 +98,10 @@ class FirstLightConfig(BaseSettings):
     slack_bot_token: Optional[str] = None     # xoxb-... for Socket Mode interactive bot
     slack_app_token: Optional[str] = None     # xapp-... for Socket Mode
 
+    # Notification routing: comma-separated list of channels to use for reports/alerts
+    # Values: "slack", "telegram", or "slack,telegram" for both. Default: all configured.
+    notification_channels: Optional[str] = None
+
     # Notifications
     smtp_host: Optional[str] = None
     smtp_port: int = 587

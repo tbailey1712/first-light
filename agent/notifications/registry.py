@@ -39,20 +39,36 @@ def get_channels() -> list:
 
 async def register_defaults() -> None:
     """
-    Auto-register channels based on available env vars.
+    Auto-register channels based on available env vars and NOTIFICATION_CHANNELS config.
     Call once at application startup.
-    """
-    telegram = build_telegram_channel()
-    if telegram:
-        register_channel(telegram)
-    else:
-        logger.info("Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing)")
 
-    slack = build_slack_channel()
-    if slack:
-        register_channel(slack)
-    else:
-        logger.debug("Slack webhook not configured (SLACK_WEBHOOK_URL missing)")
+    NOTIFICATION_CHANNELS (env var): comma-separated list of channels to enable.
+    Valid values: "slack", "telegram". Omit to enable all configured channels.
+    """
+    from agent.config import get_config
+    cfg = get_config()
+
+    # Build the allow-set from config; empty means "all"
+    enabled: set[str] = set()
+    if cfg.notification_channels:
+        enabled = {c.strip().lower() for c in cfg.notification_channels.split(",") if c.strip()}
+
+    def _want(name: str) -> bool:
+        return not enabled or name in enabled
+
+    if _want("telegram"):
+        telegram = build_telegram_channel()
+        if telegram:
+            register_channel(telegram)
+        else:
+            logger.info("Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing)")
+
+    if _want("slack"):
+        slack = build_slack_channel()
+        if slack:
+            register_channel(slack)
+        else:
+            logger.debug("Slack webhook not configured (SLACK_WEBHOOK_URL missing)")
 
     logger.info("Notification registry ready: %d channel(s) active", len(_channels))
 
