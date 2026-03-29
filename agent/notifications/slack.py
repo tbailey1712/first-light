@@ -20,6 +20,63 @@ logger = logging.getLogger(__name__)
 _BLOCK_MAX = 2900
 
 
+_DIVIDER_MARKER = "\x00DIVIDER\x00"
+
+
+def _convert_table(table_lines: list[str]) -> str:
+    """Convert a Markdown table to Slack bullet-list rows (Slack has no table support)."""
+    headers: list[str] = []
+    rows: list[list[str]] = []
+
+    for line in table_lines:
+        stripped = line.strip()
+        # Skip separator rows (|---|---|)
+        if re.match(r"^\|[\s\-:|]+\|$", stripped):
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if not headers:
+            headers = cells
+        else:
+            rows.append(cells)
+
+    if not rows:
+        return "\n".join(table_lines)
+
+    result: list[str] = []
+    for row in rows:
+        if len(headers) == 2:
+            # Two-column: "*Header:* Value"
+            col0 = row[0] if len(row) > 0 else ""
+            col1 = row[1] if len(row) > 1 else ""
+            result.append(f"• *{headers[0]}:* {col0}    *{headers[1]}:* {col1}")
+        else:
+            # Multi-column: "• value1 | value2 | value3"
+            parts = " | ".join(row[i] if i < len(row) else "" for i in range(len(headers)))
+            result.append(f"• {parts}")
+    return "\n".join(result)
+
+
+def _convert_tables(text: str) -> str:
+    """Find all Markdown table blocks in text and replace with Slack-friendly lists."""
+    lines = text.split("\n")
+    out: list[str] = []
+    table_buf: list[str] = []
+
+    for line in lines:
+        if line.strip().startswith("|"):
+            table_buf.append(line)
+        else:
+            if table_buf:
+                out.append(_convert_table(table_buf))
+                table_buf = []
+            out.append(line)
+
+    if table_buf:
+        out.append(_convert_table(table_buf))
+
+    return "\n".join(out)
+
+
 def _md_to_mrkdwn(text: str) -> str:
     """Convert common Markdown patterns to Slack mrkdwn."""
     # Bold: **text** or __text__ → *text*
@@ -32,11 +89,12 @@ def _md_to_mrkdwn(text: str) -> str:
     # Inline code: `code` stays as-is (Slack supports backticks)
     # Headings: # / ## / ### → *Heading* (bold line)
     text = re.sub(r"^#{1,3}\s+(.+)$", r"*\1*", text, flags=re.MULTILINE)
-    # Horizontal rules → divider hint (we'll handle in block builder)
-    _DIVIDER_MARKER = "\x00DIVIDER\x00"
+    # Horizontal rules → divider hint (handled in block builder)
     text = re.sub(r"^---+$", _DIVIDER_MARKER, text, flags=re.MULTILINE)
     # Links: [text](url) → <url|text>
     text = re.sub(r"\[(.+?)\]\((.+?)\)", r"<\2|\1>", text)
+    # Tables last — cell content is already converted; generated *Header:* stays bold
+    text = _convert_tables(text)
     return text
 
 
@@ -50,7 +108,7 @@ def _build_blocks(header: str, body: str) -> list[dict]:
     ]
 
     # Split body on divider markers into sections
-    parts = body.split("\x00DIVIDER\x00")
+    parts = body.split(_DIVIDER_MARKER)
     for part in parts:
         part = part.strip()
         if not part:
