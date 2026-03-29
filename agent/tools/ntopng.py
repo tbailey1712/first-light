@@ -264,6 +264,53 @@ def query_ntopng_arp_table(ifid: int = 3) -> str:
 
 
 @tool
+def query_ntopng_vlan_traffic(ifid: int = 3) -> str:
+    """Get traffic breakdown by VLAN on a network interface.
+
+    Critical for detecting cross-VLAN anomalies — e.g. Camera VLAN (3) or
+    Validator VLAN (4) talking to unexpected destinations.
+
+    Args:
+        ifid: Interface ID (default: 3)
+
+    Returns:
+        JSON with per-VLAN bytes, packets, and flow counts.
+    """
+    config = get_config()
+    if not config.ntopng_host:
+        return "Error: ntopng_host not configured in .env"
+    return _get("/lua/rest/v2/get/vlan/list.lua", {"ifid": ifid})
+
+
+@tool
+def query_ntopng_top_countries(ifid: int = 3, limit: int = 20) -> str:
+    """Get top traffic sources/destinations by country.
+
+    Useful for identifying unexpected geographic traffic patterns —
+    e.g. high outbound to unusual countries may indicate C2 activity.
+
+    Args:
+        ifid: Interface ID (default: 3)
+        limit: Max countries to return (default: 20)
+
+    Returns:
+        JSON with per-country bytes in/out and flow counts.
+    """
+    config = get_config()
+    if not config.ntopng_host:
+        return "Error: ntopng_host not configured in .env"
+    result = _get("/lua/rest/v2/get/host/country/list.lua", {"ifid": ifid})
+    # Gracefully handle Enterprise-only response
+    try:
+        parsed = json.loads(result)
+        if isinstance(parsed, dict) and parsed.get("rc", 0) < 0:
+            return json.dumps({"note": "Country traffic data not available in ntopng Community Edition"})
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return result
+
+
+@tool
 def query_ntopng_host_l7_stats(host: str, ifid: int = 3) -> str:
     """Get Layer 7 protocol breakdown for a specific host.
 

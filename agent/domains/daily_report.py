@@ -32,6 +32,7 @@ Your job:
 - Identify confirmed malicious IPs using the threat intelligence enrichment data
 - Highlight IPs with high threat scores (>50), their country/ASN, and what they attempted
 - Note cross-VLAN traffic from Camera VLAN (3) or Validator VLAN (4) — always CRITICAL
+- Review CrowdSec alerts and active bans
 
 Threat score scale:
   0-25: Low risk    |  25-50: Moderate  |  50-75: High risk  |  75-100: Confirmed malicious
@@ -39,11 +40,14 @@ Threat score scale:
 Tools to call:
 1. query_threat_intel_summary(hours={hours}, min_score=0) — START HERE
 2. query_security_summary(hours={hours}) — raw firewall blocks / ntopng context
-3. lookup_ip_threat_intel(ip) — for any IP with score > 50 (max 5 IPs)
+3. query_crowdsec_alerts() — IPs that triggered detection scenarios
+4. query_crowdsec_decisions() — IPs currently banned
+5. lookup_ip_threat_intel(ip) — for any IP with score > 50 (max 5 IPs)
 
 Return a focused markdown summary with:
 - Count of firewall blocks, unique attacker IPs
 - Confirmed malicious IPs (threat_score > 50) — IP, score, country, what they tried
+- CrowdSec: active bans and top triggered scenarios
 - Notable ntopng alerts
 - Any CRITICAL cross-VLAN events
 
@@ -66,7 +70,12 @@ def run_firewall_threat_agent(
         query_threat_intel_coverage,
     )
 
-    tools = [query_threat_intel_summary, query_security_summary, lookup_ip_threat_intel, query_threat_intel_coverage]
+    from agent.tools.crowdsec import query_crowdsec_alerts, query_crowdsec_decisions
+    tools = [
+        query_threat_intel_summary, query_security_summary,
+        lookup_ip_threat_intel, query_threat_intel_coverage,
+        query_crowdsec_alerts, query_crowdsec_decisions,
+    ]
     system = prompt_override or FIREWALL_THREAT_SYSTEM.format(hours=hours)
     user = FIREWALL_THREAT_USER.format(hours=hours)
 
@@ -151,20 +160,27 @@ Your job:
 - Review active network flows, top talkers, and protocol distribution
 - Identify unusual flow patterns, unexpected protocols, or bandwidth anomalies
 - Surface any security alerts from ntopng (IDS/IPS hits, anomaly detection)
-- Note significant L7 protocol usage (unexpected applications)
+- Check VLAN traffic breakdown — flag any traffic from isolated VLANs (Camera=3, Validator=4)
+- Check switch port traffic and errors via SNMP
 
 Tools to call:
-1. query_ntopng_alerts(max_alerts=20)
-2. query_ntopng_interface_stats()
-3. query_ntopng_active_hosts(max_hosts=20)
-4. query_ntopng_l7_protocols()
-5. query_ntopng_active_flows(max_flows=20) — only if alerts/hosts indicate something interesting
+1. query_ntopng_alerts() — security alerts first
+2. query_ntopng_interface_stats() — overall interface stats
+3. query_ntopng_vlan_traffic() — per-VLAN breakdown (flag isolated VLAN activity)
+4. query_ntopng_active_hosts() — top talkers
+5. query_ntopng_l7_protocols() — application protocol breakdown
+6. query_switch_port_traffic() — switch port bandwidth
+7. query_switch_port_errors() — switch port errors/discards
+8. query_pfsense_interface_traffic() — WAN/VLAN interface utilization
+9. query_ntopng_top_countries() — geographic traffic distribution
+10. query_ntopng_active_flows() — only if something interesting found above
 
 Return a focused markdown summary with:
 - Interface traffic overview (bandwidth, flow count)
-- ntopng security alerts (if any)
-- Top talkers if anomalous
-- Unusual L7 protocol usage
+- VLAN breakdown — any isolated VLAN anomalies
+- Switch: top-traffic ports, any ports with errors
+- ntopng security alerts
+- Geographic traffic if unusual countries detected
 
 Skip normal traffic. Only surface what's unusual or noteworthy.
 """
@@ -185,15 +201,27 @@ def run_network_flow_agent(
         query_ntopng_l7_protocols,
         query_ntopng_active_flows,
         query_ntopng_interfaces,
+        query_ntopng_vlan_traffic,
+        query_ntopng_top_countries,
+    )
+    from agent.tools.switch_tools import (
+        query_switch_port_traffic,
+        query_switch_port_errors,
+        query_pfsense_interface_traffic,
     )
 
     tools = [
         query_ntopng_alerts,
         query_ntopng_interface_stats,
+        query_ntopng_vlan_traffic,
         query_ntopng_active_hosts,
         query_ntopng_l7_protocols,
+        query_ntopng_top_countries,
         query_ntopng_active_flows,
         query_ntopng_interfaces,
+        query_switch_port_traffic,
+        query_switch_port_errors,
+        query_pfsense_interface_traffic,
     ]
     system = prompt_override or NETWORK_FLOW_SYSTEM
     user = NETWORK_FLOW_USER.format(hours=hours)
@@ -216,12 +244,16 @@ Your job:
 - Review Docker container health, service errors, and system events for the past {hours} hours
 - Check QNAP NAS: volumes, disks (SMART), temperatures, CPU/memory
 - Check Proxmox VE: node health, VM/container status, storage utilization
+- Check switch port errors (bad cables, duplex mismatches)
+- Check pfSense WAN/VLAN interface utilization
 - Flag anything degraded, stopped unexpectedly, or approaching capacity limits
 
 Tools to call:
 1. query_infrastructure_events(hours={hours}) — Docker / HA / Proxmox log events
 2. query_qnap_health() — NAS volumes, disks, temperatures
 3. query_proxmox_health() — Proxmox node, VMs, containers, storage
+4. query_switch_port_errors(hours={hours}) — switch port errors and discards
+5. query_pfsense_interface_traffic(hours={hours}) — WAN/VLAN bandwidth
 
 Return a focused markdown summary with:
 - Overall infrastructure health (healthy / warnings / critical)
@@ -251,6 +283,7 @@ def run_infrastructure_agent(
         query_uptime_kuma_incidents,
     )
 
+    from agent.tools.switch_tools import query_switch_port_errors, query_pfsense_interface_traffic
     tools = [
         query_infrastructure_events,
         query_qnap_health,
@@ -258,6 +291,8 @@ def run_infrastructure_agent(
         query_uptime_kuma_status,
         query_uptime_kuma_uptime,
         query_uptime_kuma_incidents,
+        query_switch_port_errors,
+        query_pfsense_interface_traffic,
     ]
     system = prompt_override or INFRASTRUCTURE_SYSTEM.format(hours=hours)
     user = INFRASTRUCTURE_USER.format(hours=hours)

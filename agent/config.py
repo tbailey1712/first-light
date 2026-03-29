@@ -116,6 +116,7 @@ class FirstLightConfig(BaseSettings):
 
     # CrowdSec
     crowdsec_enrollment_key: Optional[str] = None
+    crowdsec_api_key: Optional[str] = None  # bouncer key: cscli bouncers add firstlight-agent
 
     # SigNoz / ClickHouse
     signoz_base_url: str = "http://signoz-query-service:8080"
