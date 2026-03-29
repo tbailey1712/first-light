@@ -158,10 +158,27 @@ services:
       - signoz-net
     depends_on:
       - clickhouse
+      - redis
     healthcheck:
       test: ["CMD", "python", "-c", "import apscheduler; print('ok')"]
       interval: 60s
       timeout: 10s
+      retries: 3
+
+  # ── Redis — Conversation state + distributed locks ───────────
+  redis:
+    image: redis:7-alpine
+    container_name: fl-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - signoz-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
       retries: 3
 
   # ── Threat Intel Enricher — Batch IP enrichment ──────────────
@@ -211,6 +228,8 @@ volumes:
     name: fl-threat-intel-cache
   agent_reports:
     name: fl-agent-reports
+  redis_data:
+    name: fl-redis-data
 
 networks:
   signoz-net:

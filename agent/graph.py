@@ -27,7 +27,7 @@ from agent.tools.threat_intel_tools import (
     lookup_ip_threat_intel,
     query_threat_intel_coverage,
 )
-from agent.tools.qnap_tools import query_qnap_health
+from agent.tools.qnap_tools import query_qnap_health, query_qnap_directory_sizes
 from agent.tools.proxmox_tools import query_proxmox_health
 
 
@@ -46,6 +46,7 @@ INTERACTIVE_TOOLS = [
     lookup_ip_threat_intel,
     query_threat_intel_coverage,
     query_qnap_health,
+    query_qnap_directory_sizes,
     query_proxmox_health,
 ]
 

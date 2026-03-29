@@ -28,7 +28,7 @@ from agent.tools.threat_intel_tools import (
     query_threat_intel_coverage,
 )
 
-from agent.tools.qnap_tools import query_qnap_health
+from agent.tools.qnap_tools import query_qnap_health, query_qnap_directory_sizes
 from agent.tools.proxmox_tools import query_proxmox_health
 
 
@@ -52,5 +52,6 @@ def get_all_tools() -> List[BaseTool]:
         query_threat_intel_coverage,
         # Hardware health
         query_qnap_health,
+        query_qnap_directory_sizes,
         query_proxmox_health,
     ]

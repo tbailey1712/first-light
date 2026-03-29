@@ -76,6 +76,14 @@ class FirstLightConfig(BaseSettings):
     # AI Agent
     anthropic_api_key: Optional[str] = None
 
+    # QNAP File Station API (for directory size analysis)
+    qnap_api_url: Optional[str] = None
+    qnap_api_user: Optional[str] = None
+    qnap_api_pass: Optional[str] = None
+
+    # Redis
+    redis_url: str = "redis://fl-redis:6379/0"
+
     # LiteLLM Router
     litellm_base_url: str = "https://model-router.mcducklabs.com"
     litellm_api_key: Optional[str] = None

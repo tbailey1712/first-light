@@ -13,8 +13,8 @@ import asyncio
 import logging
 import os
 import signal
-import sys
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -25,9 +25,37 @@ logging.basicConfig(
 )
 logger = logging.getLogger("scheduler")
 
+_REPORT_LOCK_KEY = "report:lock:daily"
+_REPORT_LOCK_TTL = 600  # 10 minutes
+
+
+def _get_redis_client():
+    """Return a Redis client, or None if Redis is unavailable."""
+    try:
+        import redis
+        url = os.getenv("REDIS_URL", "redis://fl-redis:6379/0")
+        r = redis.Redis.from_url(url, socket_connect_timeout=2, socket_timeout=2)
+        r.ping()
+        return r
+    except Exception as e:
+        logger.warning("Redis unavailable (%s) — lock guard disabled", e)
+        return None
+
 
 async def run_daily_report():
-    """Run the daily threat assessment report."""
+    """Run the daily threat assessment report, guarded by a Redis distributed lock."""
+    # Best-effort distributed lock — prevents duplicate runs on container restart.
+    # If Redis is unavailable, we run anyway (APScheduler's max_instances=1 is
+    # still in effect for same-process duplicate prevention).
+    r = await asyncio.get_event_loop().run_in_executor(None, _get_redis_client)
+    if r is not None:
+        acquired = r.set(_REPORT_LOCK_KEY, "1", nx=True, ex=_REPORT_LOCK_TTL)
+        if not acquired:
+            logger.warning("Daily report already running (Redis lock held) — skipping this run")
+            return
+    else:
+        r = None  # Proceed without lock
+
     logger.info("Starting daily threat assessment report...")
     try:
         from agent.reports.daily_threat_assessment import generate_daily_report, send_report_notification
@@ -36,8 +64,13 @@ async def run_daily_report():
         logger.info(f"Daily report complete: {report['report_path']}")
     except Exception as e:
         logger.error(f"Daily report failed: {e}", exc_info=True)
-        # Send failure notice to Telegram
         await _notify_failure("Daily report", str(e))
+    finally:
+        if r is not None:
+            try:
+                r.delete(_REPORT_LOCK_KEY)
+            except Exception:
+                pass
 
 
 async def _notify_failure(job_name: str, error: str):
