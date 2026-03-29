@@ -51,10 +51,12 @@ class EnrichmentConfig:
     virustotal_key: Optional[str]
     alienvault_key: Optional[str]
     cache_dir: str
-    batch_size: int = 50
-    interval_minutes: int = 30
+    batch_size: int = 20
+    interval_minutes: int = 60
     lookback_hours: int = 24
-    max_age_hours: int = 24  # Re-enrich if older than this
+    max_age_hours: int = 168   # Re-enrich after 7 days, not 24h
+    min_block_count: int = 5   # Ignore IPs with fewer than this many blocks
+    daily_budget: int = 900    # Hard cap on AbuseIPDB calls per UTC day
 
     @classmethod
     def from_env(cls) -> 'EnrichmentConfig':
@@ -65,10 +67,12 @@ class EnrichmentConfig:
             virustotal_key=os.getenv('VIRUSTOTAL_API_KEY'),
             alienvault_key=os.getenv('ALIENVAULT_API_KEY'),
             cache_dir=os.getenv('THREAT_INTEL_CACHE_DIR', '/data/threat_intel_cache'),
-            batch_size=int(os.getenv('ENRICHMENT_BATCH_SIZE', '50')),
-            interval_minutes=int(os.getenv('ENRICHMENT_INTERVAL_MINUTES', '30')),
+            batch_size=int(os.getenv('ENRICHMENT_BATCH_SIZE', '20')),
+            interval_minutes=int(os.getenv('ENRICHMENT_INTERVAL_MINUTES', '60')),
             lookback_hours=int(os.getenv('ENRICHMENT_LOOKBACK_HOURS', '24')),
-            max_age_hours=int(os.getenv('ENRICHMENT_MAX_AGE_HOURS', '24'))
+            max_age_hours=int(os.getenv('ENRICHMENT_MAX_AGE_HOURS', '168')),
+            min_block_count=int(os.getenv('ENRICHMENT_MIN_BLOCK_COUNT', '5')),
+            daily_budget=int(os.getenv('ABUSEIPDB_DAILY_BUDGET', '900')),
         )
 
 
@@ -170,6 +174,27 @@ class ThreatIntelEnricher:
             alienvault_key=config.alienvault_key,
             cache_dir=config.cache_dir
         )
+        self._budget_file = os.path.join(config.cache_dir, "abuseipdb_daily_budget.txt")
+
+    def _budget_remaining(self) -> int:
+        """Return remaining AbuseIPDB calls for today (UTC). Resets at midnight UTC."""
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        try:
+            with open(self._budget_file) as f:
+                date_str, count_str = f.read().strip().split(",")
+            if date_str == today:
+                return max(0, self.config.daily_budget - int(count_str))
+        except Exception:
+            pass
+        return self.config.daily_budget
+
+    def _budget_consume(self, count: int = 1):
+        """Record that we used `count` AbuseIPDB calls today."""
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        used = self.config.daily_budget - self._budget_remaining()
+        os.makedirs(os.path.dirname(self._budget_file), exist_ok=True)
+        with open(self._budget_file, "w") as f:
+            f.write(f"{today},{used + count}")
 
     def get_ips_needing_enrichment(self) -> Set[str]:
         """Query ClickHouse for IPs that need enrichment."""
@@ -181,15 +206,18 @@ class ThreatIntelEnricher:
             WHERE toDateTime(enriched_at) >= now() - INTERVAL {self.config.max_age_hours} HOUR
         """
 
-        # Query 1: Blocked IPs from pfSense filterlog (SigNoz schema)
+        # Query 1: Blocked IPs from pfSense filterlog — only IPs with enough blocks to be worth enriching
         blocked_query = f"""
-        SELECT DISTINCT attributes_string['pfsense.src_ip'] as ip
+        SELECT attributes_string['pfsense.src_ip'] as ip
         FROM signoz_logs.logs_v2
         WHERE toDateTime(timestamp / 1000000000) >= now() - INTERVAL {self.config.lookback_hours} HOUR
           AND resources_string['service.name'] = 'filterlog'
           AND attributes_string['pfsense.action'] = 'block'
           AND attributes_string['pfsense.src_ip'] != ''
           AND attributes_string['pfsense.src_ip'] NOT IN ({already_enriched})
+        GROUP BY ip
+        HAVING count() >= {self.config.min_block_count}
+        ORDER BY count() DESC
         LIMIT {self.config.batch_size}
         """
 
@@ -302,13 +330,19 @@ class ThreatIntelEnricher:
             failed_count = 0
 
             for ip in ips:
+                remaining = self._budget_remaining()
+                if remaining <= 0:
+                    logger.warning(f"AbuseIPDB daily budget exhausted ({self.config.daily_budget}/day). Stopping batch.")
+                    break
+
                 result = self.enrich_ip(ip)
+                self._budget_consume(1)
 
                 if result:
                     # Store in ClickHouse
                     if self.ch_client.insert_enrichment(result):
                         enriched_count += 1
-                        logger.info(f"Stored enrichment for {ip} - Score: {result['threat_assessment']['threat_score']}")
+                        logger.info(f"Stored enrichment for {ip} - Score: {result['threat_assessment']['threat_score']} (budget remaining: {self._budget_remaining()})")
                     else:
                         failed_count += 1
                         logger.error(f"Failed to store enrichment for {ip}")

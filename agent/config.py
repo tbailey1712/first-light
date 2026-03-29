@@ -76,15 +76,31 @@ class FirstLightConfig(BaseSettings):
     # AI Agent
     anthropic_api_key: Optional[str] = None
 
+    # QNAP File Station API (for directory size analysis)
+    qnap_api_url: Optional[str] = None
+    qnap_api_user: Optional[str] = None
+    qnap_api_pass: Optional[str] = None
+
+    # Redis
+    redis_url: str = "redis://fl-redis:6379/0"
+
     # LiteLLM Router
     litellm_base_url: str = "https://model-router.mcducklabs.com"
     litellm_api_key: Optional[str] = None
-    litellm_model: str = "claude-sonnet-4-5-20250929"
 
     # Telegram Bot
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
-    telegram_allowed_user_ids: Optional[str] = None
+    telegram_allowed_chat_ids: Optional[str] = None  # renamed from telegram_allowed_user_ids
+
+    # Slack
+    slack_webhook_url: Optional[str] = None   # incoming webhook for outbound notifications
+    slack_bot_token: Optional[str] = None     # xoxb-... for Socket Mode interactive bot
+    slack_app_token: Optional[str] = None     # xapp-... for Socket Mode
+
+    # Notification routing: comma-separated list of channels to use for reports/alerts
+    # Values: "slack", "telegram", or "slack,telegram" for both. Default: all configured.
+    notification_channels: Optional[str] = None
 
     # Notifications
     smtp_host: Optional[str] = None

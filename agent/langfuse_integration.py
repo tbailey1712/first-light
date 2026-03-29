@@ -8,13 +8,15 @@ import os
 from typing import Optional, Dict, Any
 from functools import lru_cache
 
-from langfuse import Langfuse, observe
+from langfuse import get_client, observe
 
 
 # Initialize Langfuse client
 @lru_cache(maxsize=1)
-def get_langfuse_client() -> Langfuse:
-    """Get singleton Langfuse client.
+def get_langfuse_client():
+    """Get the Langfuse v4 OTel singleton client.
+
+    Uses the same client instance as llm.py so all traces are correlated.
 
     Raises:
         ValueError: If required Langfuse environment variables are not set
@@ -37,11 +39,7 @@ def get_langfuse_client() -> Langfuse:
             f"Set these in your .env file. NO FALLBACKS - configuration must be explicit."
         )
 
-    return Langfuse(
-        secret_key=secret_key,
-        public_key=public_key,
-        host=host
-    )
+    return get_client()
 
 
 class PromptManager:
@@ -55,23 +53,28 @@ class PromptManager:
         self,
         prompt_name: str,
         version: Optional[int] = None,
-        use_cache: bool = True
+        use_cache: bool = True,
+        **vars,
     ) -> str:
         """
-        Fetch a versioned prompt from Langfuse.
+        Fetch a versioned prompt from Langfuse, optionally compiling template variables.
 
         Args:
-            prompt_name: Name of the prompt in Langfuse (e.g., "dns_block_rate_analyzer")
+            prompt_name: Name of the prompt in Langfuse (e.g., "first-light-dns")
             version: Specific version to fetch (None = latest production)
             use_cache: Whether to use local cache for this request
+            **vars: Template variables to compile into the prompt (e.g., hours=24).
+                    Langfuse uses {{variable}} double-brace syntax.
 
         Returns:
-            Prompt text from Langfuse
+            Compiled prompt text from Langfuse
 
         Raises:
             ValueError: If prompt not found in Langfuse - NO FALLBACKS
         """
-        cache_key = f"{prompt_name}:v{version}" if version else f"{prompt_name}:latest"
+        var_key = ":".join(f"{k}={v}" for k, v in sorted(vars.items())) if vars else ""
+        base_key = f"{prompt_name}:v{version}" if version else f"{prompt_name}:latest"
+        cache_key = f"{base_key}:{var_key}" if var_key else base_key
 
         if use_cache and cache_key in self._cache:
             return self._cache[cache_key]
@@ -83,7 +86,7 @@ class PromptManager:
                 # Get latest production version
                 prompt = self.client.get_prompt(prompt_name, label="production")
 
-            prompt_text = prompt.prompt
+            prompt_text = prompt.compile(**vars) if vars else prompt.prompt
             self._cache[cache_key] = prompt_text
             return prompt_text
 
@@ -153,6 +156,44 @@ def get_agent_prompt(
     return manager.get_prompt(agent_type, version=version)
 
 
+def get_agent_prompt_with_fallback(
+    agent_type: str,
+    fallback: str,
+    version: Optional[int] = None,
+    **vars,
+) -> str:
+    """
+    Fetch a prompt from Langfuse, returning fallback on any failure.
+
+    Use this in automated pipelines where Langfuse being unreachable should
+    not halt execution. get_agent_prompt() remains available for tooling that
+    needs hard failures.
+
+    Args:
+        agent_type: Prompt slug in Langfuse (e.g., "first-light-dns")
+        fallback: String to return if Langfuse is unreachable or prompt not found
+        version: Specific version (None = latest production label)
+        **vars: Template variables to compile into the prompt
+
+    Returns:
+        Compiled prompt text from Langfuse, or fallback string
+    """
+    import logging as _logging
+    try:
+        manager = get_prompt_manager()
+        return manager.get_prompt(agent_type, version=version, **vars)
+    except Exception as e:
+        _logging.getLogger(__name__).warning(
+            f"Langfuse prompt fetch failed for '{agent_type}', using fallback: {e}"
+        )
+        if vars:
+            try:
+                return fallback.format(**vars)
+            except KeyError:
+                pass
+        return fallback
+
+
 # Decorator for tracing agent execution
 def trace_agent(
     agent_type: str,
@@ -191,10 +232,6 @@ def init_langfuse() -> None:
 
     Raises:
         ValueError: If Langfuse configuration is missing - NO FALLBACKS
-
-    Note: Skips auth_check due to SDK/server version mismatch (SDK 3.14.5 vs server v3.139).
-          Actual auth will be tested on first prompt fetch.
     """
     client = get_langfuse_client()
     print(f"✓ Langfuse client initialized for {os.getenv('LANGFUSE_HOST')}")
-    print(f"  Note: Using SDK 3.14.5 with server v3.139 (auth tested on first prompt fetch)")

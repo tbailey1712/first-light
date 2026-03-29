@@ -8,6 +8,7 @@ from typing import Literal, Optional
 from langchain_core.tools import tool
 
 from agent.config import get_config
+from agent.utils.resolve import enrich_ip_column
 
 
 @tool
@@ -196,7 +197,7 @@ def _execute_clickhouse_query(query: str) -> str:
             if not result:
                 return "No results found"
 
-            return result
+            return enrich_ip_column(result)
 
     except httpx.TimeoutException:
         return "Query timed out after 30 seconds"

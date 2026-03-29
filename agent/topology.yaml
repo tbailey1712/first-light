@@ -13,12 +13,15 @@ network:
       name: "IoT"
       purpose: "IoT devices with internet access"
       security_level: "restricted"
+      subnet: "192.168.2.0/24"
       internet_access: true
+      can_reach_vlan1: false
 
     - id: 3
       name: "Cameras"
       purpose: "Security cameras"
       security_level: "isolated"
+      subnet: "192.168.3.0/24"
       internet_access: false
       fully_isolated: true
 
@@ -26,11 +29,15 @@ network:
       name: "DMZ"
       purpose: "Ethereum validator"
       security_level: "dmz"
+      subnet: "192.168.4.0/24"
+      internet_access: true
+      can_reach_internal: false
 
     - id: 10
       name: "Guest"
       purpose: "WiFi guest network"
       security_level: "guest"
+      subnet: "192.168.10.0/24"
       internet_only: true
 
 devices:
@@ -172,10 +179,13 @@ devices:
         endpoint: "https://pve.mcducklabs.com:8006/api2/json"
 
   storage:
-    name: "QNAP NAS"
+    name: "QNAP NAS / Docker host"
     hostname: "nas.mcducklabs.com"
+    alt_hostname: "docker.mcducklabs.com"
     ip: "192.168.2.106"
     vlan: 2
+    trust_override: high
+    trust_reason: "Operator-managed infrastructure (NAS + Docker host) — high traffic to/from VLAN 1 is expected backup/monitoring activity"
     type: "nas"
     vendor: "QNAP"
     capabilities:

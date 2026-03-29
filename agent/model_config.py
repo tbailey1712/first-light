@@ -19,17 +19,15 @@ ModelName = Literal[
     "claude-haiku-4-5",
 
     # OpenAI GPT family (via LiteLLM router)
-    "gpt-5.2",
-    "gpt-5.2-pro",
-    "gpt-5-mini",
+    "gpt-4o",
+    "gpt-4o-mini",
 
     # Google Gemini (via LiteLLM router)
-    "gemini/gemini-3.1-pro-preview",
-    "gemini/gemini-3-pro-preview",
-    "gemini/gemini-3-flash-preview",
+    "gemini/gemini-2.0-flash",
+    "gemini/gemini-1.5-pro",
 
     # X.ai Grok (via LiteLLM router)
-    "openrouter/x-ai/grok-4",
+    "openrouter/x-ai/grok-3",
 ]
 
 

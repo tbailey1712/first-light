@@ -6,8 +6,9 @@ Returns summaries for LLM analysis + sample log details for investigation.
 
 import httpx
 import json
+import re
 from typing import Literal, Optional, Dict, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 from langchain_core.tools import tool
 
@@ -77,7 +78,7 @@ def query_security_summary(hours: int = 1) -> str:
         # Build summary
         summary = {
             "time_range": f"last {hours} hour(s)",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "firewall_blocks": {
                 "total_unique_attackers": len(pfsense_threats),
                 "top_threats": [
@@ -111,123 +112,6 @@ def query_security_summary(hours: int = 1) -> str:
 
     except Exception as e:
         return f"Error querying security logs: {str(e)}"
-
-
-@tool
-def query_adguard_anomalies(
-    hours: int = 24,
-    min_severity: str = "low"
-) -> str:
-    """Get AdGuard DNS security anomalies from analytics engine.
-
-    Args:
-        hours: Lookback period in hours (default: 24, max: 168)
-        min_severity: Minimum severity to include (low, medium, high, critical)
-
-    Returns:
-        JSON with anomaly details, affected clients, and patterns
-    """
-    hours = min(hours, 168)  # Max 1 week
-
-    # Map severity levels to filter
-    severity_order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-    min_level = severity_order.get(min_severity.lower(), 0)
-    severity_filter = "'" + "','".join([s for s, l in severity_order.items() if l >= min_level]) + "'"
-
-    query = f"""
-    SELECT
-        attributes_string['anomaly.type'] as anomaly_type,
-        attributes_string['anomaly.severity'] as severity,
-        attributes_string['anomaly.client_ip'] as client_ip,
-        attributes_string['anomaly.domain'] as domain,
-        attributes_number['anomaly.confidence'] as confidence,
-        COUNT(*) as occurrence_count,
-        MIN(timestamp) as first_detected,
-        MAX(timestamp) as last_detected,
-        groupArray(body) as sample_descriptions
-    FROM signoz_logs.logs_v2
-    WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
-      AND attributes_string['anomaly.type'] IS NOT NULL
-      AND attributes_string['anomaly.severity'] IN ({severity_filter})
-    GROUP BY anomaly_type, severity, client_ip, domain, confidence
-    ORDER BY
-        CASE severity
-            WHEN 'critical' THEN 4
-            WHEN 'high' THEN 3
-            WHEN 'medium' THEN 2
-            ELSE 1
-        END DESC,
-        occurrence_count DESC
-    LIMIT 50
-    FORMAT JSONEachRow
-    """
-
-    try:
-        result = _execute_clickhouse_query(query)
-
-        if not result:
-            return json.dumps({
-                "time_range": f"last {hours} hour(s)",
-                "min_severity": min_severity,
-                "total_anomalies": 0,
-                "anomalies": []
-            }, indent=2)
-
-        anomalies = [json.loads(line) for line in result.split('\n') if line]
-
-        # Group by type for summary
-        by_type = {}
-        for a in anomalies:
-            atype = a['anomaly_type']
-            if atype not in by_type:
-                by_type[atype] = {
-                    "type": atype,
-                    "total_occurrences": 0,
-                    "unique_clients": set(),
-                    "severities": {},
-                    "examples": []
-                }
-            # Convert to int in case it comes back as string
-            occ_count = int(a['occurrence_count'])
-            by_type[atype]["total_occurrences"] += occ_count
-            by_type[atype]["unique_clients"].add(a['client_ip'])
-            severity = a['severity']
-            by_type[atype]["severities"][severity] = by_type[atype]["severities"].get(severity, 0) + occ_count
-
-            # Add example if < 3
-            if len(by_type[atype]["examples"]) < 3:
-                by_type[atype]["examples"].append({
-                    "client_ip": a['client_ip'],
-                    "domain": a['domain'],
-                    "confidence": a['confidence'],
-                    "severity": a['severity'],
-                    "first_detected": _format_timestamp(a['first_detected']),
-                    "last_detected": _format_timestamp(a['last_detected']),
-                    "description": a['sample_descriptions'][0] if a['sample_descriptions'] else None
-                })
-
-        # Convert sets to counts for JSON serialization
-        summary = {
-            "time_range": f"last {hours} hour(s)",
-            "min_severity": min_severity,
-            "total_anomalies": len(anomalies),
-            "total_occurrences": sum(int(a['occurrence_count']) for a in anomalies),
-            "anomalies_by_type": [
-                {
-                    "type": data["type"],
-                    "total_occurrences": data["total_occurrences"],
-                    "unique_clients": len(data["unique_clients"]),
-                    "severities": data["severities"],
-                    "examples": data["examples"]
-                }
-                for data in sorted(by_type.values(), key=lambda x: x["total_occurrences"], reverse=True)
-            ]
-        }
-
-        return json.dumps(summary, indent=2)
-
-    except Exception as e:
-        return f"Error querying AdGuard anomalies: {str(e)}"
 
 
 @tool
@@ -367,6 +251,9 @@ def query_infrastructure_events(hours: int = 24) -> str:
         return f"Error querying infrastructure logs: {str(e)}"
 
 
+_IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+
+
 @tool
 def search_logs_by_ip(
     ip_address: str,
@@ -383,9 +270,13 @@ def search_logs_by_ip(
     Returns:
         JSON with all log entries mentioning this IP
     """
+    if not _IP_RE.match(ip_address):
+        return json.dumps({"error": f"Invalid IP address: {ip_address}"})
+
     hours = min(hours, 24)
 
-    # Search in body and attributes
+    # Use ClickHouse {name:Type} parameter substitution to prevent injection.
+    # positionCaseInsensitive avoids LIKE with user-supplied wildcards.
     query = f"""
     SELECT
         resources_string['service.name'] as source,
@@ -396,9 +287,9 @@ def search_logs_by_ip(
     FROM signoz_logs.logs_v2
     WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
       AND (
-        body LIKE '%{ip_address}%'
-        OR attributes_string['pfsense.src_ip'] = '{ip_address}'
-        OR attributes_string['pfsense.dst_ip'] = '{ip_address}'
+        positionCaseInsensitive(body, {{ip:String}}) > 0
+        OR attributes_string['pfsense.src_ip'] = {{ip:String}}
+        OR attributes_string['pfsense.dst_ip'] = {{ip:String}}
       )
     GROUP BY source
     ORDER BY mention_count DESC
@@ -406,7 +297,7 @@ def search_logs_by_ip(
     """
 
     try:
-        result = _execute_clickhouse_query(query)
+        result = _execute_clickhouse_query(query, {"ip": ip_address})
         mentions = [json.loads(line) for line in result.split('\n') if line]
 
         summary = {
@@ -431,23 +322,31 @@ def search_logs_by_ip(
         return f"Error searching logs for IP {ip_address}: {str(e)}"
 
 
-def _execute_clickhouse_query(query: str) -> str:
-    """Execute a ClickHouse query via HTTP."""
+def _execute_clickhouse_query(query: str, query_params: Optional[dict] = None) -> str:
+    """Execute a ClickHouse query via HTTP.
+
+    Args:
+        query: SQL query, optionally with {name:Type} placeholders.
+        query_params: Dict of substitution values; each key 'foo' maps to
+                      HTTP param 'param_foo' per ClickHouse HTTP interface spec.
+    """
     config = get_config()
 
     # ClickHouse HTTP interface (port 8123 by default)
     clickhouse_url = f"http://{config.signoz_clickhouse_host}:8123"
 
+    params: dict = {
+        "user": config.signoz_clickhouse_user,
+        "password": config.signoz_clickhouse_password,
+        "query": query,
+    }
+    if query_params:
+        for k, v in query_params.items():
+            params[f"param_{k}"] = v
+
     try:
         with httpx.Client(timeout=30.0) as client:
-            response = client.post(
-                clickhouse_url,
-                params={
-                    "user": config.signoz_clickhouse_user,
-                    "password": config.signoz_clickhouse_password,
-                    "query": query
-                }
-            )
+            response = client.post(clickhouse_url, params=params)
 
             if response.status_code != 200:
                 raise Exception(f"HTTP {response.status_code} - {response.text}")
@@ -464,6 +363,6 @@ def _format_timestamp(ts_nano: int) -> str:
     """Convert nanosecond timestamp to ISO format."""
     try:
         ts_seconds = ts_nano / 1000000000
-        return datetime.utcfromtimestamp(ts_seconds).isoformat() + "Z"
-    except:
+        return datetime.fromtimestamp(ts_seconds, tz=timezone.utc).isoformat()
+    except Exception:
         return str(ts_nano)

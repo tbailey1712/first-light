@@ -7,10 +7,13 @@ reputation data to correlate with firewall blocks and security events.
 """
 
 import json
+import re
 from typing import Optional
 from langchain_core.tools import tool
 
 from agent.tools.logs import _execute_clickhouse_query
+
+_IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 
 
 @tool
@@ -174,8 +177,11 @@ def lookup_ip_threat_intel(ip_address: str) -> str:
     Returns:
         JSON with full threat intel profile and recent firewall activity
     """
-    # Get enrichment data
-    enrichment_query = f"""
+    if not _IP_RE.match(ip_address):
+        return json.dumps({"error": f"Invalid IP address: {ip_address}"})
+
+    # Get enrichment data — use {ip:String} parameter substitution to prevent injection
+    enrichment_query = """
     SELECT
         ip,
         abuseipdb_score,
@@ -201,14 +207,14 @@ def lookup_ip_threat_intel(ip_address: str) -> str:
         error_sources,
         enriched_at
     FROM threat_intel.enrichments
-    WHERE ip = '{ip_address}'
+    WHERE ip = {ip:String}
     ORDER BY enriched_at DESC
     LIMIT 1
     FORMAT JSONEachRow
     """
 
     # Get recent firewall activity for this IP
-    activity_query = f"""
+    activity_query = """
     SELECT
         attributes_string['pfsense.action'] as action,
         attributes_string['pfsense.dst_port'] as dst_port,
@@ -219,7 +225,7 @@ def lookup_ip_threat_intel(ip_address: str) -> str:
     FROM signoz_logs.logs_v2
     WHERE toDateTime(timestamp / 1000000000) >= now() - INTERVAL 24 HOUR
       AND resources_string['service.name'] = 'filterlog'
-      AND attributes_string['pfsense.src_ip'] = '{ip_address}'
+      AND attributes_string['pfsense.src_ip'] = {ip:String}
     GROUP BY action, dst_port, protocol, interface
     ORDER BY count DESC
     LIMIT 10
@@ -227,8 +233,8 @@ def lookup_ip_threat_intel(ip_address: str) -> str:
     """
 
     try:
-        enrichment_result = _execute_clickhouse_query(enrichment_query)
-        activity_result = _execute_clickhouse_query(activity_query)
+        enrichment_result = _execute_clickhouse_query(enrichment_query, {"ip": ip_address})
+        activity_result = _execute_clickhouse_query(activity_query, {"ip": ip_address})
 
         enrichment = None
         if enrichment_result.strip():

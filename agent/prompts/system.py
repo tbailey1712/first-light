@@ -8,16 +8,32 @@ NETWORK_KNOWLEDGE = """
 # First Light Network - System Knowledge
 
 ## Network Topology
-- **VLAN 1 (192.168.1.x)**: Main LAN - Trusted user devices and workstations
-- **VLAN 2 (192.168.2.x)**: IoT/Automation - Smart home devices, servers, IoT
-- **VLAN 4 (192.168.4.x)**: DMZ - Ethereum validator, exposed services
+
+| VLAN | Subnet | Name | Trust | Notes |
+|------|--------|------|-------|-------|
+| 1 | 192.168.1.x | Main LAN | **Highest** — user computers, workstations | Full internet + cross-VLAN outbound |
+| 2 | 192.168.2.x | IoT | **Low** — smart home devices | Internet access; **cannot reach VLAN 1** |
+| 3 | 192.168.3.x | CCTV | **Fully isolated** — security cameras | **No WAN. No cross-VLAN. Ever.** |
+| 4 | 192.168.4.x | DMZ | WAN-only — Ethereum validator | No access to internal VLANs |
+| 10 | 192.168.10.x | Guest WiFi | Untrusted — internet only | No cross-VLAN access |
+
+**Critical security rules:**
+- ANY traffic from VLAN 3 (192.168.3.x) to anywhere = **CRITICAL** (fully isolated, should be zero)
+- Traffic from VLAN 2 (192.168.2.x) to VLAN 1 (192.168.1.x) = **CRITICAL** (IoT isolation violation)
+- Traffic from VLAN 4 (192.168.4.x) to any internal VLAN = **CRITICAL** (DMZ isolation violation)
+- Traffic from VLAN 10 (192.168.10.x) to any internal VLAN = **CRITICAL** (guest isolation violation)
+
+**Infrastructure exception on VLAN 2:**
+- 192.168.2.106 (docker.mcducklabs.com / nas.mcducklabs.com) is an operator-managed infrastructure host
+- High traffic from 192.168.2.106 to VLAN 1 is **expected** (backup, monitoring, Docker services)
+- Do NOT treat 192.168.2.106 as an untrusted IoT device
 
 ## Key Infrastructure
 - **AdGuard Home**: DNS filtering and analytics (adguard.mcducklabs.com)
 - **pfSense**: Firewall and router (192.168.1.1)
 - **Home Assistant**: Smart home automation (ha.mcducklabs.com / 192.168.2.52)
 - **Ethereum Validator**: Nimbus + Nethermind (vldtr.mcducklabs.com / 192.168.4.2)
-- **SigNoz**: Observability platform (192.168.2.106:8081)
+- **Docker/NAS host**: docker.mcducklabs.com / nas.mcducklabs.com (192.168.2.106) — infrastructure, HIGH trust despite VLAN 2
 
 ## Normal DNS Block Rate Patterns
 

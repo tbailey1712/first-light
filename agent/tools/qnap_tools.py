@@ -1,13 +1,25 @@
 """
-QNAP NAS health tools — queries the fl-qnap-api-exporter Prometheus endpoint.
+QNAP NAS health tools.
+
+query_qnap_health: queries the fl-qnap-api-exporter Prometheus endpoint.
+query_qnap_directory_sizes: uses the QNAP File Station API for directory analysis.
 """
 
+import hashlib
 import json
 import re
-from typing import Dict, List, Tuple
+import time
+import xml.etree.ElementTree as ET
+from typing import Dict, List, Optional, Tuple
 
 import httpx
 from langchain_core.tools import tool
+
+from agent.config import get_config
+
+# Module-level session cache — reuse QNAP auth token for up to 50 minutes
+_qnap_sid: Optional[str] = None
+_qnap_sid_expiry: float = 0.0
 
 
 def _parse_prometheus(text: str) -> Dict[str, List[Tuple[Dict, float]]]:
@@ -153,3 +165,106 @@ def query_qnap_health() -> str:
         "alerts": alerts,
         "healthy": len(alerts) == 0,
     }, indent=2)
+
+
+def _qnap_get_sid() -> Optional[str]:
+    """Authenticate with QNAP and return a session ID, reusing cached token if valid."""
+    global _qnap_sid, _qnap_sid_expiry
+
+    if _qnap_sid and time.time() < _qnap_sid_expiry:
+        return _qnap_sid
+
+    cfg = get_config()
+    if not cfg.qnap_api_url or not cfg.qnap_api_user or not cfg.qnap_api_pass:
+        return None
+
+    # QNAP authLogin uses MD5-hashed password
+    passwd_md5 = hashlib.md5(cfg.qnap_api_pass.encode()).hexdigest()
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(
+                f"{cfg.qnap_api_url.rstrip('/')}/cgi-bin/authLogin.cgi",
+                params={"user": cfg.qnap_api_user, "passwd": passwd_md5},
+            )
+            resp.raise_for_status()
+
+        root = ET.fromstring(resp.text)
+        sid_el = root.find("authSid")
+        if sid_el is None or not sid_el.text:
+            return None
+
+        _qnap_sid = sid_el.text
+        _qnap_sid_expiry = time.time() + 3000  # 50 minutes
+        return _qnap_sid
+
+    except Exception as e:
+        return None
+
+
+@tool
+def query_qnap_directory_sizes(
+    path: str = "/share/CACHEDEV1_DATA",
+    top_n: int = 10,
+) -> str:
+    """List the largest subdirectories under a given NAS path.
+
+    Uses the QNAP File Station API to fetch folder sizes. Useful for diagnosing
+    which directories are consuming space when a volume is filling up.
+
+    Args:
+        path: NAS path to analyse (default: primary data volume root).
+        top_n: Number of largest subdirectories to return (default 10).
+
+    Returns:
+        JSON list of {name, path, size_gb, size_bytes} sorted by size descending,
+        or a JSON error object if the API is unavailable.
+    """
+    cfg = get_config()
+    if not cfg.qnap_api_url:
+        return json.dumps({"error": "QNAP_API_URL not configured"})
+
+    sid = _qnap_get_sid()
+    if not sid:
+        return json.dumps({"error": "QNAP authentication failed — check QNAP_API_USER / QNAP_API_PASS"})
+
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.get(
+                f"{cfg.qnap_api_url.rstrip('/')}/cgi-bin/filemanager/utilRequest.cgi",
+                params={
+                    "func": "get_tree",
+                    "path": path,
+                    "tree_type": "folder_size",
+                    "sid": sid,
+                },
+            )
+            resp.raise_for_status()
+
+        # Response is JSON: {"data": [{"name": "...", "folder_size": "...", ...}, ...]}
+        data = resp.json()
+        entries = data.get("data", [])
+
+        results = []
+        for entry in entries:
+            name = entry.get("name", "")
+            size_bytes_raw = entry.get("folder_size") or entry.get("size") or 0
+            try:
+                size_bytes = int(size_bytes_raw)
+            except (TypeError, ValueError):
+                size_bytes = 0
+            results.append({
+                "name": name,
+                "path": f"{path.rstrip('/')}/{name}",
+                "size_bytes": size_bytes,
+                "size_gb": round(size_bytes / 1e9, 2),
+            })
+
+        results.sort(key=lambda x: x["size_bytes"], reverse=True)
+        return json.dumps(results[:top_n], indent=2)
+
+    except Exception as e:
+        # Invalidate cached SID on auth errors so next call re-authenticates
+        global _qnap_sid
+        _qnap_sid = None
+        return json.dumps({"error": f"QNAP directory query failed: {e}"})

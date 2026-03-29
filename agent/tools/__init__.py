@@ -9,7 +9,6 @@ from langchain_core.tools import BaseTool
 
 from agent.tools.logs import (
     query_security_summary,
-    query_adguard_anomalies,
     query_wireless_health,
     query_infrastructure_events,
     search_logs_by_ip,
@@ -29,7 +28,7 @@ from agent.tools.threat_intel_tools import (
     query_threat_intel_coverage,
 )
 
-from agent.tools.qnap_tools import query_qnap_health
+from agent.tools.qnap_tools import query_qnap_health, query_qnap_directory_sizes
 from agent.tools.proxmox_tools import query_proxmox_health
 
 
@@ -38,7 +37,6 @@ def get_all_tools() -> List[BaseTool]:
     return [
         # Log query tools
         query_security_summary,
-        query_adguard_anomalies,
         query_wireless_health,
         query_infrastructure_events,
         search_logs_by_ip,
@@ -54,5 +52,6 @@ def get_all_tools() -> List[BaseTool]:
         query_threat_intel_coverage,
         # Hardware health
         query_qnap_health,
+        query_qnap_directory_sizes,
         query_proxmox_health,
     ]

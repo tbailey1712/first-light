@@ -103,11 +103,24 @@ def query_ntopng_interface_stats(ifid: int = 3) -> str:
 
     Returns:
         JSON with bytes, packets, active hosts, flows, and alert counters.
+        NOTE: dropped_alerts and written_alerts are CUMULATIVE counters since
+        ntopng last restarted — they are NOT 24-hour counts. Do not alarm on
+        their absolute values; only the delta between runs is meaningful.
     """
     config = get_config()
     if not config.ntopng_host:
         return "Error: ntopng_host not configured in .env"
-    return _get("/lua/rest/v2/get/interface/data.lua", {"ifid": ifid})
+    raw = _get("/lua/rest/v2/get/interface/data.lua", {"ifid": ifid})
+    # Annotate cumulative counters so the LLM does not misinterpret them
+    try:
+        data = json.loads(raw)
+        rsp = data.get("rsp", data)
+        for key in ("dropped_alerts", "written_alerts", "alerts_queries"):
+            if key in rsp:
+                rsp[f"{key}_NOTE"] = "cumulative since ntopng last restart, NOT a 24h count"
+        return json.dumps(data)
+    except (json.JSONDecodeError, TypeError):
+        return raw
 
 
 @tool

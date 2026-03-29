@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}First Light — Reports{% endblock %}
+{% block content %}
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
+  <h1 class="page-title" style="margin:0">Reports</h1>
+  <button class="btn btn-primary"
+          hx-post="/api/report/trigger"
+          hx-swap="none">
+    Run Report Now
+  </button>
+</div>
+
+<div class="card">
+  {% if reports %}
+  <table>
+    <tr>
+      <th>Date</th>
+      <th>Modified</th>
+      <th>Size</th>
+      <th></th>
+    </tr>
+    {% for r in reports %}
+    <tr>
+      <td><a href="/reports/{{ r.date }}">{{ r.date }}</a></td>
+      <td style="color:var(--muted)">{{ r.modified }}</td>
+      <td style="color:var(--muted)">{{ r.size_kb }} KB</td>
+      <td style="text-align:right">
+        <a href="/reports/{{ r.date }}/raw" class="btn btn-ghost" style="font-size:12px;padding:4px 10px">↓ Download</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p style="color:var(--muted)">No reports found in <code>{{ "/data/reports/daily" }}</code>.</p>
+  {% endif %}
+</div>
+{% endblock %}

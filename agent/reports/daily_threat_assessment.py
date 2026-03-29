@@ -65,8 +65,7 @@ async def generate_daily_report(hours: int = 24) -> Dict[str, Any]:
 
     # Run the synchronous multi-agent pipeline in a thread so we don't
     # block the asyncio event loop.
-    loop = asyncio.get_event_loop()
-    report_body = await loop.run_in_executor(None, _run_graph, hours)
+    report_body = await asyncio.get_running_loop().run_in_executor(None, _run_graph, hours)
 
     # Build the full report with a standard header
     report_header = (
@@ -97,44 +96,18 @@ async def generate_daily_report(hours: int = 24) -> Dict[str, Any]:
 
 
 async def send_report_notification(report: Dict[str, Any]):
-    """Send report via Telegram."""
-    import httpx
-    from agent.config import get_config
+    """Send report to all registered notification channels.
 
-    config = get_config()
-    if not config.telegram_bot_token or not config.telegram_chat_id:
-        logger.warning("Telegram not configured — skipping notification")
-        return
-
-    report_text = report["report_text"]
-
-    # Telegram messages cap at 4096 chars; send summary if longer
-    if len(report_text) > 4000:
-        lines = report_text.split("\n")
-        truncated = "\n".join(lines[:60])
-        message = f"{truncated}\n\n_… Report truncated …_\n\n📄 Full report: `{report['report_path']}`"
-    else:
-        message = report_text
-
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                f"https://api.telegram.org/bot{config.telegram_bot_token}/sendMessage",
-                json={
-                    "chat_id": config.telegram_chat_id,
-                    "text": message,
-                    "parse_mode": "Markdown",
-                    "disable_web_page_preview": True,
-                },
-            )
-        if resp.status_code == 200:
-            logger.info(f"Report sent to Telegram chat {config.telegram_chat_id}")
-        else:
-            logger.warning(f"Telegram send failed: {resp.status_code} — {resp.text[:200]}")
-    except Exception as e:
-        logger.error(f"Error sending to Telegram: {e}")
-
-    logger.info(f"Report saved locally: {report['report_path']}")
+    Thin wrapper around the notifications registry — kept for backward
+    compatibility with any callers that import this directly.
+    """
+    from agent.notifications import broadcast_report, register_defaults
+    # Ensure channels are registered if called outside the scheduler context
+    from agent.notifications.registry import get_channels
+    if not get_channels():
+        await register_defaults()
+    await broadcast_report(report)
+    logger.info(f"Report broadcast complete: {report['report_path']}")
 
 
 async def main():
