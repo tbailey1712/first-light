@@ -11,6 +11,7 @@ Public API:
 
 import json
 import logging
+import time
 from typing import Literal, Optional
 
 import litellm
@@ -30,6 +31,11 @@ logger = logging.getLogger(__name__)
 AgentType = Literal["micro", "supervisor", "synthesis", "weekly", "monthly"]
 
 MAX_TOOL_ITERATIONS = 12
+
+# Maximum characters per tool result before truncation.
+# Keeps context window from exploding across multi-iteration ReAct loops.
+# ~10k chars ≈ ~2500 tokens — enough for rich JSON, not enough to blow 200k context.
+MAX_TOOL_RESULT_CHARS = 10_000
 
 # Silence LiteLLM's verbose logging
 litellm.suppress_debug_info = True
@@ -93,7 +99,44 @@ def chat(
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
 
-    response = litellm.completion(**kwargs)
+    # Log approximate context size to help diagnose future 500s
+    _ctx_chars = sum(len(str(m.get("content", ""))) for m in messages)
+    if _ctx_chars > 50_000:
+        logger.warning(
+            "%s: large context (%d chars ≈ %d tokens) before LLM call",
+            agent_name or agent_type, _ctx_chars, _ctx_chars // 4,
+        )
+
+    # Retry on transient 500s (LiteLLM proxies Anthropic overload as InternalServerError)
+    _retries = 3
+    _delay = 5.0
+    last_exc = None
+    for attempt in range(_retries):
+        try:
+            response = litellm.completion(**kwargs)
+            break
+        except litellm.InternalServerError as e:
+            last_exc = e
+            if attempt < _retries - 1:
+                logger.warning(
+                    "LLM 500 on attempt %d/%d for %s — retrying in %.0fs",
+                    attempt + 1, _retries, agent_name or agent_type, _delay,
+                )
+                time.sleep(_delay)
+                _delay *= 2
+            else:
+                raise
+        except litellm.RateLimitError as e:
+            last_exc = e
+            if attempt < _retries - 1:
+                logger.warning(
+                    "LLM rate limit on attempt %d/%d — retrying in %.0fs",
+                    attempt + 1, _retries, _delay,
+                )
+                time.sleep(_delay)
+                _delay *= 2
+            else:
+                raise
 
     msg = response.choices[0].message
     lf.update_current_generation(
@@ -192,9 +235,20 @@ def run_react_loop(
             else:
                 result = f"Unknown tool: {tc.function.name}"
 
+            result_str = str(result)
+            if len(result_str) > MAX_TOOL_RESULT_CHARS:
+                result_str = (
+                    result_str[:MAX_TOOL_RESULT_CHARS]
+                    + f"\n... [truncated: {len(result_str) - MAX_TOOL_RESULT_CHARS} chars omitted to fit context window]"
+                )
+                logger.debug(
+                    "%s: tool %s result truncated to %d chars",
+                    agent_name, tc.function.name, MAX_TOOL_RESULT_CHARS,
+                )
+
             messages.append({
                 "role": "tool",
-                "content": str(result),
+                "content": result_str,
                 "tool_call_id": tc.id,
             })
 
