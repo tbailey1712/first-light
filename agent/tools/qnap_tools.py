@@ -2,6 +2,7 @@
 QNAP NAS health tools.
 
 query_qnap_health: queries the fl-qnap-api-exporter Prometheus endpoint.
+query_qnap_events: queries ClickHouse for QNAP syslog events (security, login, warnings).
 query_qnap_directory_sizes: uses the QNAP File Station API for directory analysis.
 """
 
@@ -10,6 +11,7 @@ import json
 import re
 import time
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 import httpx
@@ -268,3 +270,172 @@ def query_qnap_directory_sizes(
         global _qnap_sid
         _qnap_sid = None
         return json.dumps({"error": f"QNAP directory query failed: {e}"})
+
+
+def _parse_qulogd_body(body: str) -> dict:
+    """Parse a QNAP qulogd syslog message body into structured fields.
+
+    Handles two formats emitted by QNAP:
+      Long:  "... qulogd[PID]: event log: Users: X, Source IP: Y, Application: Z, Category: C, Content: MSG"
+      Long:  "... qulogd[PID]: conn log: Users: X, Source IP: Y, ..., Action: A"
+      Short: "... qulogd:[PID][Application] message"  (duplicate — skipped by caller)
+    """
+    parsed: dict = {}
+
+    # Extract log type (event/conn/err)
+    log_type_m = re.search(r'qulogd\[\d+\]:\s+(event log|conn log|err log):', body)
+    if log_type_m:
+        parsed["log_type"] = log_type_m.group(1).replace(" log", "")
+    else:
+        parsed["log_type"] = "event"
+
+    # Key-value pairs in the structured long form
+    for field, key in [
+        (r'Users:\s*([^,\n]+)', "user"),
+        (r'Source IP:\s*([^,\n]+)', "source_ip"),
+        (r'Computer name:\s*([^,\n]+)', "computer"),
+        (r'Connection type:\s*([^,\n]+)', "connection_type"),
+        (r'Accessed resources:\s*([^,\n]+)', "resource"),
+        (r'Application:\s*([^,\n]+)', "application"),
+        (r'Category:\s*([^,\n]+)', "category"),
+        (r'Action:\s*([^,\n]+)', "action"),
+        (r'Content:\s*(.+)$', "content"),
+    ]:
+        m = re.search(field, body)
+        if m:
+            val = m.group(1).strip()
+            if val and val != "---":
+                parsed[key] = val
+
+    return parsed
+
+
+@tool
+def query_qnap_events(hours: int = 24) -> str:
+    """Get QNAP NAS event log entries: security alerts, login events, warnings, and errors.
+
+    Queries the qulogd syslog stream from the QNAP NAS. Surfaces:
+    - Security Center failures (checkup scan errors, policy violations)
+    - Login events: SSH/HTTP/SFTP successes and failures
+    - Malware Remover scan results
+    - Storage & Snapshots warnings
+    - Container Station and App Center events
+    - Hardware status alerts
+
+    Args:
+        hours: Lookback period in hours (default: 24, max: 168)
+
+    Returns:
+        JSON with categorised event counts and notable events requiring attention.
+    """
+    from agent.config import get_config
+    hours = min(hours, 168)
+    config = get_config()
+
+    # Only query the long-form structured records (avoid duplicate short-form entries)
+    query = f"""
+    SELECT
+        timestamp,
+        severity_text,
+        body
+    FROM signoz_logs.logs_v2
+    WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
+      AND attributes_string['hostname'] = 'nas'
+      AND (body LIKE '%event log:%' OR body LIKE '%conn log:%')
+    ORDER BY timestamp DESC
+    LIMIT 500
+    FORMAT JSONEachRow
+    """
+
+    clickhouse_url = f"http://{config.signoz_clickhouse_host}:8123"
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            resp = client.post(clickhouse_url, params={
+                "user": config.signoz_clickhouse_user,
+                "password": config.signoz_clickhouse_password,
+                "query": query,
+            })
+            if resp.status_code != 200:
+                return json.dumps({"error": f"ClickHouse HTTP {resp.status_code}: {resp.text[:200]}"})
+            rows = [json.loads(line) for line in resp.text.strip().splitlines() if line]
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+    if not rows:
+        return json.dumps({"status": "no_events", "message": f"No QNAP events in last {hours}h"})
+
+    # Categorise events
+    security_alerts: list = []
+    login_failures: list = []
+    login_successes: list = []
+    warnings: list = []
+    info_events: list = []
+
+    # Track counts by application
+    app_counts: dict = {}
+
+    for row in rows:
+        parsed = _parse_qulogd_body(row.get("body", ""))
+        application = parsed.get("application", "Unknown")
+        app_counts[application] = app_counts.get(application, 0) + 1
+
+        content = parsed.get("content", parsed.get("action", ""))
+        ts_ns = row.get("timestamp", 0)
+        ts = datetime.fromtimestamp(ts_ns / 1e9, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if ts_ns else ""
+
+        event = {
+            "time": ts,
+            "application": application,
+            "category": parsed.get("category", ""),
+            "user": parsed.get("user", ""),
+            "source_ip": parsed.get("source_ip", ""),
+            "message": content,
+        }
+
+        severity = row.get("severity_text", "info")
+        action = parsed.get("action", "")
+
+        # Classify
+        if parsed.get("log_type") == "conn":
+            if "fail" in action.lower():
+                login_failures.append(event)
+            else:
+                login_successes.append(event)
+        elif severity in ("warning", "error", "critical") or "<28>" in row.get("body", "") or "<24>" in row.get("body", ""):
+            if application == "Security Center":
+                security_alerts.append(event)
+            else:
+                warnings.append(event)
+        else:
+            info_events.append(event)
+
+    # Build output — only surface what needs attention
+    output: dict = {
+        "time_range": f"last {hours}h",
+        "total_events": len(rows),
+        "events_by_application": app_counts,
+    }
+
+    if security_alerts:
+        output["security_center_alerts"] = security_alerts
+    if login_failures:
+        output["login_failures"] = login_failures
+    # Only include login successes if there were also failures (context) or external IPs
+    external_logins = [e for e in login_successes if e.get("source_ip", "").startswith("192.168.") is False and e.get("source_ip")]
+    if external_logins:
+        output["external_logins"] = external_logins
+    if warnings:
+        output["warnings"] = warnings[:20]  # cap at 20 to avoid snapshot spam
+    if info_events and not (security_alerts or login_failures or warnings):
+        output["recent_events"] = info_events[:10]
+
+    # Summarise health
+    issues = []
+    if security_alerts:
+        issues.append(f"{len(security_alerts)} Security Center alert(s)")
+    if login_failures:
+        issues.append(f"{len(login_failures)} login failure(s)")
+    output["issues"] = issues
+    output["healthy"] = len(issues) == 0
+
+    return json.dumps(output, indent=2)

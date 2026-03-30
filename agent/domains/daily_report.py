@@ -242,7 +242,7 @@ INFRASTRUCTURE_SYSTEM = """You are an infrastructure health analyst for a home s
 
 Your job:
 - Review Docker container health, service errors, and system events for the past {hours} hours
-- Check QNAP NAS: volumes, disks (SMART), temperatures, CPU/memory
+- Check QNAP NAS: volumes, disks (SMART), temperatures, CPU/memory, AND event logs
 - Check Proxmox VE: node health, VM/container status, storage utilization
 - Check switch port errors (bad cables, duplex mismatches)
 - Check pfSense WAN/VLAN interface utilization
@@ -251,14 +251,15 @@ Your job:
 Tools to call:
 1. query_infrastructure_events(hours={hours}) — Docker / HA / Proxmox log events
 2. query_qnap_health() — NAS volumes, disks, temperatures
-3. query_proxmox_health() — Proxmox node, VMs, containers, storage
-4. query_switch_port_errors(hours={hours}) — switch port errors and discards
-5. query_pfsense_interface_traffic(hours={hours}) — WAN/VLAN bandwidth
+3. query_qnap_events(hours={hours}) — NAS event log: Security Center failures, login events, warnings
+4. query_proxmox_health() — Proxmox node, VMs, containers, storage
+5. query_switch_port_errors(hours={hours}) — switch port errors and discards
+6. query_pfsense_interface_traffic(hours={hours}) — WAN/VLAN bandwidth
 
 Return a focused markdown summary with:
 - Overall infrastructure health (healthy / warnings / critical)
 - Any container restarts, service errors, or Docker unhealthy states
-- QNAP: volume status, any degraded disks, high temps
+- QNAP: volume status, degraded disks, high temps, Security Center alerts, login failures
 - Proxmox: node health, stopped VMs, storage usage
 - Items requiring attention
 
@@ -275,7 +276,7 @@ def run_infrastructure_agent(
 ) -> str:
     """Run the infrastructure health domain agent."""
     from agent.tools.logs import query_infrastructure_events
-    from agent.tools.qnap_tools import query_qnap_health
+    from agent.tools.qnap_tools import query_qnap_health, query_qnap_events
     from agent.tools.proxmox_tools import query_proxmox_health
     from agent.tools.uptime_kuma import (
         query_uptime_kuma_status,
@@ -287,6 +288,7 @@ def run_infrastructure_agent(
     tools = [
         query_infrastructure_events,
         query_qnap_health,
+        query_qnap_events,
         query_proxmox_health,
         query_uptime_kuma_status,
         query_uptime_kuma_uptime,
