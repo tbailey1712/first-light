@@ -166,38 +166,20 @@ class QNAPAPIClient:
             'func': 'extra_get', 'disktype': 'all', 'is_ajax': '1'
         })
 
-    def get_share_list(self) -> Optional[list]:
+    def get_volume_info(self) -> Optional[Dict]:
         """
-        Get per-shared-folder size info via the File Station API.
+        Get per-volume usage via chartReq.cgi.
 
-        Returns each share's name, used bytes, capacity (quota), and pool.
-        This is the correct QTS 5.x API — chartReq.cgi returns underlying
-        storage volume allocations which don't match what Storage Manager shows.
+        Returns volumeList (labels/pool type) and volumeUseList (total_size,
+        free_size, per-folder used_size). On QuTS hero (ZFS), total_size and
+        free_size are the ZFS dataset quota and available bytes respectively;
+        used = total - free matches what Storage Manager displays.
         """
-        if not self.sid and not self.login():
-            return None
-        try:
-            response = requests.get(
-                f'{self.base_url}/cgi-bin/filemanager/utilRequest.cgi',
-                params={
-                    'func': 'get_share_list',
-                    'sid': self.sid,
-                    'is_iso': '0',
-                },
-                verify=False,
-                timeout=30,
-            )
-            if response.status_code != 200:
-                logger.warning(f"get_share_list: HTTP {response.status_code}")
-                return None
-            data = response.json()
-            shares = data.get('shares', data.get('data', []))
-            if not isinstance(shares, list):
-                return None
-            return shares
-        except Exception as e:
-            logger.warning(f"get_share_list failed: {e}")
-            return None
+        return self._xml_request('/cgi-bin/management/chartReq.cgi', {
+            'chart_func': 'disk_usage',
+            'disk_select': 'all',
+            'include': 'all',
+        })
 
     def get_containers(self) -> Optional[List]:
         """Get Container Station containers."""
@@ -266,39 +248,48 @@ def collect_metrics(client: QNAPAPIClient, hostname: str):
                         qnap_network_rx_bytes.labels(host=hostname, interface=ifname).set(rx)
                         qnap_network_tx_bytes.labels(host=hostname, interface=ifname).set(tx)
 
-        # ── Shared folder usage (QTS 5.x Storage Manager model) ───────────────
-        shares = client.get_share_list()
-        if shares:
-            logger.info(f"Found {len(shares)} shared folders via File Station API")
-            for share in shares:
-                name = share.get('filename') or share.get('name') or share.get('sharename', 'unknown')
-                pool = share.get('vol_no') or share.get('pool_name') or 'unknown'
+        # ── Volume / shared folder usage ───────────────────────────────────────
+        vol_info = client.get_volume_info()
+        if vol_info:
+            # Build label map: volumeValue → {label, pool_type}
+            volume_labels = {}
+            vol_list = vol_info.get('volumeList', {}).get('volume', [])
+            if isinstance(vol_list, dict):
+                vol_list = [vol_list]
+            for vol in vol_list:
+                v = vol.get('volumeValue')
+                if v:
+                    volume_labels[v] = {
+                        'label': vol.get('volumeLabel', f'Volume{v}'),
+                        'type': vol.get('volumeStat', 'unknown'),
+                    }
 
-                # Used bytes — field names vary by firmware version
-                used_bytes = parse_value(
-                    share.get('vol_size_bytes')
-                    or share.get('used_size')
-                    or share.get('size_used')
-                )
-                # Quota/capacity: 0 means unlimited (no quota set)
-                quota_bytes = parse_value(
-                    share.get('vol_quota_bytes')
-                    or share.get('quota')
-                    or share.get('capacity')
-                )
-                free_bytes = quota_bytes - used_bytes if quota_bytes > 0 else 0
+            vol_use_list = vol_info.get('volumeUseList', {}).get('volumeUse', [])
+            if isinstance(vol_use_list, dict):
+                vol_use_list = [vol_use_list]
 
-                if used_bytes > 0:
-                    qnap_volume_used_bytes.labels(host=hostname, volume=name, pool=pool).set(used_bytes)
-                    if quota_bytes > 0:
-                        qnap_volume_capacity_bytes.labels(host=hostname, volume=name, pool=pool).set(quota_bytes)
-                        qnap_volume_free_bytes.labels(host=hostname, volume=name, pool=pool).set(free_bytes)
-                        pct = used_bytes / quota_bytes * 100
-                        logger.debug(f"Share {name}: {used_bytes/(1024**3):.1f}GB / {quota_bytes/(1024**3):.1f}GB ({pct:.1f}%)")
-                    else:
-                        logger.debug(f"Share {name}: {used_bytes/(1024**3):.1f}GB used (no quota)")
+            logger.info(f"Found {len(vol_use_list)} volumes")
+            for vol_use in vol_use_list:
+                v = vol_use.get('volumeValue')
+                total = parse_value(vol_use.get('total_size'))
+                free = parse_value(vol_use.get('free_size'))
+                if total <= 0:
+                    continue
+                used = total - free
+
+                info = volume_labels.get(v, {'label': f'Volume{v}', 'type': 'unknown'})
+                label = info['label']
+                pool_type = info['type']
+
+                qnap_volume_capacity_bytes.labels(host=hostname, volume=label, pool=pool_type).set(total)
+                qnap_volume_used_bytes.labels(host=hostname, volume=label, pool=pool_type).set(used)
+                qnap_volume_free_bytes.labels(host=hostname, volume=label, pool=pool_type).set(free)
+                logger.debug(
+                    f"Volume {label} ({pool_type}): {used/(1024**3):.1f} GiB used / "
+                    f"{total/(1024**3):.1f} GiB total ({used/total*100:.1f}%)"
+                )
         else:
-            logger.warning("get_share_list returned nothing — volume metrics not updated this cycle")
+            logger.warning("get_volume_info returned nothing — volume metrics not updated this cycle")
 
         # ── Container Station ──────────────────────────────────────────────────
         containers = client.get_containers()
