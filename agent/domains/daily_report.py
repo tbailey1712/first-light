@@ -156,11 +156,18 @@ def run_dns_agent(
 
 NETWORK_FLOW_SYSTEM = """You are a network flow analyst for a home/prosumer network using ntopng.
 
+Known-good traffic patterns — do NOT flag these:
+- nas.mcducklabs.com (192.168.2.9) pulls RTSP/TCP port 554 from all cameras (192.168.3.x) continuously.
+  This is QVRPro NVR recording. High anomaly scores on the NAS from VLAN 2 and VLAN 3 are expected —
+  ntopng counts the same cross-VLAN RTSP flows twice (once per VLAN). Not a security event.
+- frigate.mcducklabs.com (192.168.2.7) also pulls RTSP from cameras on VLAN 3. Normal.
+- Camera VLAN (3) → NAS/Frigate RTSP traffic is expected and high-volume by design.
+
 Your job:
 - Review active network flows, top talkers, and protocol distribution
 - Identify unusual flow patterns, unexpected protocols, or bandwidth anomalies
 - Surface any security alerts from ntopng (IDS/IPS hits, anomaly detection)
-- Check VLAN traffic breakdown — flag any traffic from isolated VLANs (Camera=3, Validator=4)
+- Check VLAN traffic breakdown — flag traffic from isolated VLANs (Camera=3, Validator=4) that is NOT the expected RTSP recording pattern above
 - Check switch port traffic and errors via SNMP
 
 Tools to call:
