@@ -4,35 +4,29 @@ QNAP API Exporter for Prometheus
 
 Queries QNAP NAS via API for detailed metrics:
 - Per-disk SMART status and health
-- Volume/share usage details
+- Shared folder usage (QTS 5.x Storage Pool model)
 - Container Station containers
-- RAID status
 - Network statistics
-- Active connections
 """
 
 import os
 import time
 import logging
-import re
 import base64
 import requests
-from typing import Dict, List, Any, Optional
-from urllib.parse import urlencode
 import xml.etree.ElementTree as ET
+from typing import Dict, List, Any, Optional
 from prometheus_client import start_http_server, Gauge, Info
 
 # Disable SSL warnings for self-signed certs
 requests.packages.urllib3.disable_warnings()
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Environment variables
 QNAP_HOST = os.getenv('QNAP_HOST', 'nas.mcducklabs.com')
 QNAP_USERNAME = os.getenv('QNAP_USERNAME', 'firstlight')
 QNAP_PASSWORD = os.getenv('QNAP_PASSWORD', 'f1rstl1ght')
@@ -41,23 +35,29 @@ QNAP_PROTOCOL = os.getenv('QNAP_PROTOCOL', 'https')
 EXPORTER_PORT = int(os.getenv('EXPORTER_PORT', '9004'))
 SCRAPE_INTERVAL = int(os.getenv('SCRAPE_INTERVAL', '60'))
 
-# Prometheus metrics
+# ── Prometheus metrics (ALL must be module-level — never instantiate inside a loop) ──
+
 qnap_system_info = Info('qnap_system', 'QNAP system information')
 qnap_uptime_seconds = Gauge('qnap_uptime_seconds', 'System uptime', ['host'])
 
+# System resources
+qnap_cpu_usage_percent = Gauge('qnap_cpu_usage_percent', 'CPU usage percentage', ['host'])
+qnap_memory_total_bytes = Gauge('qnap_memory_total_bytes', 'Total memory bytes', ['host'])
+qnap_memory_free_bytes = Gauge('qnap_memory_free_bytes', 'Free memory bytes', ['host'])
+qnap_memory_used_bytes = Gauge('qnap_memory_used_bytes', 'Used memory bytes', ['host'])
+qnap_cpu_temperature_celsius = Gauge('qnap_cpu_temperature_celsius', 'CPU temperature', ['host'])
+qnap_system_temperature_celsius = Gauge('qnap_system_temperature_celsius', 'System temperature', ['host'])
+
 # Disk metrics
 qnap_disk_smart_status = Gauge('qnap_disk_smart_status', 'SMART status (1=good, 0=bad)', ['host', 'disk', 'model'])
-qnap_disk_temp = Gauge('qnap_disk_temperature_celsius', 'Disk temperature', ['host', 'disk', 'model'])
-qnap_disk_capacity = Gauge('qnap_disk_capacity_bytes', 'Disk capacity', ['host', 'disk', 'model'])
+qnap_disk_temperature_celsius = Gauge('qnap_disk_temperature_celsius', 'Disk temperature', ['host', 'disk', 'model'])
+qnap_disk_capacity_bytes = Gauge('qnap_disk_capacity_bytes', 'Disk capacity', ['host', 'disk', 'model'])
 qnap_disk_bad_sectors = Gauge('qnap_disk_bad_sectors', 'Bad sectors count', ['host', 'disk'])
 
-# Volume metrics
-qnap_volume_capacity = Gauge('qnap_volume_capacity_bytes', 'Volume capacity', ['host', 'volume', 'pool'])
-qnap_volume_used = Gauge('qnap_volume_used_bytes', 'Volume used space', ['host', 'volume', 'pool'])
-qnap_volume_free = Gauge('qnap_volume_free_bytes', 'Volume free space', ['host', 'volume', 'pool'])
-
-# RAID metrics
-qnap_raid_status = Gauge('qnap_raid_status', 'RAID status (1=healthy, 0=degraded)', ['host', 'raid_id', 'type'])
+# Shared folder / volume metrics
+qnap_volume_capacity_bytes = Gauge('qnap_volume_capacity_bytes', 'Volume capacity', ['host', 'volume', 'pool'])
+qnap_volume_used_bytes = Gauge('qnap_volume_used_bytes', 'Volume used space', ['host', 'volume', 'pool'])
+qnap_volume_free_bytes = Gauge('qnap_volume_free_bytes', 'Volume free space', ['host', 'volume', 'pool'])
 
 # Network metrics
 qnap_network_rx_bytes = Gauge('qnap_network_rx_bytes_total', 'Network RX bytes', ['host', 'interface'])
@@ -69,8 +69,23 @@ qnap_container_cpu = Gauge('qnap_container_cpu_percent', 'Container CPU usage', 
 qnap_container_memory = Gauge('qnap_container_memory_bytes', 'Container memory usage', ['host', 'container'])
 
 
+def parse_value(value: Any, default: float = 0.0) -> float:
+    """Parse a value from API response, handling various string formats."""
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        value = value.replace('%', '').replace(' ', '').strip()
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default
+
+
 class QNAPAPIClient:
-    """Client for QNAP API."""
+    """Client for QNAP NAS API."""
 
     def __init__(self, host: str, username: str, password: str, port: int = 443, protocol: str = 'https'):
         self.host = host
@@ -84,84 +99,55 @@ class QNAPAPIClient:
     def login(self) -> bool:
         """Authenticate and get session ID."""
         try:
-            url = f'{self.base_url}/cgi-bin/authLogin.cgi'
-
-            # QNAP API requires base64-encoded password
             encoded_pwd = base64.b64encode(self.password.encode()).decode()
-
-            # Use POST with form data
-            data = {
-                'user': self.username,
-                'pwd': encoded_pwd
-            }
-            headers = {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            }
-
-            response = requests.post(url, data=data, headers=headers, verify=False, timeout=10)
-
-            if response.status_code == 200:
-                # Parse XML response
-                root = ET.fromstring(response.content)
-
-                # Check if authentication passed
-                auth_passed = root.find('.//authPassed')
-                if auth_passed is not None and auth_passed.text == '1':
-                    # Extract session ID
-                    auth_sid = root.find('.//authSid')
-                    if auth_sid is not None and auth_sid.text:
-                        self.sid = auth_sid.text
-                        logger.info(f"Successfully authenticated to QNAP at {self.host}")
-                        return True
-                    else:
-                        logger.error("No session ID in response")
-                        return False
-                else:
-                    logger.error("Authentication failed - authPassed != 1")
-                    return False
-            else:
-                logger.error(f"Login failed: HTTP {response.status_code}")
-                return False
+            response = requests.post(
+                f'{self.base_url}/cgi-bin/authLogin.cgi',
+                data={'user': self.username, 'pwd': encoded_pwd},
+                headers={'Content-Type': 'application/x-www-form-urlencoded'},
+                verify=False,
+                timeout=10,
+            )
+            response.raise_for_status()
+            root = ET.fromstring(response.content)
+            auth_passed = root.find('.//authPassed')
+            if auth_passed is not None and auth_passed.text == '1':
+                auth_sid = root.find('.//authSid')
+                if auth_sid is not None and auth_sid.text:
+                    self.sid = auth_sid.text
+                    logger.info(f"Authenticated to QNAP at {self.host}")
+                    return True
+            logger.error("QNAP authentication failed")
+            return False
         except Exception as e:
             logger.error(f"Login error: {e}")
             return False
 
-    def _request(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
-        """Make authenticated API request."""
-        if not self.sid:
-            if not self.login():
-                return None
-
+    def _xml_request(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
+        """GET endpoint, parse XML response into a dict."""
+        if not self.sid and not self.login():
+            return None
         try:
-            url = f'{self.base_url}{endpoint}'
-            if params is None:
-                params = {}
-            params['sid'] = self.sid
-
-            response = requests.get(url, params=params, verify=False, timeout=30)
-
+            p = dict(params or {})
+            p['sid'] = self.sid
+            response = requests.get(
+                f'{self.base_url}{endpoint}', params=p, verify=False, timeout=30
+            )
             if response.status_code == 200:
-                # Try to parse as XML
                 try:
-                    root = ET.fromstring(response.content)
-                    return self._xml_to_dict(root)
-                except:
-                    # If not XML, return text
+                    return self._xml_to_dict(ET.fromstring(response.content))
+                except Exception:
                     return {'content': response.text}
-            else:
-                logger.error(f"Request failed: {endpoint} - HTTP {response.status_code}")
-                return None
+            logger.error(f"Request failed: {endpoint} HTTP {response.status_code}")
+            return None
         except Exception as e:
             logger.error(f"Request error: {e}")
             return None
 
     def _xml_to_dict(self, element: ET.Element) -> Dict:
-        """Convert XML element to dictionary, handling multiple elements with same tag."""
+        """Convert XML element to dict; multiple same-tag children become a list."""
         result = {}
         for child in element:
             child_data = self._xml_to_dict(child) if len(child) > 0 else child.text
-
-            # If tag already exists, convert to list or append
             if child.tag in result:
                 if not isinstance(result[child.tag], list):
                     result[child.tag] = [result[child.tag]]
@@ -171,207 +157,150 @@ class QNAPAPIClient:
         return result
 
     def get_system_info(self) -> Optional[Dict]:
-        """Get system information."""
-        return self._request('/cgi-bin/management/manaRequest.cgi', {
-            'subfunc': 'sysinfo',
-            'hd': 'no',
-            'multicpu': 'yes'
+        return self._xml_request('/cgi-bin/management/manaRequest.cgi', {
+            'subfunc': 'sysinfo', 'hd': 'no', 'multicpu': 'yes'
         })
 
     def get_disk_info(self) -> Optional[Dict]:
-        """Get disk information and SMART status."""
-        return self._request('/cgi-bin/disk/disk_manage.cgi', {
-            'func': 'extra_get',
-            'disktype': 'all',
-            'is_ajax': '1'
+        return self._xml_request('/cgi-bin/disk/disk_manage.cgi', {
+            'func': 'extra_get', 'disktype': 'all', 'is_ajax': '1'
         })
 
-    def get_volume_info(self) -> Optional[Dict]:
-        """Get volume/pool information and usage."""
-        return self._request('/cgi-bin/management/chartReq.cgi', {
-            'chart_func': 'disk_usage',
-            'disk_select': 'all',
-            'include': 'all'
-        })
+    def get_share_list(self) -> Optional[list]:
+        """
+        Get per-shared-folder size info via the File Station API.
+
+        Returns each share's name, used bytes, capacity (quota), and pool.
+        This is the correct QTS 5.x API — chartReq.cgi returns underlying
+        storage volume allocations which don't match what Storage Manager shows.
+        """
+        if not self.sid and not self.login():
+            return None
+        try:
+            response = requests.get(
+                f'{self.base_url}/cgi-bin/filemanager/utilRequest.cgi',
+                params={
+                    'func': 'get_share_list',
+                    'sid': self.sid,
+                    'is_iso': '0',
+                },
+                verify=False,
+                timeout=30,
+            )
+            if response.status_code != 200:
+                logger.warning(f"get_share_list: HTTP {response.status_code}")
+                return None
+            data = response.json()
+            shares = data.get('shares', data.get('data', []))
+            if not isinstance(shares, list):
+                return None
+            return shares
+        except Exception as e:
+            logger.warning(f"get_share_list failed: {e}")
+            return None
 
     def get_containers(self) -> Optional[List]:
         """Get Container Station containers."""
+        if not self.sid and not self.login():
+            return None
         try:
-            url = f'{self.base_url}/container-station/api/v1/container'
             response = requests.get(
-                url,
+                f'{self.base_url}/container-station/api/v1/container',
                 params={'sid': self.sid},
                 verify=False,
-                timeout=10
+                timeout=10,
             )
             if response.status_code == 200:
                 return response.json()
             return None
-        except:
+        except Exception:
             return None
 
 
-def parse_value(value: Any, default: float = 0.0) -> float:
-    """Parse a value from API response, handling CDATA and various formats."""
-    if value is None:
-        return default
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        # Remove % sign if present
-        value = value.replace('%', '').replace(' ', '').strip()
-        try:
-            return float(value)
-        except ValueError:
-            return default
-    return default
-
-
 def collect_metrics(client: QNAPAPIClient, hostname: str):
-    """Collect all metrics from QNAP."""
+    """Collect all metrics from QNAP and update Prometheus gauges."""
     logger.info("Collecting QNAP API metrics...")
 
     try:
-        # System info
+        # ── System info ────────────────────────────────────────────────────────
         sys_info = client.get_system_info()
         if sys_info:
-            # Navigate through the nested dict structure
-            func = sys_info.get('func', {})
-            own_content = func.get('ownContent', {})
-            root = own_content.get('root', {})
-
+            root = sys_info.get('func', {}).get('ownContent', {}).get('root', {})
             if root:
-                # Parse uptime
-                uptime_day = parse_value(root.get('uptime_day'))
-                uptime_hour = parse_value(root.get('uptime_hour'))
-                uptime_min = parse_value(root.get('uptime_min'))
-                uptime_sec = parse_value(root.get('uptime_sec'))
+                uptime_s = (
+                    parse_value(root.get('uptime_day')) * 86400
+                    + parse_value(root.get('uptime_hour')) * 3600
+                    + parse_value(root.get('uptime_min')) * 60
+                    + parse_value(root.get('uptime_sec'))
+                )
+                qnap_uptime_seconds.labels(host=hostname).set(uptime_s)
 
-                total_uptime_seconds = (uptime_day * 86400) + (uptime_hour * 3600) + (uptime_min * 60) + uptime_sec
-                qnap_uptime_seconds.labels(host=hostname).set(total_uptime_seconds)
-                logger.debug(f"Uptime: {total_uptime_seconds} seconds ({uptime_day}d {uptime_hour}h {uptime_min}m)")
+                cpu = parse_value(root.get('cpu_usage'))
+                if cpu > 0:
+                    qnap_cpu_usage_percent.labels(host=hostname).set(cpu)
 
-                # CPU usage
-                cpu_usage = parse_value(root.get('cpu_usage'))
-                if cpu_usage > 0:
-                    # Create a CPU usage metric (not in original spec, but useful)
-                    cpu_gauge = Gauge('qnap_cpu_usage_percent', 'CPU usage percentage', ['host'])
-                    cpu_gauge.labels(host=hostname).set(cpu_usage)
-                    logger.debug(f"CPU usage: {cpu_usage}%")
+                total_mem_mb = parse_value(root.get('total_memory'))
+                free_mem_mb = parse_value(root.get('free_memory'))
+                if total_mem_mb > 0:
+                    total_b = total_mem_mb * 1024 * 1024
+                    free_b = free_mem_mb * 1024 * 1024
+                    qnap_memory_total_bytes.labels(host=hostname).set(total_b)
+                    qnap_memory_free_bytes.labels(host=hostname).set(free_b)
+                    qnap_memory_used_bytes.labels(host=hostname).set(total_b - free_b)
 
-                # Memory
-                total_memory = parse_value(root.get('total_memory'))
-                free_memory = parse_value(root.get('free_memory'))
-                if total_memory > 0:
-                    # Convert MB to bytes
-                    mem_total_gauge = Gauge('qnap_memory_total_bytes', 'Total memory', ['host'])
-                    mem_free_gauge = Gauge('qnap_memory_free_bytes', 'Free memory', ['host'])
-                    mem_used_gauge = Gauge('qnap_memory_used_bytes', 'Used memory', ['host'])
-
-                    total_bytes = total_memory * 1024 * 1024
-                    free_bytes = free_memory * 1024 * 1024
-                    used_bytes = total_bytes - free_bytes
-
-                    mem_total_gauge.labels(host=hostname).set(total_bytes)
-                    mem_free_gauge.labels(host=hostname).set(free_bytes)
-                    mem_used_gauge.labels(host=hostname).set(used_bytes)
-                    logger.debug(f"Memory: {used_bytes / (1024**3):.1f}GB / {total_bytes / (1024**3):.1f}GB used")
-
-                # Temperatures
                 cpu_temp = parse_value(root.get('cpu_tempc'))
-                sys_temp = parse_value(root.get('sys_tempc'))
-
                 if cpu_temp > 0:
-                    cpu_temp_gauge = Gauge('qnap_cpu_temperature_celsius', 'CPU temperature', ['host'])
-                    cpu_temp_gauge.labels(host=hostname).set(cpu_temp)
-                    logger.debug(f"CPU temp: {cpu_temp}°C")
+                    qnap_cpu_temperature_celsius.labels(host=hostname).set(cpu_temp)
 
+                sys_temp = parse_value(root.get('sys_tempc'))
                 if sys_temp > 0:
-                    sys_temp_gauge = Gauge('qnap_system_temperature_celsius', 'System temperature', ['host'])
-                    sys_temp_gauge.labels(host=hostname).set(sys_temp)
-                    logger.debug(f"System temp: {sys_temp}°C")
+                    qnap_system_temperature_celsius.labels(host=hostname).set(sys_temp)
 
-                # Network interfaces
-                for i in range(1, 10):  # Support up to 9 interfaces
-                    eth_status_key = f'eth_status{i}'
-                    if eth_status_key not in root:
+                for i in range(1, 10):
+                    if f'eth_status{i}' not in root:
                         break
-
                     ifname = root.get(f'ifname{i}', f'eth{i-1}')
-                    eth_status = parse_value(root.get(eth_status_key))
-                    rx_packets = parse_value(root.get(f'rx_packet{i}'))
-                    tx_packets = parse_value(root.get(f'tx_packet{i}'))
+                    rx = parse_value(root.get(f'rx_packet{i}'))
+                    tx = parse_value(root.get(f'tx_packet{i}'))
+                    if rx > 0 or tx > 0:
+                        qnap_network_rx_bytes.labels(host=hostname, interface=ifname).set(rx)
+                        qnap_network_tx_bytes.labels(host=hostname, interface=ifname).set(tx)
 
-                    if rx_packets > 0 or tx_packets > 0:
-                        qnap_network_rx_bytes.labels(host=hostname, interface=ifname).set(rx_packets)
-                        qnap_network_tx_bytes.labels(host=hostname, interface=ifname).set(tx_packets)
-                        logger.debug(f"Interface {ifname}: RX={rx_packets}, TX={tx_packets}")
+        # ── Shared folder usage (QTS 5.x Storage Manager model) ───────────────
+        shares = client.get_share_list()
+        if shares:
+            logger.info(f"Found {len(shares)} shared folders via File Station API")
+            for share in shares:
+                name = share.get('filename') or share.get('name') or share.get('sharename', 'unknown')
+                pool = share.get('vol_no') or share.get('pool_name') or 'unknown'
 
-        # Volume info
-        vol_info = client.get_volume_info()
-        if vol_info:
-            # Parse volumeUseList which contains usage data
-            volume_use_list = vol_info.get('volumeUseList', {})
-            volume_use = volume_use_list.get('volumeUse', [])
+                # Used bytes — field names vary by firmware version
+                used_bytes = parse_value(
+                    share.get('vol_size_bytes')
+                    or share.get('used_size')
+                    or share.get('size_used')
+                )
+                # Quota/capacity: 0 means unlimited (no quota set)
+                quota_bytes = parse_value(
+                    share.get('vol_quota_bytes')
+                    or share.get('quota')
+                    or share.get('capacity')
+                )
+                free_bytes = quota_bytes - used_bytes if quota_bytes > 0 else 0
 
-            # volumeUse can be a single dict or a list
-            if isinstance(volume_use, dict):
-                volume_use = [volume_use]
+                if used_bytes > 0:
+                    qnap_volume_used_bytes.labels(host=hostname, volume=name, pool=pool).set(used_bytes)
+                    if quota_bytes > 0:
+                        qnap_volume_capacity_bytes.labels(host=hostname, volume=name, pool=pool).set(quota_bytes)
+                        qnap_volume_free_bytes.labels(host=hostname, volume=name, pool=pool).set(free_bytes)
+                        pct = used_bytes / quota_bytes * 100
+                        logger.debug(f"Share {name}: {used_bytes/(1024**3):.1f}GB / {quota_bytes/(1024**3):.1f}GB ({pct:.1f}%)")
+                    else:
+                        logger.debug(f"Share {name}: {used_bytes/(1024**3):.1f}GB used (no quota)")
+        else:
+            logger.warning("get_share_list returned nothing — volume metrics not updated this cycle")
 
-            # Also get volume list for labels
-            volume_list = vol_info.get('volumeList', {})
-            volumes = volume_list.get('volume', [])
-            if isinstance(volumes, dict):
-                volumes = [volumes]
-
-            # Create a map of volumeValue to volumeLabel
-            volume_labels = {}
-            for vol in volumes:
-                vol_value = vol.get('volumeValue')
-                vol_label = vol.get('volumeLabel', f'Volume{vol_value}')
-                vol_stat = vol.get('volumeStat', 'unknown')  # raid5, single, etc.
-                if vol_value:
-                    volume_labels[vol_value] = {
-                        'label': vol_label,
-                        'type': vol_stat
-                    }
-
-            logger.info(f"Found {len(volume_use)} volumes")
-            for vol_use in volume_use:
-                vol_value = vol_use.get('volumeValue')
-                total_size = parse_value(vol_use.get('total_size'))
-                free_size = parse_value(vol_use.get('free_size'))
-
-                if total_size > 0:
-                    used_size = total_size - free_size
-
-                    # Get volume label
-                    vol_info_data = volume_labels.get(vol_value, {'label': f'Volume{vol_value}', 'type': 'unknown'})
-                    vol_label = vol_info_data['label']
-                    vol_type = vol_info_data['type']
-
-                    qnap_volume_capacity.labels(
-                        host=hostname,
-                        volume=vol_label,
-                        pool=vol_type
-                    ).set(total_size)
-
-                    qnap_volume_used.labels(
-                        host=hostname,
-                        volume=vol_label,
-                        pool=vol_type
-                    ).set(used_size)
-
-                    qnap_volume_free.labels(
-                        host=hostname,
-                        volume=vol_label,
-                        pool=vol_type
-                    ).set(free_size)
-
-                    usage_pct = (used_size / total_size) * 100 if total_size > 0 else 0
-                    logger.debug(f"Volume {vol_label} ({vol_type}): {used_size/(1024**3):.1f}GB / {total_size/(1024**3):.1f}GB ({usage_pct:.1f}% used)")
-
-        # Container Station
+        # ── Container Station ──────────────────────────────────────────────────
         containers = client.get_containers()
         if containers and isinstance(containers, list):
             logger.info(f"Found {len(containers)} containers")
@@ -379,20 +308,13 @@ def collect_metrics(client: QNAPAPIClient, hostname: str):
                 name = container.get('name', 'unknown')
                 image = container.get('image', 'unknown')
                 state = container.get('state', 'unknown')
-
-                status = 1 if state == 'running' else 0
                 qnap_container_status.labels(
-                    host=hostname,
-                    container=name,
-                    image=image
-                ).set(status)
-
-                # CPU and memory if available
+                    host=hostname, container=name, image=image
+                ).set(1 if state == 'running' else 0)
                 stats = container.get('stats', {})
                 if stats:
                     cpu = parse_value(stats.get('cpu_percent'))
                     mem = parse_value(stats.get('memory_usage'))
-
                     if cpu > 0:
                         qnap_container_cpu.labels(host=hostname, container=name).set(cpu)
                     if mem > 0:
@@ -405,25 +327,17 @@ def collect_metrics(client: QNAPAPIClient, hostname: str):
 
 
 def main():
-    """Main exporter loop."""
     logger.info(f"Starting QNAP API exporter on port {EXPORTER_PORT}")
-    logger.info(f"QNAP host: {QNAP_HOST}:{QNAP_PORT}")
-    logger.info(f"Username: {QNAP_USERNAME}")
-    logger.info(f"Scrape interval: {SCRAPE_INTERVAL}s")
+    logger.info(f"QNAP host: {QNAP_HOST}:{QNAP_PORT}, scrape interval: {SCRAPE_INTERVAL}s")
 
-    # Start Prometheus metrics server
     start_http_server(EXPORTER_PORT)
-    logger.info(f"Metrics endpoint available at http://0.0.0.0:{EXPORTER_PORT}/metrics")
+    logger.info(f"Metrics available at http://0.0.0.0:{EXPORTER_PORT}/metrics")
 
-    # Create QNAP API client
     client = QNAPAPIClient(QNAP_HOST, QNAP_USERNAME, QNAP_PASSWORD, QNAP_PORT, QNAP_PROTOCOL)
-
-    # Initial login
     if not client.login():
-        logger.error("Failed to authenticate to QNAP. Exiting.")
+        logger.error("Initial QNAP authentication failed — exiting")
         return
 
-    # Collection loop
     while True:
         collect_metrics(client, QNAP_HOST)
         time.sleep(SCRAPE_INTERVAL)
