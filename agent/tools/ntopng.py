@@ -189,14 +189,15 @@ def query_ntopng_alerts(
         iface = json.loads(iface_raw)
         rsp = iface.get("rsp", iface)
         return json.dumps({
-            "note": (
-                "Alert list endpoint unavailable (HTTP 500 under load or CE limitation). "
-                "Interface-level counters shown instead — check ntopng UI for details."
+            "WARNING": (
+                "TOOL DEGRADED: ntopng alert list endpoint failed (HTTP 500 or CE limitation). "
+                "Detailed per-alert data is unavailable. Reporting interface-level counters only. "
+                "Recommend manual review of ntopng UI for individual alert details."
             ),
             "alerted_flows_cumulative": rsp.get("alerted_flows", "unknown"),
-            "engaged_alerts": rsp.get("engaged_alerts", "unknown"),
-            "num_local_hosts_anomalies": rsp.get("num_local_hosts_anomalies", "unknown"),
-            "alert_list_error": result,
+            "engaged_alerts_now": rsp.get("engaged_alerts", "unknown"),
+            "local_host_anomalies_cumulative": rsp.get("num_local_hosts_anomalies", "unknown"),
+            "alert_list_raw_error": result,
         })
     except Exception:
         return result
