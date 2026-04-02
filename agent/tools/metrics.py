@@ -110,17 +110,50 @@ def query_adguard_high_risk_clients(
 @tool
 def query_adguard_blocked_domains(
     hours: int = 24,
-    limit: int = 20
+    limit: int = 20,
+    exclude_telemetry: bool = True,
 ) -> str:
-    """Get top blocked domains.
+    """Get top blocked domains, optionally excluding routine telemetry/ad domains.
 
     Args:
         hours: Lookback period in hours (default: 24)
         limit: Number of results to return (default: 20)
+        exclude_telemetry: Skip known ad/tracking/telemetry domains that are routine
+                           and not security-relevant (default: True)
 
     Returns:
         Formatted table of most blocked domains
     """
+    # Domains that are routine ad/telemetry blocks — not security-relevant.
+    # Matched as substrings so subdomains are caught (e.g. vortex.data.microsoft.com).
+    TELEMETRY_PATTERNS = [
+        # Generic patterns
+        "telemetry.", ".telemetry.", "analytics.", ".analytics.",
+        "tracking.", ".tracking.", "metrics.", ".metrics.",
+        "beacon.", ".beacon.", "pixel.", ".pixel.",
+        # Microsoft
+        "microsoft.com", "windows.com", "windowsupdate.com",
+        "bing.com", "msn.com", "live.com",
+        # Apple
+        "apple.com", "icloud.com", "mzstatic.com", "aaplimg.com",
+        "apple-dns.net",
+        # Google / Alphabet
+        "doubleclick.net", "googlesyndication.com", "googleadservices.com",
+        "googletagmanager.com", "googletagservices.com", "google-analytics.com",
+        "googleads.g.doubleclick.net",
+        # Ad networks
+        "amazon-adsystem.com", "akamai.net", "akadns.net", "akamaiedge.net",
+        "scorecardresearch.com", "omtrdc.net", "2mdn.net",
+        "moatads.com", "casalemedia.com", "rubiconproject.com",
+    ]
+
+    telemetry_filter = ""
+    if exclude_telemetry:
+        conditions = "\n          AND ".join(
+            f"domain NOT LIKE '%{p}%'" for p in TELEMETRY_PATTERNS
+        )
+        telemetry_filter = f"AND {conditions}"
+
     query = f"""
         SELECT
             simpleJSONExtractString(ts.labels, 'domain') as domain,
@@ -130,6 +163,7 @@ def query_adguard_blocked_domains(
         JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
         WHERE s.metric_name = 'adguard.blocked_domains.total'
           AND s.unix_milli > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000
+          {telemetry_filter}
         GROUP BY domain, unique_clients
         ORDER BY total_blocks DESC
         LIMIT {limit}
