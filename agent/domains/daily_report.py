@@ -33,6 +33,7 @@ Your job:
 - Highlight IPs with high threat scores (>50), their country/ASN, and what they attempted
 - Note cross-VLAN traffic from Camera VLAN (3) or Validator VLAN (4) — always CRITICAL
 - Review CrowdSec alerts and active bans
+- Review SSH brute force attempts and auth events across all syslog hosts
 
 Threat score scale:
   0-25: Low risk    |  25-50: Moderate  |  50-75: High risk  |  75-100: Confirmed malicious
@@ -40,13 +41,16 @@ Threat score scale:
 Tools to call:
 1. query_threat_intel_summary(hours={hours}, min_score=0) — START HERE
 2. query_security_summary(hours={hours}) — raw firewall blocks / ntopng context
-3. query_crowdsec_alerts() — IPs that triggered detection scenarios
-4. query_crowdsec_decisions() — IPs currently banned
-5. lookup_ip_threat_intel(ip) — for any IP with score > 50 (max 5 IPs)
+3. query_auth_events(hours={hours}) — SSH brute force, invalid user attempts, sudo activity
+4. query_crowdsec_alerts() — IPs that triggered detection scenarios
+5. query_crowdsec_decisions() — IPs currently banned
+6. lookup_ip_threat_intel(ip) — for any IP with score > 50 (max 5 IPs)
 
 Return a focused markdown summary with:
 - Count of firewall blocks, unique attacker IPs
 - Confirmed malicious IPs (threat_score > 50) — IP, score, country, what they tried
+- SSH: total brute force attempts, unique attacker IPs, top targets. Flag any successful
+  logins from outside 192.168.1.x as CRITICAL.
 - CrowdSec: active bans and top triggered scenarios
 - Notable ntopng alerts
 - Any CRITICAL cross-VLAN events
@@ -63,7 +67,7 @@ def run_firewall_threat_agent(
     session_id: Optional[str] = None,
 ) -> str:
     """Run the firewall + threat intelligence domain agent."""
-    from agent.tools.logs import query_security_summary
+    from agent.tools.logs import query_security_summary, query_auth_events
     from agent.tools.threat_intel_tools import (
         query_threat_intel_summary,
         lookup_ip_threat_intel,
@@ -73,6 +77,7 @@ def run_firewall_threat_agent(
     from agent.tools.crowdsec import query_crowdsec_alerts, query_crowdsec_decisions
     tools = [
         query_threat_intel_summary, query_security_summary,
+        query_auth_events,
         lookup_ip_threat_intel, query_threat_intel_coverage,
         query_crowdsec_alerts, query_crowdsec_decisions,
     ]

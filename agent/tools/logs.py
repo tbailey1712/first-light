@@ -251,6 +251,146 @@ def query_infrastructure_events(hours: int = 24) -> str:
         return f"Error querying infrastructure logs: {str(e)}"
 
 
+@tool
+def query_auth_events(hours: int = 24) -> str:
+    """Get SSH and sudo security events across all syslog-reporting hosts.
+
+    Covers SSH brute force attempts, invalid user logins, successful logins
+    from unexpected sources, and sudo privilege escalation events. Queries
+    structured attributes set by the OTel ssh_sudo parser.
+
+    Args:
+        hours: Lookback period in hours (default: 24)
+
+    Returns:
+        JSON with SSH failure summary by attacker IP/host, successful logins,
+        and notable sudo activity.
+    """
+    hours = min(hours, 168)
+
+    # SSH failures by attacking IP across all hosts
+    ssh_failures_query = f"""
+    SELECT
+        attributes_string['ssh.source_ip'] as src_ip,
+        resources_string['host.name'] as target_host,
+        attributes_string['ssh.event'] as event,
+        attributes_string['ssh.user'] as attempted_user,
+        COUNT(*) as count,
+        MAX(toDateTime(timestamp / 1000000000)) as last_seen
+    FROM signoz_logs.logs_v2
+    WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
+      AND mapContains(attributes_string, 'ssh.event')
+      AND attributes_string['ssh.event'] IN ('login_failure', 'invalid_user')
+      AND length(attributes_string['ssh.source_ip']) > 0
+    GROUP BY src_ip, target_host, event, attempted_user
+    ORDER BY count DESC
+    LIMIT 30
+    FORMAT JSONEachRow
+    """
+
+    # Successful SSH logins — flag any from non-192.168.1.x (potentially external)
+    ssh_success_query = f"""
+    SELECT
+        attributes_string['ssh.source_ip'] as src_ip,
+        resources_string['host.name'] as target_host,
+        attributes_string['ssh.user'] as user,
+        attributes_string['ssh.auth_method'] as auth_method,
+        COUNT(*) as count,
+        MAX(toDateTime(timestamp / 1000000000)) as last_seen
+    FROM signoz_logs.logs_v2
+    WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
+      AND mapContains(attributes_string, 'ssh.event')
+      AND attributes_string['ssh.event'] = 'login_success'
+      AND length(attributes_string['ssh.source_ip']) > 0
+    GROUP BY src_ip, target_host, user, auth_method
+    ORDER BY count DESC
+    LIMIT 20
+    FORMAT JSONEachRow
+    """
+
+    # Sudo activity — privilege escalation events
+    sudo_query = f"""
+    SELECT
+        resources_string['host.name'] as host,
+        attributes_string['sudo.user'] as user,
+        attributes_string['sudo.event'] as event,
+        attributes_string['sudo.command'] as command,
+        COUNT(*) as count,
+        MAX(toDateTime(timestamp / 1000000000)) as last_seen
+    FROM signoz_logs.logs_v2
+    WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
+      AND mapContains(attributes_string, 'sudo.event')
+    GROUP BY host, user, event, command
+    ORDER BY count DESC
+    LIMIT 20
+    FORMAT JSONEachRow
+    """
+
+    try:
+        failures_raw = _execute_clickhouse_query(ssh_failures_query)
+        success_raw = _execute_clickhouse_query(ssh_success_query)
+        sudo_raw = _execute_clickhouse_query(sudo_query)
+
+        failures = [json.loads(l) for l in failures_raw.split('\n') if l.strip()]
+        successes = [json.loads(l) for l in success_raw.split('\n') if l.strip()]
+        sudo_events = [json.loads(l) for l in sudo_raw.split('\n') if l.strip()]
+
+        # Flag successful logins from outside trusted LAN (192.168.1.x)
+        external_logins = [
+            s for s in successes
+            if not s.get("src_ip", "").startswith("192.168.1.")
+        ]
+
+        total_failures = sum(f["count"] for f in failures)
+        unique_attackers = len({f["src_ip"] for f in failures})
+
+        return json.dumps({
+            "time_range": f"last {hours}h",
+            "ssh_brute_force": {
+                "total_failed_attempts": total_failures,
+                "unique_attacker_ips": unique_attackers,
+                "top_attackers": [
+                    {
+                        "src_ip": f["src_ip"],
+                        "target_host": f["target_host"],
+                        "event": f["event"],
+                        "attempted_user": f["attempted_user"],
+                        "count": f["count"],
+                        "last_seen": str(f["last_seen"]),
+                    }
+                    for f in failures[:15]
+                ],
+            },
+            "ssh_successful_logins": [
+                {
+                    "src_ip": s["src_ip"],
+                    "target_host": s["target_host"],
+                    "user": s["user"],
+                    "auth_method": s["auth_method"],
+                    "count": s["count"],
+                    "last_seen": str(s["last_seen"]),
+                    "flag": "EXTERNAL_SOURCE" if s in external_logins else "ok",
+                }
+                for s in successes
+            ],
+            "external_logins_flag": len(external_logins),
+            "sudo_activity": [
+                {
+                    "host": e["host"],
+                    "user": e["user"],
+                    "event": e["event"],
+                    "command": e["command"],
+                    "count": e["count"],
+                    "last_seen": str(e["last_seen"]),
+                }
+                for e in sudo_events
+            ],
+        }, indent=2)
+
+    except Exception as e:
+        return f"Error querying auth events: {str(e)}"
+
+
 _IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 
 
