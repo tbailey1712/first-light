@@ -116,7 +116,9 @@ class FirstLightConfig(BaseSettings):
 
     # CrowdSec
     crowdsec_enrollment_key: Optional[str] = None
-    crowdsec_api_key: Optional[str] = None  # bouncer key: cscli bouncers add firstlight-agent
+    crowdsec_api_key: Optional[str] = None         # bouncer key: cscli bouncers add firstlight-agent
+    crowdsec_machine_id: Optional[str] = None      # watcher: cscli machines add firstlight-watcher
+    crowdsec_machine_password: Optional[str] = None  # required to read /v1/alerts (JWT auth)
 
     # SigNoz / ClickHouse
     signoz_base_url: str = "http://signoz-query-service:8080"

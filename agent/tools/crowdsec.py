@@ -4,8 +4,16 @@ CrowdSec LAPI tools — queries local CrowdSec instance for alerts and active de
 CrowdSec detects intrusion attempts from syslog (pfSense, SSH, etc.) and builds
 a list of active bans (decisions). The LAPI is at http://fl-crowdsec:8080.
 
-Requires CROWDSEC_API_KEY in .env (a bouncer key created with:
-  docker exec fl-crowdsec cscli bouncers add firstlight-agent)
+Two auth tiers in CrowdSec LAPI:
+  - Bouncer key (X-Api-Key):  /v1/decisions  — enforcement consumers
+    Created with: docker exec fl-crowdsec cscli bouncers add firstlight-agent
+  - Machine JWT (Bearer):     /v1/alerts     — watchers that read detection events
+    Created with: docker exec fl-crowdsec cscli machines add firstlight-watcher --password ...
+
+.env vars required:
+  CROWDSEC_API_KEY          bouncer key  → used by query_crowdsec_decisions
+  CROWDSEC_MACHINE_ID       watcher login → used by query_crowdsec_alerts
+  CROWDSEC_MACHINE_PASSWORD watcher password
 """
 
 import json
@@ -22,16 +30,46 @@ logger = logging.getLogger(__name__)
 _LAPI_URL = "http://fl-crowdsec:8080"
 
 
-def _crowdsec_get(path: str, params: Optional[dict] = None) -> dict | list:
+def _bouncer_get(path: str, params: Optional[dict] = None) -> dict | list:
+    """GET using bouncer key (X-Api-Key). Works for /v1/decisions only."""
     cfg = get_config()
-    api_key = cfg.crowdsec_api_key
-    if not api_key:
+    if not cfg.crowdsec_api_key:
         return {"error": "CROWDSEC_API_KEY not configured in .env"}
     try:
         with httpx.Client(timeout=10.0) as client:
             resp = client.get(
                 f"{_LAPI_URL}{path}",
-                headers={"X-Api-Key": api_key},
+                headers={"X-Api-Key": cfg.crowdsec_api_key},
+                params=params or {},
+            )
+        if resp.status_code == 200:
+            return resp.json()
+        return {"error": f"HTTP {resp.status_code}", "body": resp.text[:300]}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _watcher_get(path: str, params: Optional[dict] = None) -> dict | list:
+    """GET using machine JWT. Required for /v1/alerts (watcher-only endpoint)."""
+    cfg = get_config()
+    if not cfg.crowdsec_machine_id or not cfg.crowdsec_machine_password:
+        return {"error": "CROWDSEC_MACHINE_ID / CROWDSEC_MACHINE_PASSWORD not configured in .env"}
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            login = client.post(
+                f"{_LAPI_URL}/v1/watchers/login",
+                json={
+                    "machine_id": cfg.crowdsec_machine_id,
+                    "password": cfg.crowdsec_machine_password,
+                    "scenarios": [],
+                },
+            )
+            if login.status_code != 200:
+                return {"error": f"CrowdSec watcher login failed: HTTP {login.status_code}", "body": login.text[:200]}
+            token = login.json().get("token")
+            resp = client.get(
+                f"{_LAPI_URL}{path}",
+                headers={"Authorization": f"Bearer {token}"},
                 params=params or {},
             )
         if resp.status_code == 200:
@@ -55,7 +93,7 @@ def query_crowdsec_alerts(limit: int = 50) -> str:
     Returns:
         JSON with recent alerts including IP, scenario, country, and timestamp.
     """
-    data = _crowdsec_get("/v1/alerts", {"limit": limit})
+    data = _watcher_get("/v1/alerts", {"limit": limit})
     if isinstance(data, dict) and "error" in data:
         return json.dumps(data)
 
@@ -93,7 +131,7 @@ def query_crowdsec_decisions(limit: int = 100) -> str:
     Returns:
         JSON with active decisions including banned IP, type, scenario, and expiry.
     """
-    data = _crowdsec_get("/v1/decisions", {"limit": limit})
+    data = _bouncer_get("/v1/decisions", {"limit": limit})
     if isinstance(data, dict) and "error" in data:
         return json.dumps(data)
 
