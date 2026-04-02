@@ -171,7 +171,10 @@ Your job:
 - Check switch port traffic and errors via SNMP
 
 Tools to call:
-1. query_ntopng_alerts() — security alerts first
+1. query_ntopng_alerts() — security alerts first. If it returns a "note" field about
+   the list endpoint being unavailable, use alerted_flows_cumulative and
+   num_local_hosts_anomalies as a summary and note they are cumulative counters since
+   ntopng last restarted (not 24h counts). Do NOT report this as a system failure.
 2. query_ntopng_interface_stats() — overall interface stats
 3. query_ntopng_vlan_traffic() — per-VLAN breakdown (flag isolated VLAN activity)
 4. query_ntopng_active_hosts() — top talkers

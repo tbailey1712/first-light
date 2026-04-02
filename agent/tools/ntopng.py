@@ -137,21 +137,25 @@ def query_ntopng_interface_stats(ifid: int = 3) -> str:
 def query_ntopng_alerts(
     ifid: int = 3,
     currentPage: int = 1,
-    perPage: int = 30,
+    perPage: int = 20,
     severity: Optional[str] = None,
     alert_type: Optional[str] = None,
 ) -> str:
-    """Get active (engaged) alerts from ntopng, filtered by severity.
+    """Get active (engaged) alerts from ntopng, with interface summary as fallback.
+
+    ntopng CE stores alert counts in memory (alerted_flows, num_local_hosts_anomalies)
+    but only persists engaged/active alerts to the API. Historical flow alerts are
+    not available via API in Community Edition.
 
     Args:
         ifid: Interface ID (default: 3)
         currentPage: Page number (default: 1)
-        perPage: Results per page — keep low to avoid timeout (default: 30)
+        perPage: Results per page — keep low to avoid 500 under load (default: 20)
         severity: Filter by severity: emergency, alert, critical, error, warning, notice, info, debug
         alert_type: Optional alert type name to filter (e.g. 'flow_flood')
 
     Returns:
-        JSON with alert list including type, severity, and affected entities.
+        JSON with engaged alerts if available, or interface-level alert summary counts.
     """
     config = get_config()
     if not config.ntopng_host:
@@ -161,7 +165,7 @@ def query_ntopng_alerts(
         "ifid": ifid,
         "currentPage": currentPage,
         "perPage": perPage,
-        "status": "engaged",  # required by ntopng CE; omitting causes HTTP 500
+        "status": "engaged",
     }
     if severity:
         params["severity"] = severity
@@ -170,19 +174,32 @@ def query_ntopng_alerts(
 
     result = _get("/lua/rest/v2/get/all/alert/list.lua", params)
 
-    # If engaged alerts fail, try historical with a 24h window as fallback
     try:
         parsed = json.loads(result)
-        if "error" in parsed:
-            import time
-            params["status"] = "historical"
-            params["epoch_begin"] = int(time.time()) - 86400
-            params["epoch_end"] = int(time.time())
-            result = _get("/lua/rest/v2/get/all/alert/list.lua", params)
+        if "error" not in parsed and parsed.get("rc", -1) == 0:
+            return result  # success path
     except (json.JSONDecodeError, TypeError):
         pass
 
-    return result
+    # Alert list endpoint failed or returned error — fall back to interface stats summary.
+    # ntopng CE doesn't persist historical flow alerts; the in-memory counters are the
+    # best available data when the list endpoint is unavailable.
+    iface_raw = _get("/lua/rest/v2/get/interface/data.lua", {"ifid": ifid})
+    try:
+        iface = json.loads(iface_raw)
+        rsp = iface.get("rsp", iface)
+        return json.dumps({
+            "note": (
+                "Alert list endpoint unavailable (HTTP 500 under load or CE limitation). "
+                "Interface-level counters shown instead — check ntopng UI for details."
+            ),
+            "alerted_flows_cumulative": rsp.get("alerted_flows", "unknown"),
+            "engaged_alerts": rsp.get("engaged_alerts", "unknown"),
+            "num_local_hosts_anomalies": rsp.get("num_local_hosts_anomalies", "unknown"),
+            "alert_list_error": result,
+        })
+    except Exception:
+        return result
 
 
 @tool
