@@ -50,7 +50,7 @@ def query_threat_intel_summary(hours: int = 24, min_score: int = 0) -> str:
         ti.confidence,
         ti.categories,
         ti.recommendation,
-        ti.enriched_at
+        ti.latest_enriched_at as enriched_at
     FROM (
         SELECT
             attributes_string['pfsense.src_ip'] as src_ip,
@@ -82,7 +82,7 @@ def query_threat_intel_summary(hours: int = 24, min_score: int = 0) -> str:
             argMax(confidence, enriched_at) as confidence,
             argMax(categories, enriched_at) as categories,
             argMax(recommendation, enriched_at) as recommendation,
-            max(enriched_at) as enriched_at
+            max(enriched_at) as latest_enriched_at
         FROM threat_intel.enrichments
         WHERE toDateTime(enriched_at) >= now() - INTERVAL 48 HOUR
         GROUP BY ip
