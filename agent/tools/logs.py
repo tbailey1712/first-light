@@ -191,11 +191,11 @@ def query_wireless_health(hours: int = 6) -> str:
             et = e['event_type']
             if et not in by_type:
                 by_type[et] = {"event_type": et, "total": 0, "per_ap": []}
-            by_type[et]["total"] += e['event_count']
+            by_type[et]["total"] += int(e['event_count'])
             by_type[et]["per_ap"].append({
                 "ap": e['ap_hostname'],
-                "count": e['event_count'],
-                "unique_clients": e['unique_clients'],
+                "count": int(e['event_count']),
+                "unique_clients": int(e['unique_clients']),
             })
 
         return json.dumps({
