@@ -116,49 +116,94 @@ def query_security_summary(hours: int = 1) -> str:
 
 @tool
 def query_wireless_health(hours: int = 6) -> str:
-    """Get wireless network health summary from UniFi logs.
+    """Get wireless network health summary from UniFi AP syslog events.
+
+    Covers: deauthentication, disassociation, roaming, sta_unauthorized,
+    and notable events (unusual reason codes). Uses unifi.event_type attribute
+    set by the OTel transform/unifi processor.
 
     Args:
-        hours: Lookback period in hours (default: 6, max: 24)
+        hours: Lookback period in hours (default: 6, max: 48)
 
     Returns:
-        JSON with auth failures, roaming events, and client issues
+        JSON with event counts per type per AP, notable events, and samples
     """
-    hours = min(hours, 24)
+    hours = min(hours, 48)
 
-    query = f"""
+    # Security-relevant and notable wireless events by type
+    event_query = f"""
     SELECT
-        attributes_string['unifi.event'] as event_type,
+        attributes_string['unifi.event_type'] as event_type,
+        attributes_string['unifi.ap_hostname'] as ap_hostname,
         COUNT(*) as event_count,
-        COUNT(DISTINCT resources_string['host.name']) as unique_aps,
-        groupArray(body) as sample_logs
+        COUNT(DISTINCT attributes_string['unifi.client_mac']) as unique_clients,
+        groupArray(10)(body) as sample_logs
     FROM signoz_logs.logs_v2
     WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
       AND resources_string['device.type'] = 'access-point'
-      AND attributes_string['unifi.event'] IN ('deauthenticated', 'disassociated', 'client_anomaly', 'ageout')
-    GROUP BY event_type
+      AND attributes_string['unifi.event_type'] IN (
+          'deauthentication', 'disassociation', 'sta_unauthorized',
+          'roaming', 'association', 'reassociation'
+      )
+    GROUP BY event_type, ap_hostname
     ORDER BY event_count DESC
+    LIMIT 50
+    FORMAT JSONEachRow
+    """
+
+    # Events flagged as notable by the OTel parser (unusual reason codes, etc.)
+    notable_query = f"""
+    SELECT
+        attributes_string['unifi.event_type'] as event_type,
+        attributes_string['unifi.ap_hostname'] as ap,
+        attributes_string['unifi.client_mac'] as client_mac,
+        attributes_string['unifi.reason_code'] as reason_code,
+        attributes_string['unifi.signal_dbm'] as signal_dbm,
+        body
+    FROM signoz_logs.logs_v2
+    WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
+      AND resources_string['device.type'] = 'access-point'
+      AND attributes_string['unifi.notable'] = 'true'
+    ORDER BY timestamp DESC
+    LIMIT 20
     FORMAT JSONEachRow
     """
 
     try:
-        result = _execute_clickhouse_query(query)
-        events = [json.loads(line) for line in result.split('\n') if line]
+        events_raw = _execute_clickhouse_query(event_query)
+        notable_raw = _execute_clickhouse_query(notable_query)
 
-        summary = {
-            "time_range": f"last {hours} hour(s)",
-            "wireless_events": [
-                {
-                    "event_type": e['event_type'],
-                    "count": e['event_count'],
-                    "affected_aps": e['unique_aps'],
-                    "sample_logs": e['sample_logs'][:3]
-                }
-                for e in events
-            ]
-        }
+        events = [json.loads(line) for line in events_raw.split('\n') if line.strip()]
+        notables = [json.loads(line) for line in notable_raw.split('\n') if line.strip()]
 
-        return json.dumps(summary, indent=2)
+        if not events and not notables:
+            return json.dumps({
+                "time_range": f"last {hours}h",
+                "status": "no_data",
+                "note": "No UniFi AP event data found. APs may not be forwarding syslog to the collector (TCP 5140), or no notable wireless events occurred.",
+                "wireless_events": [],
+                "notable_events": [],
+            }, indent=2)
+
+        # Summarise by event type across APs
+        by_type: Dict[str, dict] = {}
+        for e in events:
+            et = e['event_type']
+            if et not in by_type:
+                by_type[et] = {"event_type": et, "total": 0, "per_ap": []}
+            by_type[et]["total"] += e['event_count']
+            by_type[et]["per_ap"].append({
+                "ap": e['ap_hostname'],
+                "count": e['event_count'],
+                "unique_clients": e['unique_clients'],
+            })
+
+        return json.dumps({
+            "time_range": f"last {hours}h",
+            "status": "ok",
+            "event_summary": sorted(by_type.values(), key=lambda x: x["total"], reverse=True),
+            "notable_events": notables,
+        }, indent=2, default=str)
 
     except Exception as e:
         return f"Error querying wireless logs: {str(e)}"
