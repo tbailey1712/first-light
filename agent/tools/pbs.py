@@ -97,6 +97,24 @@ def query_pbs_backup_status() -> str:
             "hint": "PBS UI: Configuration → Access Control → Permissions → Add: Path=/ Token=root@pam!firstlight Role=Audit"
         })
 
+    # Get storage usage from the correct endpoint
+    usage_list = _pbs_get("status/datastore-usage")
+    usage_by_store: dict = {}
+    if isinstance(usage_list, list):
+        for u in usage_list:
+            store = u.get("store")
+            if store:
+                total = u.get("total", 0)
+                avail = u.get("avail", 0)
+                used = total - avail if total else 0
+                usage_by_store[store] = {
+                    "total_gb": round(total / (1024 ** 3), 1),
+                    "used_gb": round(used / (1024 ** 3), 1),
+                    "avail_gb": round(avail / (1024 ** 3), 1),
+                    "used_pct": round(used / total * 100, 1) if total else 0,
+                    "estimated_full": _fmt_ts(u.get("estimated-full-date")),
+                }
+
     result = {
         "datastores": [],
         "stale_backups": [],      # Groups with last backup > 26h ago
@@ -108,12 +126,14 @@ def query_pbs_backup_status() -> str:
         if not store_name:
             continue
 
+        sz = usage_by_store.get(store_name, {})
         store_entry = {
             "name": store_name,
-            "total_gb": round(ds.get("total", 0) / (1024 ** 3), 1),
-            "used_gb": round(ds.get("used", 0) / (1024 ** 3), 1),
-            "avail_gb": round(ds.get("avail", 0) / (1024 ** 3), 1),
-            "used_pct": round(ds.get("used", 0) / ds.get("total", 1) * 100, 1) if ds.get("total") else 0,
+            "total_gb": sz.get("total_gb", 0),
+            "used_gb": sz.get("used_gb", 0),
+            "avail_gb": sz.get("avail_gb", 0),
+            "used_pct": sz.get("used_pct", 0),
+            "estimated_full": sz.get("estimated_full"),
             "groups": [],
         }
 
@@ -162,7 +182,7 @@ def query_pbs_backup_status() -> str:
     if isinstance(tasks, list):
         task_summary = {"ok": 0, "error": 0, "running": 0, "unknown": 0}
         for task in tasks:
-            task_type = task.get("type", "")
+            task_type = task.get("worker_type", "")
             if task_type not in ("backup", "verify", "prune", "garbage_collection"):
                 continue
             status = task.get("status", "")
