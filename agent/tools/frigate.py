@@ -181,7 +181,7 @@ def query_frigate_events(hours: int = 24, camera: Optional[str] = None) -> str:
         {
             "camera": ev.get("camera"),
             "object": ev.get("label"),
-            "score": round(ev.get("top_score", 0), 2),
+            "score": round(ev.get("top_score") or 0, 2),
             "start": datetime.fromtimestamp(ev.get("start_time", 0), tz=timezone.utc).isoformat(),
             "duration_s": round((ev.get("end_time") or ev.get("start_time", 0)) - ev.get("start_time", 0), 1),
         }
