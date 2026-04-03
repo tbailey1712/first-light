@@ -202,6 +202,74 @@ devices:
         port: 5516
         setup: "Control Panel → System → Syslog Server → docker.mcducklabs.com:5516 UDP"
 
+  proxmox_backup:
+    name: "Proxmox Backup Server"
+    hostname: "pbs.mcducklabs.com"
+    ip: "192.168.2.8"
+    vlan: 2
+    type: "backup_server"
+    vendor: "Proxmox"
+    capabilities:
+      - "vm_backup"
+      - "ct_backup"
+      - "verify_tasks"
+      - "api"
+    data_sources:
+      api:
+        endpoint: "https://192.168.2.8:8007/api2/json"
+        notes: "Requires PBS API token (user@realm!tokenname + secret)"
+
+  nvr:
+    name: "Frigate NVR"
+    hostname: "frigate.mcducklabs.com"
+    ip: "192.168.2.7"
+    vlan: 2
+    type: "nvr"
+    vendor: "Frigate"
+    version: "0.17.1"
+    detector: "Coral TPU"
+    cameras:
+      - name: "front_camera"
+        rtsp: "camera-front.mcducklabs.com"
+      - name: "back_yard"
+        rtsp: "192.168.3.15"
+      - name: "garage-main"
+        rtsp: "192.168.3.13"
+      - name: "garage-side"
+        rtsp: "192.168.3.14"
+      - name: "alley"
+        rtsp: "camera-alley.mcducklabs.com"
+    capabilities:
+      - "rtsp_recording"
+      - "object_detection"
+      - "api"
+    data_sources:
+      api:
+        endpoint: "http://192.168.2.7:5000"
+        notes: "No auth required on API port"
+
+  messaging_bot:
+    name: "OpenClaw Bot Server"
+    hostname: "openclaw"
+    ip: "unknown"
+    vlan: 2
+    type: "server"
+    notes: "Linux server running WhatsApp and Slack connector application. Sends syslog to central collector."
+    data_sources:
+      syslog:
+        service_name: "openclaw"
+
+  openwebui_server:
+    name: "Open WebUI Server"
+    hostname: "openwebui"
+    ip: "unknown"
+    vlan: 2
+    type: "server"
+    notes: "Linux server running Open WebUI (LLM interface) with Caddy reverse proxy and Postfix. Sends syslog."
+    data_sources:
+      syslog:
+        service_name: "caddy"
+
 monitoring_focus:
   security:
     - "Cross-VLAN traffic (especially to/from isolated VLANs 3 and 4)"

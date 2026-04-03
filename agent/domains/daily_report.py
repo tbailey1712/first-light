@@ -259,6 +259,7 @@ Your job:
 - Review Docker container health, service errors, and system events for the past {hours} hours
 - Check QNAP NAS: volumes, disks (SMART), temperatures, CPU/memory, AND event logs
 - Check Proxmox VE: node health, VM/container status, storage utilization
+- Check Frigate NVR: camera capture health, recording continuity, storage
 - Check switch port errors (bad cables, duplex mismatches)
 - Check pfSense WAN/VLAN interface utilization
 - Flag anything degraded, stopped unexpectedly, or approaching capacity limits
@@ -268,14 +269,16 @@ Tools to call:
 2. query_qnap_health() — NAS volumes, disks, temperatures
 3. query_qnap_events(hours={hours}) — NAS event log: Security Center failures, login events, warnings
 4. query_proxmox_health() — Proxmox node, VMs, containers, storage
-5. query_switch_port_errors(hours={hours}) — switch port errors and discards
-6. query_pfsense_interface_traffic(hours={hours}) — WAN/VLAN bandwidth
+5. query_frigate_health() — camera FPS, recording hours today, storage, Coral detector
+6. query_switch_port_errors(hours={hours}) — switch port errors and discards
+7. query_pfsense_interface_traffic(hours={hours}) — WAN/VLAN bandwidth
 
 Return a focused markdown summary with:
 - Overall infrastructure health (healthy / warnings / critical)
 - Any container restarts, service errors, or Docker unhealthy states
 - QNAP: volume status, degraded disks, high temps, Security Center alerts, login failures
 - Proxmox: node health, stopped VMs, storage usage
+- Frigate: any cameras with degraded FPS or missing recordings, storage usage %
 - Items requiring attention
 
 Skip routine/healthy items. Focus on what needs attention.
@@ -293,6 +296,7 @@ def run_infrastructure_agent(
     from agent.tools.logs import query_infrastructure_events
     from agent.tools.qnap_tools import query_qnap_health, query_qnap_events
     from agent.tools.proxmox_tools import query_proxmox_health
+    from agent.tools.frigate import query_frigate_health
     from agent.tools.uptime_kuma import (
         query_uptime_kuma_status,
         query_uptime_kuma_uptime,
@@ -305,6 +309,7 @@ def run_infrastructure_agent(
         query_qnap_health,
         query_qnap_events,
         query_proxmox_health,
+        query_frigate_health,
         query_uptime_kuma_status,
         query_uptime_kuma_uptime,
         query_uptime_kuma_incidents,
