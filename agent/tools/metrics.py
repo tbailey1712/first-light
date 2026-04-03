@@ -241,11 +241,22 @@ def query_adguard_dhcp_fingerprints(hours: int = 24) -> str:
                 round(avg(s.value), 0) as query_count
             FROM signoz_metrics.samples_v4 s
             JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
-            WHERE s.metric_name = 'adguard_dhcp_top_domain_queries_24h'
+            WHERE s.metric_name = 'adguard_dhcp_device_top_domain_queries_24h'
               AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
             GROUP BY base_domain, client_count
             ORDER BY query_count DESC
             LIMIT 30
+        """,
+        "unique_domains_per_device": f"""
+            SELECT
+                simpleJSONExtractString(ts.labels, 'client_ip') as client_ip,
+                round(avg(s.value), 0) as unique_domains
+            FROM signoz_metrics.samples_v4 s
+            JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+            WHERE s.metric_name = 'adguard_dhcp_device_unique_domains_24h'
+              AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
+            GROUP BY client_ip
+            ORDER BY unique_domains DESC
         """,
     }
     results = []
@@ -261,24 +272,48 @@ def query_adguard_dhcp_fingerprints(hours: int = 24) -> str:
 
 @tool
 def query_adguard_threat_signals(hours: int = 24) -> str:
-    """Get DNS-based threat detection signals: anomalies, blocked domain persistence, and ingestion health.
+    """Get DNS-based threat detection signals: beaconing, DNS tunneling, anomalies, and ingestion health.
 
-    Covers the threat signals that ARE populated in the current exporter:
-    - Unacknowledged anomalies by severity (statistical, entropy, temporal, etc.)
-    - Top blocked domains being repeatedly attempted across all clients
-
-    Note: Advanced signals (beaconing scores, TXT ratios, per-client anomaly counts,
-    new domain tracking) are defined in the exporter but require security_stats
-    ingestion to populate. Check adguard_ingestion_last_duration_seconds to verify
-    the ingestion pipeline is running.
+    Covers all active security signals from the AdGuard analytics exporter:
+    - C2 beaconing scores per client/domain (>= 0.5 reported; 1.0 = high confidence)
+    - TXT query ratios per client (DNS tunneling indicator; > 0.3 = elevated; > 0.5 = suspicious)
+    - Unacknowledged anomalies by severity
+    - Per-client anomaly counts by type
 
     Args:
         hours: Lookback period in hours (default: 24)
 
     Returns:
-        Anomaly counts and blocked domain persistence data
+        Beaconing signals, TXT ratios, anomaly counts, and ingestion health
     """
     queries = {
+        "beaconing_signals": f"""
+            SELECT
+                simpleJSONExtractString(ts.labels, 'client_ip') as client_ip,
+                simpleJSONExtractString(ts.labels, 'client_name') as client_name,
+                simpleJSONExtractString(ts.labels, 'beaconing_domain') as domain,
+                round(avg(s.value), 4) as beaconing_score
+            FROM signoz_metrics.samples_v4 s
+            JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+            WHERE s.metric_name = 'adguard_client_beaconing_score'
+              AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
+            GROUP BY client_ip, client_name, domain
+            HAVING beaconing_score >= 0.5
+            ORDER BY beaconing_score DESC
+        """,
+        "txt_query_ratios": f"""
+            SELECT
+                simpleJSONExtractString(ts.labels, 'client_ip') as client_ip,
+                simpleJSONExtractString(ts.labels, 'client_name') as client_name,
+                round(avg(s.value), 4) as txt_ratio
+            FROM signoz_metrics.samples_v4 s
+            JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+            WHERE s.metric_name = 'adguard_client_txt_query_ratio_24h'
+              AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
+            GROUP BY client_ip, client_name
+            HAVING txt_ratio > 0.15
+            ORDER BY txt_ratio DESC
+        """,
         "anomaly_counts_by_severity": f"""
             SELECT
                 simpleJSONExtractString(ts.labels, 'severity') as severity,
@@ -289,6 +324,19 @@ def query_adguard_threat_signals(hours: int = 24) -> str:
               AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
             GROUP BY severity
             ORDER BY severity
+        """,
+        "client_anomalies": f"""
+            SELECT
+                simpleJSONExtractString(ts.labels, 'client_ip') as client_ip,
+                simpleJSONExtractString(ts.labels, 'anomaly_type') as anomaly_type,
+                simpleJSONExtractString(ts.labels, 'severity') as severity,
+                round(avg(s.value), 0) as count
+            FROM signoz_metrics.samples_v4 s
+            JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+            WHERE s.metric_name = 'adguard_client_anomaly_count_24h'
+              AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
+            GROUP BY client_ip, anomaly_type, severity
+            ORDER BY count DESC
         """,
         "ingestion_health": f"""
             SELECT
@@ -302,16 +350,6 @@ def query_adguard_threat_signals(hours: int = 24) -> str:
             )
             AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
             GROUP BY metric_name
-        """,
-        "ingestion_records": f"""
-            SELECT
-                simpleJSONExtractString(ts.labels, 'type') as record_type,
-                round(avg(s.value), 0) as count
-            FROM signoz_metrics.samples_v4 s
-            JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
-            WHERE s.metric_name = 'adguard_ingestion_last_records'
-              AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
-            GROUP BY record_type
         """,
     }
     results = []
@@ -354,6 +392,75 @@ def query_adguard_blocked_domains(
         GROUP BY client, ip, traffic_type
         ORDER BY blocks_24h DESC
         LIMIT {limit}
+    """
+    return _execute_clickhouse_query(query)
+
+
+@tool
+def query_adguard_new_devices(hours: int = 24) -> str:
+    """Get new devices first seen on the network in the last N hours.
+
+    Returns count of new devices and detail rows when any are present.
+    A value of 0 means no new devices — expected on a stable network.
+    Any new device on VLAN 2 (IoT) or VLAN 4 (DMZ) warrants review.
+
+    Args:
+        hours: Lookback period in hours (default: 24)
+
+    Returns:
+        New device count and per-device detail (IP, first_seen timestamp)
+    """
+    queries = {
+        "new_device_count": f"""
+            SELECT round(avg(s.value), 0) as new_devices_24h
+            FROM signoz_metrics.samples_v4 s
+            WHERE s.metric_name = 'adguard_new_devices_24h'
+              AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
+        """,
+        "new_device_details": f"""
+            SELECT
+                simpleJSONExtractString(ts.labels, 'client_ip') as client_ip,
+                simpleJSONExtractString(ts.labels, 'client_name') as client_name,
+                round(avg(s.value), 0) as first_seen_ts
+            FROM signoz_metrics.samples_v4 s
+            JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+            WHERE s.metric_name = 'adguard_new_device_info'
+              AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
+            GROUP BY client_ip, client_name
+            ORDER BY first_seen_ts DESC
+        """,
+    }
+    results = []
+    for label, query in queries.items():
+        result = _execute_clickhouse_query(query)
+        results.append(f"=== {label} ===\n{result}")
+    return "\n\n".join(results)
+
+
+@tool
+def query_adguard_blocklist_attribution(hours: int = 24) -> str:
+    """Get DNS blocks attributed by blocklist — shows which blocklists are catching traffic.
+
+    Useful for understanding whether blocks are from ad-blocking lists (normal) vs
+    security/malware lists (warrants review). High hits on HaGeZi or security-focused
+    lists indicate actual threat traffic, not just ad blocking.
+
+    Args:
+        hours: Lookback period in hours (default: 24)
+
+    Returns:
+        Tab-separated table: blocklist_name, blocks_24h — sorted by block count
+    """
+    query = f"""
+        SELECT
+            simpleJSONExtractString(ts.labels, 'blocklist_name') as blocklist_name,
+            round(avg(s.value), 0) as blocks_24h
+        FROM signoz_metrics.samples_v4 s
+        JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+        WHERE s.metric_name = 'adguard_blocklist_blocks_24h'
+          AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
+        GROUP BY blocklist_name
+        ORDER BY blocks_24h DESC
     """
     return _execute_clickhouse_query(query)
 
