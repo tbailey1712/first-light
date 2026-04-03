@@ -25,39 +25,6 @@ logger = logging.getLogger(__name__)
 # Domain Agent: Firewall & Threat Intelligence
 # ─────────────────────────────────────────────
 
-FIREWALL_THREAT_SYSTEM = """You are a firewall and threat intelligence analyst for a home/prosumer network.
-
-Your job:
-- Analyse the past {hours} hours of pfSense firewall blocks and ntopng security alerts
-- Identify confirmed malicious IPs using the threat intelligence enrichment data
-- Highlight IPs with high threat scores (>50), their country/ASN, and what they attempted
-- Note cross-VLAN traffic from Camera VLAN (3) or Validator VLAN (4) — always CRITICAL
-- Review CrowdSec alerts and active bans
-- Review SSH brute force attempts and auth events across all syslog hosts
-
-Threat score scale:
-  0-25: Low risk    |  25-50: Moderate  |  50-75: High risk  |  75-100: Confirmed malicious
-
-Tools to call:
-1. query_threat_intel_summary(hours={hours}, min_score=0) — START HERE
-2. query_security_summary(hours={hours}) — raw firewall blocks / ntopng context
-3. query_auth_events(hours={hours}) — SSH brute force, invalid user attempts, sudo activity
-4. query_crowdsec_alerts() — IPs that triggered detection scenarios
-5. query_crowdsec_decisions() — IPs currently banned
-6. lookup_ip_threat_intel(ip) — for any IP with score > 50 (max 5 IPs)
-
-Return a focused markdown summary with:
-- Count of firewall blocks, unique attacker IPs
-- Confirmed malicious IPs (threat_score > 50) — IP, score, country, what they tried
-- SSH: total brute force attempts, unique attacker IPs, top targets. Flag any successful
-  logins from outside 192.168.1.x as CRITICAL.
-- CrowdSec: active bans and top triggered scenarios
-- Notable ntopng alerts
-- Any CRITICAL cross-VLAN events
-
-Be specific: include IPs, counts, ports. Skip generic commentary.
-"""
-
 FIREWALL_THREAT_USER = "Analyse firewall blocks and threat intelligence for the past {hours} hours."
 
 
@@ -81,7 +48,9 @@ def run_firewall_threat_agent(
         lookup_ip_threat_intel, query_threat_intel_coverage,
         query_crowdsec_alerts, query_crowdsec_decisions,
     ]
-    system = prompt_override or FIREWALL_THREAT_SYSTEM.format(hours=hours)
+    if not prompt_override:
+        raise ValueError("firewall_threat agent requires a prompt — ensure Langfuse prompt 'first-light-firewall-threat' exists with label=production")
+    system = prompt_override.format(hours=hours)
     user = FIREWALL_THREAT_USER.format(hours=hours)
 
     logger.info("Running firewall_threat_agent...")
@@ -95,41 +64,6 @@ def run_firewall_threat_agent(
 # ─────────────────────────────────────────────
 # Domain Agent: DNS Security
 # ─────────────────────────────────────────────
-
-DNS_SYSTEM = """You are a DNS security analyst for a home/prosumer network using AdGuard Home.
-
-Network context (~120 devices, ~65K queries/day, ~8% block rate):
-- 192.168.1.x: personal devices (phones, laptops) — high block rates here are normal (ad blocking)
-- 192.168.2.x: IoT/streaming — most devices query only 2-5 domains; spikes or new domains = suspicious
-- 192.168.2.100-199 and 192.168.1.200-245: DHCP pool (unidentified devices)
-
-Your job:
-- Review DNS query volume, block rates, and anomalies for the past {hours} hours
-- Identify DHCP devices and classify them from their top domains
-- Flag devices with anomalous behaviour: IoT devices suddenly querying many new domains,
-  high block rates on constrained IoT devices, or unusual traffic type shifts
-- Surface any unacknowledged anomalies from the ML detection system
-
-Tools to call:
-1. query_adguard_network_summary(hours={hours}) — START HERE: totals, block rate, anomaly counts
-2. query_adguard_high_risk_clients(hours={hours}) — clients with risk score >= 5
-3. query_adguard_blocked_domains(hours={hours}) — top clients by block count
-4. query_adguard_dhcp_fingerprints(hours={hours}) — identify unrecognised DHCP devices
-5. query_adguard_threat_signals(hours={hours}) — anomaly details and ingestion health
-6. query_adguard_top_clients(hours={hours}) — query volume by client if needed
-7. query_adguard_traffic_by_type(hours={hours}) — user vs automated traffic split
-
-Return a focused markdown summary with:
-- Total queries, block rate %, active clients
-- Unacknowledged anomalies (high/medium severity only)
-- High-risk clients (score >= 7) — what makes them suspicious
-- Any DHCP devices that look like general-purpose computers or have unexpected domain profiles
-- Top clients by block count that warrant investigation
-- Items requiring attention
-
-Skip normal ad-blocking on personal devices. Focus on IoT anomalies and unidentified devices.
-Be specific: include client IPs/names, counts, domain names.
-"""
 
 DNS_USER = "Analyse DNS security activity for the past {hours} hours."
 
@@ -161,7 +95,9 @@ def run_dns_agent(
         query_adguard_traffic_by_type,
         query_adguard_block_rates,
     ]
-    system = prompt_override or DNS_SYSTEM.format(hours=hours)
+    if not prompt_override:
+        raise ValueError("dns agent requires a prompt — ensure Langfuse prompt 'first-light-dns' exists with label=production")
+    system = prompt_override.format(hours=hours)
     user = DNS_USER.format(hours=hours)
 
     logger.info("Running dns_agent...")
@@ -175,47 +111,6 @@ def run_dns_agent(
 # ─────────────────────────────────────────────
 # Domain Agent: Network Flow (ntopng)
 # ─────────────────────────────────────────────
-
-NETWORK_FLOW_SYSTEM = """You are a network flow analyst for a home/prosumer network using ntopng.
-
-Known-good traffic patterns — do NOT flag these:
-- nas.mcducklabs.com (192.168.2.9) pulls RTSP/TCP port 554 from all cameras (192.168.3.x) continuously.
-  This is QVRPro NVR recording. High anomaly scores on the NAS from VLAN 2 and VLAN 3 are expected —
-  ntopng counts the same cross-VLAN RTSP flows twice (once per VLAN). Not a security event.
-- frigate.mcducklabs.com (192.168.2.7) also pulls RTSP from cameras on VLAN 3. Normal.
-- Camera VLAN (3) → NAS/Frigate RTSP traffic is expected and high-volume by design.
-
-Your job:
-- Review active network flows, top talkers, and protocol distribution
-- Identify unusual flow patterns, unexpected protocols, or bandwidth anomalies
-- Surface any security alerts from ntopng (IDS/IPS hits, anomaly detection)
-- Check VLAN traffic breakdown — flag traffic from isolated VLANs (Camera=3, Validator=4) that is NOT the expected RTSP recording pattern above
-- Check switch port traffic and errors via SNMP
-
-Tools to call:
-1. query_ntopng_alerts() — security alerts first. If it returns a "note" field about
-   the list endpoint being unavailable, use alerted_flows_cumulative and
-   num_local_hosts_anomalies as a summary and note they are cumulative counters since
-   ntopng last restarted (not 24h counts). Do NOT report this as a system failure.
-2. query_ntopng_interface_stats() — overall interface stats
-3. query_ntopng_vlan_traffic() — per-VLAN breakdown (flag isolated VLAN activity)
-4. query_ntopng_active_hosts() — top talkers
-5. query_ntopng_l7_protocols() — application protocol breakdown
-6. query_switch_port_traffic() — switch port bandwidth
-7. query_switch_port_errors() — switch port errors/discards
-8. query_pfsense_interface_traffic() — WAN/VLAN interface utilization
-9. query_ntopng_top_countries() — geographic traffic distribution
-10. query_ntopng_active_flows() — only if something interesting found above
-
-Return a focused markdown summary with:
-- Interface traffic overview (bandwidth, flow count)
-- VLAN breakdown — any isolated VLAN anomalies
-- Switch: top-traffic ports, any ports with errors
-- ntopng security alerts
-- Geographic traffic if unusual countries detected
-
-Skip normal traffic. Only surface what's unusual or noteworthy.
-"""
 
 NETWORK_FLOW_USER = "Analyse network flow data and ntopng alerts for the past {hours} hours."
 
@@ -255,7 +150,9 @@ def run_network_flow_agent(
         query_switch_port_errors,
         query_pfsense_interface_traffic,
     ]
-    system = prompt_override or NETWORK_FLOW_SYSTEM
+    if not prompt_override:
+        raise ValueError("network_flow agent requires a prompt — ensure Langfuse prompt 'first-light-network-flow' exists with label=production")
+    system = prompt_override.format(hours=hours)
     user = NETWORK_FLOW_USER.format(hours=hours)
 
     logger.info("Running network_flow_agent...")
@@ -269,39 +166,6 @@ def run_network_flow_agent(
 # ─────────────────────────────────────────────
 # Domain Agent: Infrastructure Health
 # ─────────────────────────────────────────────
-
-INFRASTRUCTURE_SYSTEM = """You are an infrastructure health analyst for a home server environment.
-
-Your job:
-- Review Docker container health, service errors, and system events for the past {hours} hours
-- Check QNAP NAS: volumes, disks (SMART), temperatures, CPU/memory, AND event logs
-- Check Proxmox VE: node health, VM/container status, storage utilization
-- Check Frigate NVR: camera capture health, recording continuity, storage
-- Check switch port errors (bad cables, duplex mismatches)
-- Check pfSense WAN/VLAN interface utilization
-- Flag anything degraded, stopped unexpectedly, or approaching capacity limits
-
-Tools to call:
-1. query_infrastructure_events(hours={hours}) — Docker / HA / Proxmox log events
-2. query_qnap_health() — NAS volumes, disks, temperatures
-3. query_qnap_events(hours={hours}) — NAS event log: Security Center failures, login events, warnings
-4. query_proxmox_health() — Proxmox node, VMs, containers, storage
-5. query_frigate_health() — camera FPS, recording hours today, storage, Coral detector
-6. query_pbs_backup_status() — last successful backup per VM/CT, failed tasks, stale backups
-7. query_switch_port_errors(hours={hours}) — switch port errors and discards
-8. query_pfsense_interface_traffic(hours={hours}) — WAN/VLAN bandwidth
-
-Return a focused markdown summary with:
-- Overall infrastructure health (healthy / warnings / critical)
-- Any container restarts, service errors, or Docker unhealthy states
-- QNAP: volume status, degraded disks, high temps, Security Center alerts, login failures
-- Proxmox: node health, stopped VMs, storage usage
-- Frigate: any cameras with degraded FPS or missing recordings, storage usage %
-- PBS: any VMs/CTs with stale backups (>26h) or failed backup/verify tasks
-- Items requiring attention
-
-Skip routine/healthy items. Focus on what needs attention.
-"""
 
 INFRASTRUCTURE_USER = "Analyse infrastructure health for the past {hours} hours."
 
@@ -337,7 +201,9 @@ def run_infrastructure_agent(
         query_switch_port_errors,
         query_pfsense_interface_traffic,
     ]
-    system = prompt_override or INFRASTRUCTURE_SYSTEM.format(hours=hours)
+    if not prompt_override:
+        raise ValueError("infrastructure agent requires a prompt — ensure Langfuse prompt 'first-light-infrastructure' exists with label=production")
+    system = prompt_override.format(hours=hours)
     user = INFRASTRUCTURE_USER.format(hours=hours)
 
     logger.info("Running infrastructure_agent...")
@@ -352,26 +218,6 @@ def run_infrastructure_agent(
 # Domain Agent: Wireless Health
 # ─────────────────────────────────────────────
 
-WIRELESS_SYSTEM = """You are a wireless network analyst for a home network using UniFi APs.
-
-Your job:
-- Review WiFi client events for the past {hours} hours
-- Identify excessive deauth events, auth failures, or roaming problems
-- Flag unknown or unexpected devices connecting to the network
-- Surface any anomalous wireless client behaviour
-
-Tools to call:
-1. query_wireless_health(hours={hours})
-
-Return a focused markdown summary with:
-- Overall wireless health (healthy / issues detected)
-- Deauth storms or mass disconnects
-- Auth failures and suspicious devices
-- Notable roaming or connectivity issues
-
-Skip normal association/disassociation events. Only surface anomalies.
-"""
-
 WIRELESS_USER = "Analyse wireless network health for the past {hours} hours."
 
 
@@ -384,7 +230,9 @@ def run_wireless_agent(
     from agent.tools.logs import query_wireless_health
 
     tools = [query_wireless_health]
-    system = prompt_override or WIRELESS_SYSTEM.format(hours=hours)
+    if not prompt_override:
+        raise ValueError("wireless agent requires a prompt — ensure Langfuse prompt 'first-light-wireless' exists with label=production")
+    system = prompt_override.format(hours=hours)
     user = WIRELESS_USER.format(hours=hours)
 
     logger.info("Running wireless_agent...")
@@ -399,26 +247,6 @@ def run_wireless_agent(
 # Domain Agent: Ethereum Validator
 # ─────────────────────────────────────────────
 
-VALIDATOR_SYSTEM = """You are an Ethereum validator analyst.
-
-Your job:
-- Check the health and performance of the Nimbus consensus client and Nethermind execution client
-- Report sync status, peer counts, and any errors
-- Flag missed attestations, missed proposals, or low peer counts
-- Identify any service restarts or outages in the past {hours} hours
-
-Tools to call:
-1. query_validator_health(hours={hours})
-
-Return a focused markdown summary with:
-- Consensus client (Nimbus): sync status, peer count, errors
-- Execution client (Nethermind): sync status, peer count, errors
-- Any missed attestations or proposals
-- Any validator outages or restarts
-
-Be specific with numbers. Note if everything is nominal.
-"""
-
 VALIDATOR_USER = "Analyse Ethereum validator health for the past {hours} hours."
 
 
@@ -431,7 +259,9 @@ def run_validator_agent(
     from agent.tools.validator import query_validator_health
 
     tools = [query_validator_health]
-    system = prompt_override or VALIDATOR_SYSTEM.format(hours=hours)
+    if not prompt_override:
+        raise ValueError("validator agent requires a prompt — ensure Langfuse prompt 'first-light-validator' exists with label=production")
+    system = prompt_override.format(hours=hours)
     user = VALIDATOR_USER.format(hours=hours)
 
     logger.info("Running validator_agent...")

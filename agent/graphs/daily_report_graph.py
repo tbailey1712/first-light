@@ -2,14 +2,16 @@
 Daily Report Graph — LangGraph implementation.
 
 Six domain agents run via LangGraph Send API fan-out, results collected
-via operator.add reducer, then passed to a synthesis node.
+via operator.add reducer, then passed through a correlation pass before
+a final synthesis node.
 
 Flow:
   START
-    └─ initialize  (fetch Langfuse prompts)
+    └─ initialize  (fetch Langfuse prompts, load Redis baseline)
          └─ [Send x6]  run_domain  (fan-out)
-              └─ synthesize  (writes final report)
-                   └─ END
+              └─ correlate  (cross-domain IP/device lookups)
+                   └─ synthesize  (writes final report, saves baseline)
+                        └─ END
 
 All LLM calls go through agent.llm — tracing handled there.
 
@@ -17,10 +19,12 @@ Public interface:
     generate_daily_report(hours=24) -> str
 """
 
+import json
 import logging
 import operator
+import re
 from datetime import datetime, timezone
-from typing import Annotated, Optional, TypedDict
+from typing import Annotated, Any, Optional, TypedDict
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send
@@ -34,11 +38,10 @@ from agent.domains.daily_report import (
     run_validator_agent,
 )
 from langfuse import observe
-from agent.langfuse_integration import get_agent_prompt_with_fallback
-from agent.llm import chat
+from agent.langfuse_integration import get_prompt_manager
+from agent.llm import chat, run_react_loop
 
 logger = logging.getLogger(__name__)
-
 
 # ── Domain agent registry ──────────────────────────────────────────────────────
 
@@ -59,6 +62,25 @@ LANGFUSE_PROMPT_NAMES = {
     "wireless":        "first-light-wireless",
     "validator":       "first-light-validator",
     "synthesis":       "first-light-synthesis",
+    "correlation":     "first-light-correlation",
+}
+
+# Redis key prefix for baseline storage
+_REDIS_PREFIX = "fl:baseline:"
+
+# IP address regex — matches private and public IPs in summary text
+_IP_RE = re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b')
+
+# IPs to never correlate — infrastructure, broadcast, etc.
+_SKIP_IPS = {
+    "0.0.0.0", "127.0.0.1", "255.255.255.255",
+    "192.168.1.1",   # pfSense LAN
+    "192.168.2.1",   # pfSense IoT gateway
+    "192.168.1.5",   # ntopng
+    "192.168.2.106", # NAS / docker host
+    "192.168.2.9",   # NAS QNAP
+    "192.168.2.7",   # Frigate
+    "192.168.2.8",   # PBS
 }
 
 
@@ -67,6 +89,7 @@ LANGFUSE_PROMPT_NAMES = {
 class DomainResult(TypedDict):
     domain: str
     summary: str
+    flagged_ips: list[str]      # IPs extracted from summary for correlation pass
 
 
 class DomainNodeInput(TypedDict):
@@ -81,54 +104,321 @@ class DailyReportState(TypedDict):
     session_id: str
     domain_results: Annotated[list[DomainResult], operator.add]
     prompts: dict[str, str]
+    baseline: dict[str, Any]        # yesterday's metrics from Redis
+    correlation_findings: str       # output of correlation pass
     final_report: Optional[str]
 
 
-# ── Synthesis prompt fallback ──────────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
-SYNTHESIS_SYSTEM = """You are First Light AI, the synthesis agent for a home/prosumer network observability platform.
+def _extract_ips(text: str) -> list[str]:
+    """Extract unique IP addresses from a text summary, excluding infrastructure IPs."""
+    found = set(_IP_RE.findall(text))
+    return sorted(found - _SKIP_IPS)
 
-You have received summary reports from 6 specialized domain agents that each independently analysed
-the past 24 hours of network and infrastructure data. Your job is to:
 
-1. Synthesize their findings into a single coherent daily security and health report
-2. Identify cross-domain correlations (e.g., an IP that appears in both DNS blocks and firewall blocks)
-3. Prioritize findings by severity — surface what actually matters
-4. Produce a clean, scannable Markdown report for the operator
+def _get_redis() -> Any:
+    """Get a Redis client using the configured URL."""
+    import redis as _redis
+    from agent.config import get_config
+    cfg = get_config()
+    return _redis.from_url(cfg.redis_url, decode_responses=True)
 
-Network context:
-- VLAN 1: Main LAN — trusted user devices, highest trust
-- VLAN 2: IoT Devices — cannot reach VLAN 1, has WAN access
-- VLAN 3: CCTV — fully isolated, no WAN, no cross-VLAN (any external traffic = CRITICAL)
-- VLAN 4: DMZ — WAN only (Ethereum validator)
-- VLAN 10: WiFi Guest
-- VLAN 2 IoT devices with high DNS block rates may be normal telemetry — check device type before escalating
 
-Severity levels:
-- 🔴 CRITICAL: Active threat, service down, validator offline, cross-VLAN breach
-- 🟡 WARNING: Anomaly, threshold approached, degraded state
-- 🟢 INFO / ✅ OK: Routine, healthy, nominal
+def _load_baseline() -> dict[str, Any]:
+    """Load yesterday's baseline metrics from Redis. Returns empty dict if unavailable."""
+    try:
+        r = _get_redis()
+        keys = [
+            "dns_queries", "dns_block_rate_pct",
+            "firewall_blocks", "validator_balance_eth",
+            "qnap_vol1_used_pct", "active_dhcp_count",
+        ]
+        baseline = {}
+        for k in keys:
+            val = r.get(f"{_REDIS_PREFIX}{k}")
+            if val is not None:
+                try:
+                    baseline[k] = float(val)
+                except ValueError:
+                    baseline[k] = val
+        return baseline
+    except Exception as e:
+        logger.warning(f"Redis baseline load failed: {e}")
+        return {}
 
-Report structure:
-## Executive Summary
-2-3 sentences. Overall posture. Action required or all clear.
 
-## 🔴 Critical Issues  (omit section if none)
-## 🟡 Warnings  (omit section if none)
-## 🛡️ Threat Intelligence
-## 🌐 Network & DNS
-## 🖥️ Infrastructure
-## 📡 Wireless
-## ⛓️ Validator
-## ✅ Action Items  (only if actions are ACTUALLY needed)
+def _save_baseline(metrics: dict[str, Any]) -> None:
+    """Save baseline metrics to Redis for next run's comparison."""
+    try:
+        r = _get_redis()
+        for k, v in metrics.items():
+            if v is not None:
+                r.set(f"{_REDIS_PREFIX}{k}", str(v), ex=172800)  # 48h TTL
+        logger.info(f"Baseline saved to Redis: {list(metrics.keys())}")
+    except Exception as e:
+        logger.warning(f"Redis baseline save failed: {e}")
 
-Rules:
-- Be specific: IPs/hostnames, counts, scores, percentages
-- Omit sections that have nothing to say
-- Do not repeat the same finding in multiple sections
-- Skip boilerplate like "The analysis showed..." or "Overall the network is..."
-- Use emojis for scannability
+
+def _format_baseline_context(baseline: dict[str, Any]) -> str:
+    """Format baseline as a compact context block for the synthesis prompt."""
+    if not baseline:
+        return ""
+    lines = ["Yesterday's baseline (for comparison):"]
+    if "dns_queries" in baseline:
+        lines.append(f"  DNS queries: {int(baseline['dns_queries']):,}")
+    if "dns_block_rate_pct" in baseline:
+        lines.append(f"  DNS block rate: {baseline['dns_block_rate_pct']:.1f}%")
+    if "firewall_blocks" in baseline:
+        lines.append(f"  Firewall blocks: {int(baseline['firewall_blocks']):,}")
+    if "validator_balance_eth" in baseline:
+        lines.append(f"  Validator balance: {baseline['validator_balance_eth']:.6f} ETH")
+    if "qnap_vol1_used_pct" in baseline:
+        lines.append(f"  QNAP Vol1 used: {baseline['qnap_vol1_used_pct']:.1f}%")
+    if "active_dhcp_count" in baseline:
+        lines.append(f"  Active DHCP devices: {int(baseline['active_dhcp_count'])}")
+    return "\n".join(lines)
+
+
+# ── Nodes ──────────────────────────────────────────────────────────────────────
+
+def initialize(state: DailyReportState) -> dict:
+    """Fetch Langfuse prompts for all domains and load Redis baseline. Raises if any prompt missing."""
+    hours = state["hours"]
+    manager = get_prompt_manager()
+    prompts = {}
+
+    for domain, slug in LANGFUSE_PROMPT_NAMES.items():
+        if domain in ("synthesis", "correlation"):
+            prompts[domain] = manager.get_prompt(slug)
+        else:
+            prompts[domain] = manager.get_prompt(slug, hours=hours)
+
+    logger.info(f"Langfuse prompts fetched: {list(prompts.keys())}")
+
+    baseline = _load_baseline()
+    if baseline:
+        logger.info(f"Redis baseline loaded: {list(baseline.keys())}")
+    else:
+        logger.info("No Redis baseline available — first run or cache expired")
+
+    return {"prompts": prompts, "baseline": baseline}
+
+
+def run_domain(state: DomainNodeInput) -> dict:
+    """Single domain node, invoked 6 times via Send fan-out."""
+    domain_name = state["domain"]
+    hours = state["hours"]
+    session_id = state["session_id"]
+    prompt_override = state.get("prompt_override") or ""
+
+    fn = DOMAIN_AGENTS[domain_name]
+    logger.info("Running %s (Langfuse prompt)...", domain_name)
+    try:
+        summary = fn(hours, prompt_override=prompt_override, session_id=session_id)
+    except Exception as e:
+        logger.error(f"Domain node '{domain_name}' failed: {e}", exc_info=True)
+        summary = f"**{domain_name}**: Agent failed — {e}"
+
+    flagged_ips = _extract_ips(summary)
+    if flagged_ips:
+        logger.info(f"{domain_name}: extracted {len(flagged_ips)} IPs for correlation")
+
+    return {"domain_results": [{"domain": domain_name, "summary": summary, "flagged_ips": flagged_ips}]}
+
+
+@observe(as_type="span", capture_input=False, capture_output=False)
+def correlate(state: DailyReportState) -> dict:
+    """
+    Cross-domain correlation pass.
+
+    Collects all IPs flagged across the 6 domain summaries, then runs a
+    targeted ReAct agent to look them up cross-source. Produces a
+    correlation_findings string injected between domain summaries and synthesis.
+    """
+    from langfuse import get_client as get_langfuse_client
+    from opentelemetry import trace as otel_trace
+    from langfuse import LangfuseOtelSpanAttributes
+    from agent.tools.logs import search_logs_by_ip
+    from agent.tools.threat_intel_tools import lookup_ip_threat_intel
+
+    lf = get_langfuse_client()
+    span = otel_trace.get_current_span()
+    span.set_attribute(LangfuseOtelSpanAttributes.TRACE_SESSION_ID, state["session_id"])
+
+    # Collect unique IPs across all domains, deduplicated
+    domain_ip_map: dict[str, list[str]] = {}
+    for result in state["domain_results"]:
+        ips = result.get("flagged_ips", [])
+        if ips:
+            domain_ip_map[result["domain"]] = ips
+
+    all_ips = sorted({ip for ips in domain_ip_map.values() for ip in ips})
+
+    if not all_ips:
+        logger.info("Correlation pass: no IPs to correlate")
+        lf.update_current_span(output="No cross-domain entities flagged.")
+        return {"correlation_findings": ""}
+
+    logger.info(f"Correlation pass: {len(all_ips)} unique IPs from {list(domain_ip_map.keys())}")
+
+    # Build ip-to-domain map for context
+    ip_domain_context = {}
+    for domain, ips in domain_ip_map.items():
+        for ip in ips:
+            ip_domain_context.setdefault(ip, []).append(domain)
+
+    # IPs seen in multiple domains are highest priority
+    multi_domain_ips = [ip for ip, domains in ip_domain_context.items() if len(domains) > 1]
+    # Internal IPs flagged by DNS or infrastructure (potential compromised hosts)
+    internal_flagged = [ip for ip in all_ips if ip.startswith("192.168.")]
+
+    priority_ips = sorted(set(multi_domain_ips + internal_flagged))[:10]
+
+    if not priority_ips:
+        priority_ips = all_ips[:5]
+
+    tools = [search_logs_by_ip, lookup_ip_threat_intel]
+
+    correlation_prompt = state["prompts"].get("correlation", "")
+    if not correlation_prompt:
+        raise ValueError("Correlation agent requires Langfuse prompt 'first-light-correlation' with label=production")
+
+    ip_context_lines = "\n".join(
+        f"  {ip}: seen in [{', '.join(ip_domain_context.get(ip, []))}]"
+        for ip in priority_ips
+    )
+
+    user_msg = (
+        f"Cross-domain correlation pass for daily report. "
+        f"The following IPs were flagged across domain agents:\n\n"
+        f"{ip_context_lines}\n\n"
+        f"Run targeted lookups on any IPs that appear in multiple domains or "
+        f"that are internal addresses flagged as suspicious. "
+        f"Report only genuinely correlated findings — skip IPs that come back clean."
+    )
+
+    try:
+        findings = run_react_loop(
+            correlation_prompt,
+            user_msg,
+            tools,
+            "correlate",
+            session_id=state["session_id"],
+        )
+    except Exception as e:
+        logger.error(f"Correlation pass failed: {e}", exc_info=True)
+        findings = f"Correlation pass failed: {e}"
+
+    lf.update_current_span(output=findings[:500])
+    return {"correlation_findings": findings}
+
+
+def synthesize(state: DailyReportState) -> dict:
+    """Synthesis node — reads domain results + correlation findings, writes final report."""
+    domain_summaries = {r["domain"]: r["summary"] for r in state["domain_results"]}
+
+    synthesis_system = state["prompts"]["synthesis"]
+
+    # Inject baseline comparison context if available
+    baseline_context = _format_baseline_context(state.get("baseline", {}))
+    if baseline_context:
+        synthesis_system = synthesis_system + f"\n\n{baseline_context}"
+
+    date_str = datetime.now().strftime("%Y-%m-%d")
+
+    # Build the user message — include correlation findings if present
+    correlation_section = ""
+    if state.get("correlation_findings"):
+        correlation_section = f"""
+---
+
+## CROSS-DOMAIN CORRELATION FINDINGS
+{state["correlation_findings"]}
 """
+
+    user_message = SYNTHESIS_USER.format(
+        date=date_str,
+        hours=state["hours"],
+        firewall_threat=domain_summaries.get("firewall_threat", "No data"),
+        dns_security=domain_summaries.get("dns_security", "No data"),
+        network_flow=domain_summaries.get("network_flow", "No data"),
+        infrastructure=domain_summaries.get("infrastructure", "No data"),
+        wireless=domain_summaries.get("wireless", "No data"),
+        validator=domain_summaries.get("validator", "No data"),
+        correlation_section=correlation_section,
+    )
+
+    messages = [
+        {"role": "system", "content": synthesis_system},
+        {"role": "user", "content": user_message},
+    ]
+
+    logger.info("Running synthesis node...")
+    response = chat(messages, "synthesis", session_id=state["session_id"], agent_name="synthesis")
+    final_report = response.choices[0].message.content or ""
+    logger.info("Synthesis complete.")
+
+    # Extract baseline metrics from domain summaries for next run
+    # Best-effort — parse known patterns from the summaries
+    new_baseline = _extract_baseline_metrics(domain_summaries)
+    if new_baseline:
+        _save_baseline(new_baseline)
+
+    return {"final_report": final_report}
+
+
+def _extract_baseline_metrics(domain_summaries: dict[str, str]) -> dict[str, Any]:
+    """
+    Best-effort extraction of key metrics from domain summaries for Redis baseline storage.
+    Uses simple regex patterns against the markdown text.
+    """
+    metrics: dict[str, Any] = {}
+
+    dns = domain_summaries.get("dns_security", "")
+    # Match "65,432 queries" or "65432 queries"
+    m = re.search(r'([\d,]+)\s+(?:total\s+)?queries', dns)
+    if m:
+        try:
+            metrics["dns_queries"] = float(m.group(1).replace(",", ""))
+        except ValueError:
+            pass
+    # Match "8.2% block rate" or "block rate: 8.2%"
+    m = re.search(r'(\d+\.?\d*)\s*%\s*block', dns, re.IGNORECASE)
+    if m:
+        try:
+            metrics["dns_block_rate_pct"] = float(m.group(1))
+        except ValueError:
+            pass
+
+    fw = domain_summaries.get("firewall_threat", "")
+    m = re.search(r'([\d,]+)\s+(?:total\s+)?(?:firewall\s+)?blocks?', fw)
+    if m:
+        try:
+            metrics["firewall_blocks"] = float(m.group(1).replace(",", ""))
+        except ValueError:
+            pass
+
+    val = domain_summaries.get("validator", "")
+    m = re.search(r'(\d+\.\d+)\s*ETH', val)
+    if m:
+        try:
+            metrics["validator_balance_eth"] = float(m.group(1))
+        except ValueError:
+            pass
+
+    infra = domain_summaries.get("infrastructure", "")
+    m = re.search(r'(\d+\.?\d*)\s*%\s*(?:used|full|capacity)', infra, re.IGNORECASE)
+    if m:
+        try:
+            metrics["qnap_vol1_used_pct"] = float(m.group(1))
+        except ValueError:
+            pass
+
+    return metrics
+
+
+# ── Synthesis user template ────────────────────────────────────────────────────
 
 SYNTHESIS_USER = """Synthesize the following domain agent reports into the daily First Light report.
 
@@ -163,87 +453,11 @@ Analysis period: {date}, past {hours} hours
 
 ## ETHEREUM VALIDATOR
 {validator}
-
+{correlation_section}
 ---
 
 Write the final synthesized report now.
 """
-
-
-# ── Nodes ──────────────────────────────────────────────────────────────────────
-
-def initialize(state: DailyReportState) -> dict:
-    """Fetch Langfuse prompts for all domains. Falls back gracefully."""
-    hours = state["hours"]
-    prompts = {}
-
-    for domain, slug in LANGFUSE_PROMPT_NAMES.items():
-        if domain == "synthesis":
-            prompts[domain] = get_agent_prompt_with_fallback(slug, fallback="")
-        else:
-            prompts[domain] = get_agent_prompt_with_fallback(slug, fallback="", hours=hours)
-
-    fetched = [k for k, v in prompts.items() if v]
-    if fetched:
-        logger.info(f"Langfuse prompts fetched: {fetched}")
-    else:
-        logger.info("Langfuse prompts unavailable — using hardcoded fallbacks")
-
-    return {"prompts": prompts}
-
-
-def run_domain(state: DomainNodeInput) -> dict:
-    """
-    Single domain node, invoked 6 times via Send fan-out.
-    Returns one DomainResult appended into domain_results via operator.add.
-    """
-    domain_name = state["domain"]
-    hours = state["hours"]
-    session_id = state["session_id"]
-    prompt_override = state.get("prompt_override") or ""
-
-    fn = DOMAIN_AGENTS[domain_name]
-    logger.info(
-        "Running %s%s...", domain_name,
-        " (Langfuse prompt)" if prompt_override else " (hardcoded prompt)"
-    )
-    try:
-        summary = fn(hours, prompt_override=prompt_override, session_id=session_id)
-    except Exception as e:
-        logger.error(f"Domain node '{domain_name}' failed: {e}", exc_info=True)
-        summary = f"**{domain_name}**: Agent failed — {e}"
-
-    return {"domain_results": [{"domain": domain_name, "summary": summary}]}
-
-
-def synthesize(state: DailyReportState) -> dict:
-    """Synthesis node — reads all domain results, writes final markdown report."""
-    domain_summaries = {r["domain"]: r["summary"] for r in state["domain_results"]}
-
-    synthesis_system = state["prompts"].get("synthesis") or SYNTHESIS_SYSTEM
-
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    user_message = SYNTHESIS_USER.format(
-        date=date_str,
-        hours=state["hours"],
-        firewall_threat=domain_summaries.get("firewall_threat", "No data"),
-        dns_security=domain_summaries.get("dns_security", "No data"),
-        network_flow=domain_summaries.get("network_flow", "No data"),
-        infrastructure=domain_summaries.get("infrastructure", "No data"),
-        wireless=domain_summaries.get("wireless", "No data"),
-        validator=domain_summaries.get("validator", "No data"),
-    )
-
-    messages = [
-        {"role": "system", "content": synthesis_system},
-        {"role": "user", "content": user_message},
-    ]
-
-    logger.info("Running synthesis node...")
-    response = chat(messages, "synthesis", session_id=state["session_id"], agent_name="synthesis")
-    logger.info("Synthesis complete.")
-
-    return {"final_report": response.choices[0].message.content}
 
 
 # ── Routing ────────────────────────────────────────────────────────────────────
@@ -266,11 +480,13 @@ def dispatch_domains(state: DailyReportState) -> list[Send]:
 _builder = StateGraph(DailyReportState)
 _builder.add_node("initialize", initialize)
 _builder.add_node("run_domain", run_domain)
+_builder.add_node("correlate", correlate)
 _builder.add_node("synthesize", synthesize)
 
 _builder.add_edge(START, "initialize")
 _builder.add_conditional_edges("initialize", dispatch_domains, ["run_domain"])
-_builder.add_edge("run_domain", "synthesize")
+_builder.add_edge("run_domain", "correlate")
+_builder.add_edge("correlate", "synthesize")
 _builder.add_edge("synthesize", END)
 
 graph = _builder.compile()
@@ -297,7 +513,6 @@ def generate_daily_report(hours: int = 24) -> str:
     session_id = f"daily-report-{start.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
     logger.info("=== Daily Report Generation Start (LangGraph) session=%s ===", session_id)
 
-    # Tag this trace in Langfuse
     lf = get_langfuse_client()
     span = otel_trace.get_current_span()
     span.set_attribute(LangfuseOtelSpanAttributes.TRACE_NAME, session_id)
@@ -310,6 +525,8 @@ def generate_daily_report(hours: int = 24) -> str:
         "session_id": session_id,
         "domain_results": [],
         "prompts": {},
+        "baseline": {},
+        "correlation_findings": "",
         "final_report": None,
     }
 
