@@ -270,8 +270,9 @@ Tools to call:
 3. query_qnap_events(hours={hours}) — NAS event log: Security Center failures, login events, warnings
 4. query_proxmox_health() — Proxmox node, VMs, containers, storage
 5. query_frigate_health() — camera FPS, recording hours today, storage, Coral detector
-6. query_switch_port_errors(hours={hours}) — switch port errors and discards
-7. query_pfsense_interface_traffic(hours={hours}) — WAN/VLAN bandwidth
+6. query_pbs_backup_status() — last successful backup per VM/CT, failed tasks, stale backups
+7. query_switch_port_errors(hours={hours}) — switch port errors and discards
+8. query_pfsense_interface_traffic(hours={hours}) — WAN/VLAN bandwidth
 
 Return a focused markdown summary with:
 - Overall infrastructure health (healthy / warnings / critical)
@@ -279,6 +280,7 @@ Return a focused markdown summary with:
 - QNAP: volume status, degraded disks, high temps, Security Center alerts, login failures
 - Proxmox: node health, stopped VMs, storage usage
 - Frigate: any cameras with degraded FPS or missing recordings, storage usage %
+- PBS: any VMs/CTs with stale backups (>26h) or failed backup/verify tasks
 - Items requiring attention
 
 Skip routine/healthy items. Focus on what needs attention.
@@ -297,6 +299,7 @@ def run_infrastructure_agent(
     from agent.tools.qnap_tools import query_qnap_health, query_qnap_events
     from agent.tools.proxmox_tools import query_proxmox_health
     from agent.tools.frigate import query_frigate_health
+    from agent.tools.pbs import query_pbs_backup_status
     from agent.tools.uptime_kuma import (
         query_uptime_kuma_status,
         query_uptime_kuma_uptime,
@@ -310,6 +313,7 @@ def run_infrastructure_agent(
         query_qnap_events,
         query_proxmox_health,
         query_frigate_health,
+        query_pbs_backup_status,
         query_uptime_kuma_status,
         query_uptime_kuma_uptime,
         query_uptime_kuma_incidents,

@@ -114,6 +114,12 @@ class FirstLightConfig(BaseSettings):
     ntfy_topic: Optional[str] = None
     ntfy_server: str = "https://ntfy.sh"
 
+    # Proxmox Backup Server
+    pbs_host: str = "192.168.2.8"
+    pbs_port: int = 8007
+    pbs_token_id: str = "root@pam!firstlight"
+    pbs_token_secret: Optional[str] = None
+
     # CrowdSec
     crowdsec_enrollment_key: Optional[str] = None
     crowdsec_api_key: Optional[str] = None         # bouncer key: cscli bouncers add firstlight-agent
