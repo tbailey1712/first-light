@@ -34,7 +34,7 @@ def run_firewall_threat_agent(
     session_id: Optional[str] = None,
 ) -> str:
     """Run the firewall + threat intelligence domain agent."""
-    from agent.tools.logs import query_security_summary, query_auth_events
+    from agent.tools.logs import query_security_summary, query_auth_events, query_outbound_blocks
     from agent.tools.threat_intel_tools import (
         query_threat_intel_summary,
         lookup_ip_threat_intel,
@@ -44,7 +44,7 @@ def run_firewall_threat_agent(
     from agent.tools.crowdsec import query_crowdsec_alerts, query_crowdsec_decisions
     tools = [
         query_threat_intel_summary, query_security_summary,
-        query_auth_events,
+        query_auth_events, query_outbound_blocks,
         lookup_ip_threat_intel, query_threat_intel_coverage,
         query_crowdsec_alerts, query_crowdsec_decisions,
     ]
@@ -130,6 +130,7 @@ def run_network_flow_agent(
         query_ntopng_interfaces,
         query_ntopng_vlan_traffic,
         query_ntopng_top_countries,
+        query_ntopng_arp_table,
     )
     from agent.tools.switch_tools import (
         query_switch_port_traffic,
@@ -146,6 +147,7 @@ def run_network_flow_agent(
         query_ntopng_top_countries,
         query_ntopng_active_flows,
         query_ntopng_interfaces,
+        query_ntopng_arp_table,
         query_switch_port_traffic,
         query_switch_port_errors,
         query_pfsense_interface_traffic,

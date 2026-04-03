@@ -462,6 +462,100 @@ def search_logs_by_ip(
         return f"Error searching logs for IP {ip_address}: {str(e)}"
 
 
+@tool
+def query_outbound_blocks(hours: int = 24) -> str:
+    """Get pfSense firewall blocks where internal hosts are the source (outbound blocks).
+
+    These are blocks where a device on the LAN/IoT/CCTV/DMZ network tried to reach
+    an external destination and was blocked by pfSense policy. This is a strong signal
+    of potentially compromised or misconfigured internal devices — legitimate internal
+    hosts generally do not get outbound-blocked unless they are:
+    - Trying to reach a blocked category (malware C2, ads via DNS-based rules)
+    - Violating VLAN egress policy (e.g., VLAN2 IoT trying to reach VLAN1)
+    - Infected and attempting to reach known bad IPs
+
+    Args:
+        hours: Lookback period in hours (default: 24)
+
+    Returns:
+        JSON with top internal IPs that triggered outbound blocks, their destination
+        IPs/ports, and block counts.
+    """
+    hours = min(hours, 48)
+
+    query = f"""
+    SELECT
+        attributes_string['pfsense.src_ip'] as src_ip,
+        attributes_string['pfsense.dst_ip'] as dst_ip,
+        attributes_string['pfsense.dst_port'] as dst_port,
+        attributes_string['pfsense.protocol'] as protocol,
+        attributes_string['pfsense.interface'] as interface,
+        COUNT(*) as block_count,
+        MIN(toDateTime(timestamp / 1000000000)) as first_seen,
+        MAX(toDateTime(timestamp / 1000000000)) as last_seen
+    FROM signoz_logs.logs_v2
+    WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
+      AND resources_string['service.name'] = 'filterlog'
+      AND attributes_string['pfsense.action'] = 'block'
+      AND attributes_string['pfsense.direction'] = 'out'
+      AND (
+        attributes_string['pfsense.src_ip'] LIKE '192.168.%'
+        OR attributes_string['pfsense.src_ip'] LIKE '10.%'
+        OR attributes_string['pfsense.src_ip'] LIKE '172.16.%'
+      )
+      AND attributes_string['pfsense.src_ip'] != ''
+    GROUP BY src_ip, dst_ip, dst_port, protocol, interface
+    ORDER BY block_count DESC
+    LIMIT 25
+    FORMAT JSONEachRow
+    """
+
+    try:
+        raw = _execute_clickhouse_query(query)
+        rows = [json.loads(line) for line in raw.split('\n') if line.strip()]
+
+        if not rows:
+            return json.dumps({"time_range": f"last {hours}h", "outbound_blocks": [], "summary": "No outbound blocks found — all internal hosts behaving normally"})
+
+        # Group by source IP for a cleaner per-device view
+        by_src: Dict[str, dict] = {}
+        for row in rows:
+            src = row["src_ip"]
+            if src not in by_src:
+                by_src[src] = {
+                    "src_ip": src,
+                    "total_blocks": 0,
+                    "destinations": [],
+                    "first_seen": row["first_seen"],
+                    "last_seen": row["last_seen"],
+                }
+            by_src[src]["total_blocks"] += row["block_count"]
+            by_src[src]["destinations"].append({
+                "dst_ip": row["dst_ip"],
+                "dst_port": row["dst_port"],
+                "protocol": row["protocol"],
+                "interface": row["interface"],
+                "count": row["block_count"],
+            })
+            # Track widest time window
+            if str(row["first_seen"]) < str(by_src[src]["first_seen"]):
+                by_src[src]["first_seen"] = row["first_seen"]
+            if str(row["last_seen"]) > str(by_src[src]["last_seen"]):
+                by_src[src]["last_seen"] = row["last_seen"]
+
+        sources = sorted(by_src.values(), key=lambda x: x["total_blocks"], reverse=True)
+
+        return json.dumps({
+            "time_range": f"last {hours}h",
+            "unique_internal_sources": len(sources),
+            "total_outbound_blocks": sum(s["total_blocks"] for s in sources),
+            "outbound_blocks": sources[:15],
+        }, indent=2, default=str)
+
+    except Exception as e:
+        return f"Error querying outbound blocks: {str(e)}"
+
+
 def _execute_clickhouse_query(query: str, query_params: Optional[dict] = None) -> str:
     """Execute a ClickHouse query via HTTP.
 
