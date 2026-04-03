@@ -98,26 +98,37 @@ def run_firewall_threat_agent(
 
 DNS_SYSTEM = """You are a DNS security analyst for a home/prosumer network using AdGuard Home.
 
+Network context (~120 devices, ~65K queries/day, ~8% block rate):
+- 192.168.1.x: personal devices (phones, laptops) — high block rates here are normal (ad blocking)
+- 192.168.2.x: IoT/streaming — most devices query only 2-5 domains; spikes or new domains = suspicious
+- 192.168.2.100-199 and 192.168.1.200-245: DHCP pool (unidentified devices)
+
 Your job:
-- Review DNS query volume, block rates, and high-risk clients for the past {hours} hours
-- Identify devices making unusually high numbers of blocked requests
-- Surface blocked domains that are high-risk (malware, phishing, tracking)
-- Flag any DGA-like query patterns or suspicious query types
+- Review DNS query volume, block rates, and anomalies for the past {hours} hours
+- Identify DHCP devices and classify them from their top domains
+- Flag devices with anomalous behaviour: IoT devices suddenly querying many new domains,
+  high block rates on constrained IoT devices, or unusual traffic type shifts
+- Surface any unacknowledged anomalies from the ML detection system
 
 Tools to call:
-1. query_adguard_block_rates(hours={hours})
-2. query_adguard_high_risk_clients(hours={hours})
-3. query_adguard_blocked_domains(hours={hours})
-4. query_adguard_top_clients(hours={hours})
-5. query_adguard_traffic_by_type(hours={hours})
+1. query_adguard_network_summary(hours={hours}) — START HERE: totals, block rate, anomaly counts
+2. query_adguard_high_risk_clients(hours={hours}) — clients with risk score >= 5
+3. query_adguard_blocked_domains(hours={hours}) — top clients by block count
+4. query_adguard_dhcp_fingerprints(hours={hours}) — identify unrecognised DHCP devices
+5. query_adguard_threat_signals(hours={hours}) — anomaly details and ingestion health
+6. query_adguard_top_clients(hours={hours}) — query volume by client if needed
+7. query_adguard_traffic_by_type(hours={hours}) — user vs automated traffic split
 
 Return a focused markdown summary with:
-- Total queries, block rate %
-- Top blocked categories / domains
-- Any clients with anomalous behaviour (high blocks, unusual query types)
-- Items that warrant attention
+- Total queries, block rate %, active clients
+- Unacknowledged anomalies (high/medium severity only)
+- High-risk clients (score >= 7) — what makes them suspicious
+- Any DHCP devices that look like general-purpose computers or have unexpected domain profiles
+- Top clients by block count that warrant investigation
+- Items requiring attention
 
-Be specific: include client IPs, domain names, counts. Skip normal/expected activity.
+Skip normal ad-blocking on personal devices. Focus on IoT anomalies and unidentified devices.
+Be specific: include client IPs/names, counts, domain names.
 """
 
 DNS_USER = "Analyse DNS security activity for the past {hours} hours."
@@ -130,19 +141,25 @@ def run_dns_agent(
 ) -> str:
     """Run the DNS security domain agent."""
     from agent.tools.metrics import (
+        query_adguard_network_summary,
         query_adguard_top_clients,
         query_adguard_block_rates,
         query_adguard_high_risk_clients,
         query_adguard_blocked_domains,
         query_adguard_traffic_by_type,
+        query_adguard_dhcp_fingerprints,
+        query_adguard_threat_signals,
     )
 
     tools = [
-        query_adguard_block_rates,
+        query_adguard_network_summary,
         query_adguard_high_risk_clients,
         query_adguard_blocked_domains,
+        query_adguard_dhcp_fingerprints,
+        query_adguard_threat_signals,
         query_adguard_top_clients,
         query_adguard_traffic_by_type,
+        query_adguard_block_rates,
     ]
     system = prompt_override or DNS_SYSTEM.format(hours=hours)
     user = DNS_USER.format(hours=hours)
