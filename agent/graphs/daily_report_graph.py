@@ -372,8 +372,13 @@ def synthesize(state: DailyReportState) -> dict:
         parsed = json.loads(raw)
         if isinstance(parsed, list):
             suspicious_items = parsed[:10]
+            logger.info(
+                "Synthesis Phase A: extracted %d suspicious items for investigation (threshold: threat_score > 60 or cross-VLAN anomaly)",
+                len(suspicious_items),
+            )
             if suspicious_items:
-                logger.info("Synthesis Phase A: %d suspicious items flagged for investigation", len(suspicious_items))
+                for item in suspicious_items:
+                    logger.debug("  → [%s] %s: %s (from %s)", item.get("type"), item.get("value"), item.get("reason", "")[:80], item.get("source_domain"))
     except Exception as e:
         logger.warning("Synthesis Phase A (suspicious item extraction) failed: %s — continuing", e)
 

@@ -183,6 +183,122 @@ def query_switch_port_errors(hours: int = 24) -> str:
 
 
 @tool
+def query_switch_port_status() -> str:
+    """Get per-port operational status and link speed for the TP-Link TL-SG2424 switch.
+
+    Queries ClickHouse for the latest ifOperStatus (up/down) and link speed (Mbps)
+    per port, as collected by Telegraf SNMP polling.
+
+    For VLAN traffic analysis, use query_ntopng_vlan_traffic.
+    For cross-VLAN isolation verification, combine this tool with ntopng flow data
+    (query_ntopng_vlan_traffic shows per-VLAN traffic from ntopng).
+
+    Returns:
+        JSON with switch device, per-port status/speed, and up/down summary counts.
+        Falls back to activity-based status from traffic data if ifOperStatus is not
+        collected by Telegraf (metric may not be configured in the SNMP plugin).
+    """
+    # Try ifOperStatus — may be collected as 'interface_operational_status' or 'ifOperStatus'
+    status_sql = f"""
+        SELECT
+            simpleJSONExtractString(ts.labels, 'name') AS port,
+            argMax(s.value, s.unix_milli) AS oper_status
+        FROM signoz_metrics.samples_v4 s
+        JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+        WHERE s.metric_name IN ('interface_operational_status', 'ifOperStatus')
+          AND simpleJSONExtractString(ts.labels, 'device') = '{_SWITCH_DEVICE}'
+          AND s.unix_milli > toUnixTimestamp(now() - INTERVAL 1 HOUR) * 1000
+        GROUP BY port
+        ORDER BY port
+    """
+
+    speed_sql = f"""
+        SELECT
+            simpleJSONExtractString(ts.labels, 'name') AS port,
+            argMax(s.value, s.unix_milli) AS speed_mbps
+        FROM signoz_metrics.samples_v4 s
+        JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+        WHERE s.metric_name IN ('interface_speed', 'ifHighSpeed', 'ifSpeed')
+          AND simpleJSONExtractString(ts.labels, 'device') = '{_SWITCH_DEVICE}'
+          AND s.unix_milli > toUnixTimestamp(now() - INTERVAL 1 HOUR) * 1000
+        GROUP BY port
+        ORDER BY port
+    """
+
+    def _status_label(val: float) -> str:
+        if val == 1:
+            return "up"
+        elif val == 2:
+            return "down"
+        return "unknown"
+
+    status_rows = _run_query(status_sql)
+    if status_rows and "error" in status_rows[0]:
+        logger.warning("ifOperStatus query error: %s", status_rows[0]["error"])
+        status_rows = []
+
+    # Filter out empty port names and skip management interfaces
+    status_rows = [r for r in status_rows if r.get("port") and r["port"] not in _SKIP_PORTS]
+
+    if not status_rows:
+        # Graceful fallback: derive "active" ports from recent traffic
+        traffic_rows = _run_query(_port_traffic_query(_SWITCH_DEVICE, 1))
+        active_ports = []
+        if not (traffic_rows and "error" in traffic_rows[0]):
+            for r in traffic_rows:
+                port = r.get("port", "")
+                if port and port not in _SKIP_PORTS:
+                    active_ports.append(port)
+        return json.dumps({
+            "note": (
+                "Port status metrics not available — Telegraf SNMP config may not collect "
+                "ifOperStatus. Use query_switch_port_traffic for activity-based status."
+            ),
+            "active_ports": active_ports,
+        }, indent=2)
+
+    # Build speed lookup
+    speed_rows = _run_query(speed_sql)
+    speed_map: dict[str, float] = {}
+    if speed_rows and "error" not in speed_rows[0]:
+        for r in speed_rows:
+            port = r.get("port", "")
+            if port:
+                raw = float(r.get("speed_mbps", 0))
+                # ifSpeed is in bps; ifHighSpeed is already in Mbps
+                # Heuristic: values > 1_000_000 are almost certainly bps
+                speed_map[port] = raw / 1_000_000 if raw > 1_000_000 else raw
+
+    ports = []
+    up_count = 0
+    down_count = 0
+    for r in status_rows:
+        port = r["port"]
+        oper_val = float(r.get("oper_status", 0))
+        status_str = _status_label(oper_val)
+        speed = speed_map.get(port)
+        entry: dict = {"port": port, "status": status_str}
+        if speed is not None:
+            entry["speed_mbps"] = int(speed) if speed == int(speed) else round(speed, 1)
+        ports.append(entry)
+        if status_str == "up":
+            up_count += 1
+        elif status_str == "down":
+            down_count += 1
+
+    return json.dumps({
+        "switch": _SWITCH_DEVICE,
+        "ports": ports,
+        "summary": {
+            "up": up_count,
+            "down": down_count,
+            "unknown": len(ports) - up_count - down_count,
+            "total": len(ports),
+        },
+    }, indent=2)
+
+
+@tool
 def query_pfsense_interface_traffic(hours: int = 24) -> str:
     """Get traffic volume per pfSense firewall interface over the last N hours.
 

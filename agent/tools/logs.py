@@ -601,6 +601,80 @@ def query_outbound_blocks(hours: int = 24) -> str:
         return f"Error querying outbound blocks: {str(e)}"
 
 
+_HOSTNAME_SAFE_RE = re.compile(r"[^a-zA-Z0-9.\-_]")
+
+
+@tool
+def search_logs_by_hostname(
+    hostname: str,
+    hours: int = 24,
+    limit: int = 50,
+) -> str:
+    """Search logs by hostname or service name across all sources.
+
+    Useful for investigating a specific device flagged in the report — returns recent
+    log entries from that host regardless of source.
+
+    Args:
+        hostname: Hostname or service name to search for (e.g. "pve", "caddy", "adguard")
+        hours: Lookback window in hours (default: 24)
+        limit: Maximum number of rows to return (default: 50)
+
+    Returns:
+        JSON with total match count and a list of log entries including timestamp,
+        body, severity, host.name, and service.name.
+    """
+    # Sanitize: keep only alphanumeric, dots, dashes, underscores to prevent injection
+    safe_hostname = _HOSTNAME_SAFE_RE.sub("", hostname)
+    if not safe_hostname:
+        return json.dumps({"error": f"Invalid hostname after sanitization: {hostname!r}"})
+
+    hours = min(hours, 168)
+    limit = min(limit, 200)
+
+    query = f"""
+    SELECT
+        toDateTime(timestamp / 1000000000) AS ts,
+        body,
+        severity_text,
+        resources_string['host.name'] AS host_name,
+        resources_string['service.name'] AS service_name
+    FROM signoz_logs.logs_v2
+    WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
+      AND (
+        resources_string['host.name'] ILIKE '%{safe_hostname}%'
+        OR body ILIKE '%{safe_hostname}%'
+        OR resources_string['service.name'] ILIKE '%{safe_hostname}%'
+      )
+    ORDER BY timestamp DESC
+    LIMIT {limit}
+    FORMAT JSONEachRow
+    """
+
+    try:
+        raw = _execute_clickhouse_query(query)
+        rows = [json.loads(line) for line in raw.split('\n') if line.strip()]
+
+        return json.dumps({
+            "hostname_query": safe_hostname,
+            "time_range": f"last {hours}h",
+            "total_returned": len(rows),
+            "logs": [
+                {
+                    "timestamp": str(r.get("ts")),
+                    "body": r.get("body"),
+                    "severity": r.get("severity_text"),
+                    "host_name": r.get("host_name"),
+                    "service_name": r.get("service_name"),
+                }
+                for r in rows
+            ],
+        }, indent=2)
+
+    except Exception as e:
+        return f"Error searching logs for hostname {safe_hostname!r}: {str(e)}"
+
+
 def _execute_clickhouse_query(
     query: str,
     query_params: Optional[dict] = None,

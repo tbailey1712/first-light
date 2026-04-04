@@ -31,6 +31,18 @@ from agent.tools.threat_intel_tools import (
 from agent.tools.qnap_tools import query_qnap_health, query_qnap_directory_sizes
 from agent.tools.proxmox_tools import query_proxmox_health
 
+from agent.tools.switch_tools import (
+    query_switch_port_traffic,
+    query_switch_port_errors,
+    query_switch_port_status,
+    query_pfsense_interface_traffic,
+)
+
+from agent.tools.validator import (
+    query_validator_health,
+    query_validator_node_config,
+)
+
 
 def get_all_tools() -> List[BaseTool]:
     """Get all available tools for the agent."""
@@ -54,4 +66,12 @@ def get_all_tools() -> List[BaseTool]:
         query_qnap_health,
         query_qnap_directory_sizes,
         query_proxmox_health,
+        # Switch and firewall interface stats (TOOL-12)
+        query_switch_port_traffic,
+        query_switch_port_errors,
+        query_switch_port_status,
+        query_pfsense_interface_traffic,
+        # Ethereum validator (TOOL-13)
+        query_validator_health,
+        query_validator_node_config,
     ]

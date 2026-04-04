@@ -45,6 +45,8 @@ _DOCKER_INTERNAL_ERRORS = (
     "Name or service not known",
     "Connection refused",
     "Could not reach",
+    "unable to open database file",  # kuma.db / sqlite only mounted inside container
+    "No such file or directory",
 )
 
 
@@ -359,6 +361,77 @@ def main():
         lambda: _resolve.invoke({"hostname": "adguard.mcducklabs.com"}),
         required_keys=["resolved", "ips"],
     )
+
+    # ── 9. Uptime Kuma monitor definitions (TOOL-14) ──────────────────────────
+    section("Uptime Kuma: Monitor Definitions")
+
+    from agent.tools.uptime_kuma import query_uptime_kuma_monitors, query_uptime_kuma_status
+
+    d = run_test(
+        "query_uptime_kuma_monitors",
+        lambda: query_uptime_kuma_monitors.invoke({}),
+        required_keys=["total", "monitors"],
+        docker_internal=True,  # kuma.db only mounted inside fl-agent container
+        expect_not_error=False,
+    )
+    if d and "error" not in d:
+        print(f"         → {d.get('total', 0)} monitors defined")
+        for m in d.get("monitors", [])[:3]:
+            print(f"           {m['name']} ({m['type']}) every {m.get('interval', '?')}s")
+
+    run_test(
+        "query_uptime_kuma_status (smoke test)",
+        lambda: query_uptime_kuma_status.invoke({}),
+        docker_internal=True,
+        expect_not_error=False,
+    )
+
+    # ── 10. Log search by hostname (TOOL-16) ──────────────────────────────────
+    section("Logs: Search by Hostname")
+
+    from agent.tools.logs import search_logs_by_hostname
+
+    run_test(
+        "search_logs_by_hostname (pve)",
+        lambda: search_logs_by_hostname.invoke({"hostname": "pve", "hours": 1, "limit": 5}),
+        docker_internal=True,
+    )
+
+    # ── 11. Switch port status (TOOL-12) ──────────────────────────────────────
+    section("Switch: Port Status")
+
+    from agent.tools.switch_tools import query_switch_port_status
+
+    d = run_test(
+        "query_switch_port_status",
+        lambda: query_switch_port_status.invoke({}),
+        docker_internal=True,
+    )
+    if d and "error" not in d:
+        summary = d.get("summary", {})
+        if summary:
+            print(f"         → {summary.get('up', '?')} up, {summary.get('down', '?')} down")
+        elif "note" in d:
+            print(f"  {WARN} Fallback: {d['note'][:80]}")
+
+    # ── 12. Validator node config (TOOL-13) ───────────────────────────────────
+    section("Validator: Node Config")
+
+    from agent.tools.validator import query_validator_node_config
+
+    d = run_test(
+        "query_validator_node_config",
+        lambda: query_validator_node_config.invoke({}),
+        required_keys=["sync_status", "blxrbdn_resolves"],
+        skip_if_missing="VALIDATOR_HOST",
+    )
+    if d and "error" not in d:
+        sync = d.get("sync_status", {})
+        print(f"         → slot={sync.get('head_slot')} peers={d.get('connected_peers')} "
+              f"syncing={sync.get('is_syncing')} blxrbdn={d.get('blxrbdn_resolves')}")
+        print(f"           version={d.get('client_version', '?')[:60]}")
+        if d.get("fee_recipient"):
+            print(f"           fee_recipient={d.get('fee_recipient')}")
 
     # ── Summary ────────────────────────────────────────────────────────────────
     print(f"\n{'='*60}")

@@ -122,3 +122,45 @@ def query_uptime_kuma_incidents(hours: int = 24) -> str:
         return json.dumps(rows, indent=2) if rows else json.dumps([])
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+
+@tool
+def query_uptime_kuma_monitors() -> str:
+    """List all Uptime Kuma monitor definitions with URL, check interval, and config.
+
+    Use this to correlate a failing monitor with what it's actually checking, or to
+    verify a service is being monitored before flagging it as unmonitored.
+
+    Returns:
+        JSON with total count and a list of monitor definitions including id, name,
+        type, url/hostname/port, interval, retry config, active state, upside_down
+        flag, and notification channel count.
+    """
+    sql = """
+        SELECT
+            m.id,
+            m.name,
+            m.type,
+            m.url,
+            m.hostname,
+            m.port,
+            m.interval,
+            m.retry_interval,
+            m.max_retries,
+            m.active,
+            m.upside_down,
+            COUNT(mn.monitor_id) AS notification_count
+        FROM monitor m
+        LEFT JOIN monitor_notification mn ON mn.monitor_id = m.id
+        GROUP BY m.id
+        ORDER BY m.name
+    """
+    try:
+        with _connect() as conn:
+            rows = [dict(r) for r in conn.execute(sql)]
+        for r in rows:
+            r["active"] = bool(r["active"])
+            r["upside_down"] = bool(r["upside_down"])
+        return json.dumps({"total": len(rows), "monitors": rows}, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})

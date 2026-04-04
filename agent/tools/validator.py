@@ -301,3 +301,138 @@ def query_validator_health(hours: int = 24) -> str:
     result["queried_at"] = datetime.now(timezone.utc).isoformat()
 
     return json.dumps(result, indent=2)
+
+
+@tool
+def query_validator_node_config() -> str:
+    """Get Nimbus consensus client node identity, sync status, and connectivity info.
+
+    Use this to verify the validator is reachable, check peer count, confirm
+    bloXroute BDN connectivity (via DNS resolution + flow data from ntopng),
+    and verify fee recipient configuration.
+
+    Queries the Nimbus beacon REST API (default port 5052):
+      - /eth/v1/node/identity    — peer ID, ENR, listening addresses
+      - /eth/v1/node/syncing     — head slot, sync distance, sync state
+      - /eth/v1/node/peers       — connected peer count
+      - /eth/v1/node/version     — client version string
+      - /eth/v1/beacon/genesis   — genesis time and validators root
+      - /eth/v1/validator/{pubkey}/feerecipient — fee recipient (if pubkey configured)
+
+    bloXroute BDN check is performed via DNS resolution of blxrbdn.com. For flow-level
+    BDN verification, use query_ntopng_vlan_traffic filtered to the validator VLAN (4)
+    and look for traffic to bloXroute IP ranges.
+
+    Returns:
+        JSON with node_identity, sync_status, connected_peers, client_version,
+        blxrbdn_resolves, fee_recipient, and genesis fields.
+    """
+    import socket
+
+    cfg = get_config()
+    host = cfg.validator_host or "vldtr.mcducklabs.com"
+    port = cfg.beacon_api_port  # default 5052
+    base_url = f"http://{host}:{port}"
+
+    result: Dict[str, Any] = {}
+
+    with httpx.Client(timeout=10.0) as client:
+
+        # ── Node identity ──────────────────────────────────────────────────────
+        try:
+            resp = client.get(f"{base_url}/eth/v1/node/identity")
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            result["node_identity"] = {
+                "peer_id": data.get("peer_id"),
+                "enr": data.get("enr"),
+                "listening_addresses": data.get("p2p_addresses", []) + data.get("discovery_addresses", []),
+            }
+        except Exception as e:
+            result["node_identity"] = {"error": str(e)}
+
+        # ── Sync status ────────────────────────────────────────────────────────
+        try:
+            resp = client.get(f"{base_url}/eth/v1/node/syncing")
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            result["sync_status"] = {
+                "head_slot": int(data["head_slot"]) if data.get("head_slot") is not None else None,
+                "sync_distance": int(data["sync_distance"]) if data.get("sync_distance") is not None else None,
+                "is_syncing": data.get("is_syncing"),
+                "is_optimistic": data.get("is_optimistic"),
+            }
+        except Exception as e:
+            result["sync_status"] = {"error": str(e)}
+
+        # ── Connected peer count ───────────────────────────────────────────────
+        try:
+            resp = client.get(f"{base_url}/eth/v1/node/peers", params={"state": "connected", "count": "true"})
+            resp.raise_for_status()
+            body = resp.json()
+            # Nimbus returns meta.count or len(data)
+            meta = body.get("meta", {})
+            count = meta.get("count") if meta.get("count") is not None else len(body.get("data", []))
+            result["connected_peers"] = int(count)
+        except Exception as e:
+            result["connected_peers"] = {"error": str(e)}
+
+        # ── Client version ─────────────────────────────────────────────────────
+        try:
+            resp = client.get(f"{base_url}/eth/v1/node/version")
+            resp.raise_for_status()
+            result["client_version"] = resp.json().get("data", {}).get("version")
+        except Exception as e:
+            result["client_version"] = {"error": str(e)}
+
+        # ── Genesis ────────────────────────────────────────────────────────────
+        try:
+            resp = client.get(f"{base_url}/eth/v1/beacon/genesis")
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            genesis_ts = int(data["genesis_time"]) if data.get("genesis_time") is not None else None
+            genesis_dt = (
+                datetime.fromtimestamp(genesis_ts, tz=timezone.utc).isoformat()
+                if genesis_ts is not None
+                else None
+            )
+            result["genesis"] = {
+                "time": genesis_ts,
+                "time_iso": genesis_dt,
+                "genesis_validators_root": data.get("genesis_validators_root"),
+            }
+        except Exception as e:
+            result["genesis"] = {"error": str(e)}
+
+        # ── Fee recipient ──────────────────────────────────────────────────────
+        pubkeys_raw = cfg.validator_pubkeys
+        if not pubkeys_raw:
+            result["fee_recipient"] = "pubkey_not_configured"
+        else:
+            # validator_pubkeys may be a comma-separated list; use the first one
+            pubkey = pubkeys_raw.split(",")[0].strip()
+            try:
+                resp = client.get(f"{base_url}/eth/v1/validator/{pubkey}/feerecipient")
+                if resp.status_code in (401, 403):
+                    result["fee_recipient"] = "requires_auth"
+                else:
+                    resp.raise_for_status()
+                    data = resp.json().get("data", {})
+                    result["fee_recipient"] = data.get("ethaddress") or data.get("fee_recipient")
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (401, 403):
+                    result["fee_recipient"] = "requires_auth"
+                else:
+                    result["fee_recipient"] = {"error": str(e)}
+            except Exception as e:
+                result["fee_recipient"] = {"error": str(e)}
+
+    # ── bloXroute BDN DNS check ────────────────────────────────────────────────
+    try:
+        addrs = socket.getaddrinfo("blxrbdn.com", None)
+        result["blxrbdn_resolves"] = len(addrs) > 0
+    except socket.gaierror:
+        result["blxrbdn_resolves"] = False
+
+    result["queried_at"] = datetime.now(timezone.utc).isoformat()
+    return json.dumps(result, indent=2)
