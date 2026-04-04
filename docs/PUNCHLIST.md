@@ -54,20 +54,18 @@ Module-level `_qnap_sid` / `_qnap_sid_expiry` with no threading lock. Not a live
 **File:** `agent/tools/investigation.py:52`
 Regex-based LIMIT replacement is bypassable with subquery LIMIT clauses or SQL comments. Acceptable risk for now but should be replaced with proper SQL parsing or a ClickHouse-level `max_result_rows` setting in the HTTP request params.
 
-### AG-1: `query_ntopng_flows_by_host` — verify endpoint works
-**File:** `agent/tools/ntopng.py`
-Tool was built but the `host=` filter param on `/lua/rest/v2/get/flow/active.lua` returned 404 during development. Needs live testing and potential endpoint correction.
+### AG-1: ~~`query_ntopng_flows_by_host` — verify endpoint works~~ ✅ FIXED
+Community Edition doesn't support `host=` filter server-side. Fixed to fetch all flows and filter client-side by client.ip/server.ip.
 
-### AG-2: CrowdSec has no bouncer configured — detection only
-CrowdSec detects threats but has zero enforcement. No pfSense bouncer installed. Decisions list is empty. Either:
-- Install the pfSense CrowdSec bouncer (blocks IPs at firewall level), or
-- Document as accepted limitation
+### AG-2: CrowdSec pfSense bouncer — needs pfSense package install
+CrowdSec is ingesting pfSense logs and generating alerts (confirmed working). Bouncer key regenerated: `8VQkmEinsPzYR4eezow/51iF7wYg8Vxm4pxLQCNPbc8`
+**Action needed (manual — pfSense UI):**
+1. pfSense → System → Package Manager → install `crowdsec`
+2. Services → CrowdSec → LAPI URL: `http://192.168.2.106:8080`, API Key: above
+3. Save — pfSense will start enforcing CrowdSec bans at firewall level
 
-See `docs/CROWDSEC_PFSENSE_BOUNCER_SETUP.md` for setup instructions.
-
-### AG-3: SSH/sudo log parser disabled
-**File:** OTel collector config
-Parser code exists but is disabled (was broken at audit time Mar 7). SSH/sudo events are security-critical. Re-enable and fix.
+### AG-3: ~~SSH/sudo log parser disabled~~ ✅ ALREADY ACTIVE
+Stale finding from Mar 7 audit. Parser is live in the OTel pipeline at `otel-collector-config.yaml:601`.
 
 ---
 
