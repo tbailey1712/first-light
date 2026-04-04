@@ -166,33 +166,30 @@ def main():
         total = d.get("total", 0)
         print(f"         → {total} Access apps configured")
 
-    # ── 2. pfSense XML-RPC (TOOL-1, TOOL-2) ───────────────────────────────────
-    section("pfSense: Firewall Rules + DNS Overrides (XML-RPC)")
+    # ── 2. DNS resolution (replaces pfSense XML-RPC) ──────────────────────────
+    section("DNS: Hostname Resolution")
 
-    from agent.tools.pfsense_tools import (
-        query_pfsense_firewall_rules,
-        query_pfsense_dns_overrides,
-    )
+    from agent.tools.dns_tools import resolve_hostname, resolve_multiple_hostnames
 
     d = run_test(
-        "query_pfsense_firewall_rules",
-        lambda: query_pfsense_firewall_rules.invoke({}),
-        required_keys=["nat_rules", "nat_rule_count"],
-        skip_if_missing="PFSENSE_USERNAME",  # skip if creds not set
+        "resolve_hostname (internal host)",
+        lambda: resolve_hostname.invoke({"hostname": "pve.mcducklabs.com"}),
+        required_keys=["hostname", "resolved", "ips"],
     )
     if d:
-        nat = d.get("nat_rule_count", 0)
-        fw = d.get("firewall_rule_count", "?")
-        print(f"         → {nat} NAT rules, {fw} firewall rules")
+        print(f"         → pve.mcducklabs.com → {d.get('ips')}")
 
     d = run_test(
-        "query_pfsense_dns_overrides",
-        lambda: query_pfsense_dns_overrides.invoke({}),
-        required_keys=["total", "host_overrides"],
-        skip_if_missing="PFSENSE_USERNAME",
+        "resolve_multiple_hostnames (public record audit)",
+        lambda: resolve_multiple_hostnames.invoke({
+            "hostnames": ["pve.mcducklabs.com", "portainer.mcducklabs.com", "pbs.mcducklabs.com"]
+        }),
+        required_keys=["results"],
     )
     if d:
-        print(f"         → {d.get('total', 0)} DNS host overrides")
+        for r in d.get("results", []):
+            status = r.get("ips", r.get("error", "?"))
+            print(f"         → {r['hostname']}: {status}")
 
     # ── 3. CrowdSec (TOOL-7) ──────────────────────────────────────────────────
     section("CrowdSec: Metrics + Decisions")
@@ -356,12 +353,11 @@ def main():
         skip_if_missing="NTOPNG_HOST",
     )
 
-    from agent.tools.pfsense_tools import query_pfsense_firewall_rules
+    from agent.tools.dns_tools import resolve_hostname as _resolve
     run_test(
-        "query_pfsense_firewall_rules (XML-RPC connectivity)",
-        lambda: query_pfsense_firewall_rules.invoke({}),
-        required_keys=["nat_rules"],
-        skip_if_missing="PFSENSE_USERNAME",
+        "resolve_hostname (adguard — verifies DNS is working)",
+        lambda: _resolve.invoke({"hostname": "adguard.mcducklabs.com"}),
+        required_keys=["resolved", "ips"],
     )
 
     # ── Summary ────────────────────────────────────────────────────────────────
@@ -374,8 +370,6 @@ def main():
     if results["skip"] > 0:
         print(f"\n{WARN} Skipped tests require env vars not set in .env:")
         skipped_vars = []
-        if not os.environ.get("PFSENSE_USERNAME"):
-            skipped_vars.append("  PFSENSE_USERNAME, PFSENSE_PASSWORD — pfSense XML-RPC user")
         if not os.environ.get("PBS_TOKEN_SECRET"):
             skipped_vars.append("  PBS_TOKEN_SECRET — Proxmox Backup Server")
         if not os.environ.get("CROWDSEC_API_KEY"):
