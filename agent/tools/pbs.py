@@ -240,7 +240,7 @@ def query_pbs_prune_policies() -> str:
             continue
 
         # Fetch datastore config — contains prune schedule and keep-* settings
-        config = _pbs_get(f"admin/datastore/{store_name}/config")
+        config = _pbs_get(f"config/datastore/{store_name}")
         if isinstance(config, dict) and "error" in config:
             result.append({"datastore": store_name, "error": config["error"]})
             continue

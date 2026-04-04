@@ -178,7 +178,7 @@ def main():
         "query_pfsense_firewall_rules",
         lambda: query_pfsense_firewall_rules.invoke({}),
         required_keys=["nat_rules", "nat_rule_count"],
-        skip_if_missing="PFSENSE_HOST",
+        skip_if_missing="PFSENSE_API_KEY",  # skip if creds not set
     )
     if d:
         nat = d.get("nat_rule_count", 0)
@@ -189,7 +189,7 @@ def main():
         "query_pfsense_dns_overrides",
         lambda: query_pfsense_dns_overrides.invoke({}),
         required_keys=["total", "host_overrides"],
-        skip_if_missing="PFSENSE_HOST",
+        skip_if_missing="PFSENSE_API_KEY",
     )
     if d:
         print(f"         → {d.get('total', 0)} DNS host overrides")
@@ -208,6 +208,7 @@ def main():
         lambda: query_crowdsec_alerts.invoke({"limit": 10}),
         required_keys=["total"],
         skip_if_missing="CROWDSEC_MACHINE_ID",
+        docker_internal=True,  # fl-crowdsec:8080 only reachable inside Docker
     )
 
     d = run_test(
@@ -304,7 +305,7 @@ def main():
         "query_adguard_custom_rules (connectivity check)",
         lambda: query_adguard_custom_rules.invoke({}),
         required_keys=["total_custom_rules"],
-        skip_if_missing="ADGUARD_HOST",
+        skip_if_missing="ADGUARD_USERNAME",  # skip if creds not set
     )
     if d:
         print(f"         → {d.get('total_custom_rules', 0)} custom rules, "
@@ -314,7 +315,7 @@ def main():
         "query_adguard_nxdomain_clients",
         lambda: query_adguard_nxdomain_clients.invoke({"limit": 200, "top_n": 10}),
         required_keys=["entries_scanned", "total_nxdomain", "top_clients_by_nxdomain"],
-        skip_if_missing="ADGUARD_HOST",
+        skip_if_missing="ADGUARD_USERNAME",
     )
     if d:
         print(f"         → scanned {d.get('entries_scanned', 0)} entries, "
@@ -322,15 +323,14 @@ def main():
         for c in d.get("top_clients_by_nxdomain", [])[:3]:
             print(f"           {c['client_ip']}: {c['nxdomain_count']} NXDomains")
 
-    # Per-client blocked domains — test with a known active client if we have data
     d = run_test(
         "query_adguard_client_blocked_domains (192.168.1.1 sample)",
         lambda: query_adguard_client_blocked_domains.invoke({
-            "client_ip": "192.168.1.1",  # pfSense — low-traffic, just tests auth+format
+            "client_ip": "192.168.1.1",
             "limit": 50,
         }),
         required_keys=["client_ip", "total_blocked", "top_blocked_domains"],
-        skip_if_missing="ADGUARD_HOST",
+        skip_if_missing="ADGUARD_USERNAME",
     )
     if d:
         print(f"         → {d.get('total_blocked', 0)} blocked queries for test client")
@@ -344,7 +344,7 @@ def main():
         "query_unifi_clients",
         lambda: query_unifi_clients.invoke({"include_inactive": False}),
         required_keys=["total_clients", "clients"],
-        skip_if_missing="UNIFI_HOST",
+        skip_if_missing="UNIFI_USERNAME",  # skip if creds not set
     )
     if d:
         total = d.get("total_clients", 0)
@@ -360,7 +360,7 @@ def main():
         "query_unifi_ap_stats",
         lambda: query_unifi_ap_stats.invoke({}),
         required_keys=["total_aps", "online_aps", "aps"],
-        skip_if_missing="UNIFI_HOST",
+        skip_if_missing="UNIFI_USERNAME",
     )
     if d:
         total = d.get("total_aps", 0)
@@ -411,7 +411,7 @@ def main():
         "query_pfsense_firewall_rules (XML-RPC connectivity)",
         lambda: query_pfsense_firewall_rules.invoke({}),
         required_keys=["nat_rules"],
-        skip_if_missing="PFSENSE_HOST",
+        skip_if_missing="PFSENSE_API_KEY",
     )
 
     # ── Summary ────────────────────────────────────────────────────────────────

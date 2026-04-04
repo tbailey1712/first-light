@@ -45,7 +45,8 @@ def _adguard_get(path: str, params: Optional[dict] = None) -> dict | list | str:
     if not username or not password:
         return {"error": "ADGUARD_USERNAME or ADGUARD_PASSWORD not configured in .env"}
 
-    url = f"http://{host}:{port}/control/{path.lstrip('/')}"
+    scheme = "https" if port in (443, 8443) else "http"
+    url = f"{scheme}://{host}:{port}/control/{path.lstrip('/')}"
     try:
         with httpx.Client(timeout=15.0) as client:
             resp = client.get(url, params=params or {}, auth=(username, password))
