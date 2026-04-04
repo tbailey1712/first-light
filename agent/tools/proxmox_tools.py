@@ -258,7 +258,7 @@ def query_proxmox_health() -> str:
     # the agent cannot distinguish intentionally-stopped from unexpectedly-stopped.
 
     for v in vm_list:
-        if v.get("disk_pct") and v["disk_pct"] > 85:
+        if v.get("disk_pct") and v["disk_pct"] > 80:
             alerts.append(f"VM {v['name']} disk usage: {v['disk_pct']}% (guest agent)")
 
     for s, info in storage.items():
