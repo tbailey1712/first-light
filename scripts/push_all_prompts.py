@@ -82,62 +82,86 @@ Network context (~120 devices, ~60K queries/day, ~8% block rate baseline):
 - 192.168.2.x IoT/streaming: most devices query only 2-10 domains. New domains or query spikes = suspicious
 - 192.168.2.52: Home Assistant — automated traffic type, high query volume is expected
 - 192.168.2.7: Frigate NVR — queries mcducklabs.com frequently. Normal.
-- 192.168.2.9: QNAP NAS — high query volume. Normal.
+- 192.168.2.9: QNAP NAS — high query volume, beacons to myqnapcloud.io. Normal.
+- 192.168.2.106: Docker host — beacons to cgr.dev (container registry). Normal.
+- 192.168.2.52: LG TV — beacons to lgeapi.com. Normal.
 - DHCP pools: 192.168.1.200-245 (personal) and 192.168.2.100-199 (IoT)
 
 Threat signals to prioritise (highest first):
-1. Per-client anomalies with severity=high (query_adguard_threat_signals)
-2. Clients with risk score >= 7 on IoT subnet (these are constrained devices — anomaly is significant)
-3. DHCP devices with unexpected domain profiles (query_adguard_dhcp_fingerprints)
-4. Clients with elevated block counts that are NOT personal devices
-5. New devices appearing in last 24h
+1. Beaconing score >= 0.7 on an IP that is NOT a known IoT device (potential C2 callback)
+2. TXT query ratio > 0.3 on any device (DNS tunneling indicator)
+3. Per-client anomalies with severity=high
+4. Clients with risk score >= 7 on IoT subnet (constrained devices — anomaly is significant)
+5. New devices appearing in last 24h on any VLAN
+6. DHCP devices with unexpected domain profiles
 
 Your analysis for the past {hours} hours:
 
 Step 1 — network baseline:
   Call query_adguard_network_summary(hours={hours})
   Note: total queries vs ~60K baseline, block rate vs ~8% baseline, anomaly counts by severity.
-  Flag if any severity=high anomalies exist — these need investigation.
+  Flag if any severity=high anomalies exist.
 
-Step 2 — high-risk clients:
-  Call query_adguard_high_risk_clients(hours={hours}, min_risk_score=5.0)
-  For each client with score >= 7: note VLAN, traffic type, and what makes them risky.
-  IoT devices (192.168.2.x) with elevated risk scores are more significant than personal devices.
-
-Step 3 — threat signals and anomalies:
+Step 2 — threat signals (beaconing, tunneling, anomalies):
   Call query_adguard_threat_signals(hours={hours})
-  Note anomaly types and counts. The exporter runs ML detectors:
+
+  Beaconing scores (0=no signal, 1=high-confidence C2 pattern):
+  - Score >= 0.7 on a non-IoT device: CRITICAL — report IP, domain, score
+  - Score >= 0.5 on IoT: cross-check against known benign beaconers above before flagging
+  - Known benign: 192.168.2.9→myqnapcloud.io, 192.168.2.106→cgr.dev, 192.168.2.52→lgeapi.com
+
+  TXT query ratios (DNS tunneling indicator):
+  - > 0.5: HIGH SUSPICION — report immediately with IP and ratio
+  - 0.3–0.5: elevated — note and cross-reference with block data
+  - < 0.3 on personal devices: may be legitimate (SPF/DKIM checks)
+
+  Anomaly types:
   - blocklist_alert: repeated hits to blocked domains (persistence = potential C2)
   - high_entropy_domain: DGA detection
   - query_burst: sudden spike in query rate
-  - session_duration: abnormally long DNS session
-  - blocked_persistence: device repeatedly trying to reach same blocked domain
+  - blocked_persistence: device repeatedly trying same blocked domain
 
-Step 4 — block analysis:
+Step 3 — high-risk clients:
+  Call query_adguard_high_risk_clients(hours={hours}, min_risk_score=5.0)
+  For each client with score >= 7: note VLAN, traffic type, why it's flagged.
+  IoT devices (192.168.2.x) at score >= 7 are more significant than personal devices.
+
+Step 4 — block analysis and blocklist attribution:
   Call query_adguard_blocked_domains(hours={hours})
-  Focus on IoT clients (192.168.2.x) with high block counts — a constrained IoT device
-  with hundreds of blocks is suspicious. Personal devices with high blocks = normal ad blocking.
+  Call query_adguard_blocklist_attribution(hours={hours})
+  Focus on IoT clients with high block counts — constrained IoT devices with hundreds of blocks is suspicious.
+  Blocklist attribution: HaGeZi, OISD, security-focused lists catching blocks = real threat traffic.
+  AdGuard DNS filter + 1Hosts catching most blocks = normal ad blocking.
 
-Step 5 — DHCP device fingerprinting:
+Step 5 — new devices:
+  Call query_adguard_new_devices(hours={hours})
+  Any new device is notable. New devices on VLAN 2 (IoT) or VLAN 4 (DMZ) warrant specific mention.
+
+Step 6 — DHCP device fingerprinting:
   Call query_adguard_dhcp_fingerprints(hours={hours})
   For each DHCP device, classify from top domains:
   - ring.com, fw.ring.com → Ring camera/doorbell
   - meethue.com, philips.com → Hue bridge
   - shelly.cloud, shellies.io → Shelly smart plug
   - amazon.com, audible.com, a2z.com → Echo/Alexa
+  - awair.is → Awair air quality sensor (expected beaconing)
+  - airthin.gs → AirThings sensor (expected beaconing)
   - High unique domain count (50+) → general-purpose computer or compromised device
   - Very low unique domains (2-5) → constrained IoT sensor (expected)
   Flag any DHCP device that doesn't fit a known IoT pattern.
 
-Step 6 — query volume and traffic type (if needed):
+Step 7 — query volume (if needed):
   Call query_adguard_top_clients(hours={hours}) and/or query_adguard_traffic_by_type(hours={hours})
-  Only if step 1-5 raised questions about specific clients.
+  Only if earlier steps raised questions about specific clients.
 
 Return a focused markdown section. Include:
 - Baseline comparison: queries and block rate vs normal
-- Unacknowledged anomalies by severity — describe what each type means
-- High-risk IoT clients (score >= 7): IP, score, why it's flagged
-- DHCP devices: classify each one, flag anything that doesn't match known IoT patterns
+- Beaconing signals >= 0.5 (with context on whether benign or suspicious)
+- TXT ratios > 0.15 (with tunneling assessment)
+- High-risk IoT clients (score >= 7): IP, score, why flagged
+- New devices (if any)
+- DHCP device classifications — flag anything that doesn't match known IoT patterns
+- Blocklist breakdown only if security lists (not ad-block lists) are catching significant traffic
 - Skip normal ad-blocking on 192.168.1.x personal devices
 - Be specific: include client IPs, domain names, counts"""
 
@@ -236,8 +260,11 @@ Step 2 — uptime metrics:
 
 Step 3 — Proxmox health:
   Call query_proxmox_health()
-  Check: node CPU/memory, all VMs and CTs running, storage utilization.
-  Flag: any stopped VMs (unless expected), storage > 85%, node overloaded.
+  Check: node CPU/memory, all VMs and CTs running, storage pool utilization, container disk usage.
+  Report storage pools (local-lvm, nas-nfs, local, pbs) with used_pct — flag any > 85%.
+  Report container disk_pct for every CT — flag any > 80%.
+  VM disk usage is not available from the Proxmox API (QEMU limitation) — omit disk% for VMs.
+  Flag: any stopped VMs (unless expected), node CPU > 90% or RAM > 90%.
 
 Step 4 — QNAP NAS:
   Call query_qnap_health()
@@ -255,7 +282,9 @@ Step 5 — PBS backups:
 
 Step 6 — Frigate NVR:
   Call query_frigate_health()
-  Check: all cameras active, FPS near target, Coral detector functioning.
+  Call query_frigate_events(hours={hours})
+  Check: all cameras active, FPS near target, Coral detector functioning, storage used_pct.
+  Report: event counts by camera and by object type (person, car, etc.) from query_frigate_events.
   Flag: any camera at 0 FPS (recording stopped), storage > 85%.
 
 Step 7 — system events:
@@ -273,7 +302,9 @@ Return a focused markdown section. Include:
 - Proxmox: node health, any stopped/failed VMs or CTs
 - QNAP: volume/disk status, any SMART or temp warnings, security events
 - PBS: stale or failed backups (name them)
-- Frigate: camera health, any recording gaps
+- Proxmox storage pools: all pools with used_pct (flag > 85%)
+- Proxmox containers: all CTs with disk_pct (flag > 80%)
+- Frigate: camera health, storage used_pct, event counts by camera and object type
 - Skip healthy items unless providing useful baseline context"""
 
 # ─────────────────────────────────────────────────────────────────────────────
