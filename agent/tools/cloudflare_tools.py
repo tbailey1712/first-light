@@ -101,7 +101,6 @@ query WafEventsGrouped(
           source
           clientCountryName
           ruleId
-          ruleMessage
         }
       }
       topIPs: firewallEventsAdaptiveGroups(
@@ -220,12 +219,11 @@ query GatewayDns(
 ) {
   viewer {
     accounts(filter: {accountTag: $accountTag}) {
-      blockedDomains: gatewayResolverQueriesAdaptiveGroups(
-        limit: 50
+      topDomains: gatewayResolverQueriesAdaptiveGroups(
+        limit: 100
         filter: {
           datetime_geq: $from
           datetime_leq: $to
-          policyDecision: "block"
         }
         orderBy: [count_DESC]
       ) {
@@ -234,34 +232,6 @@ query GatewayDns(
           queryName
           policyDecision
           policyName
-          coloName
-        }
-      }
-      allDecisions: gatewayResolverQueriesAdaptiveGroups(
-        limit: 20
-        filter: {
-          datetime_geq: $from
-          datetime_leq: $to
-        }
-        orderBy: [count_DESC]
-      ) {
-        count
-        dimensions {
-          policyDecision
-        }
-      }
-      allowedTopDomains: gatewayResolverQueriesAdaptiveGroups(
-        limit: 20
-        filter: {
-          datetime_geq: $from
-          datetime_leq: $to
-          policyDecision: "allow"
-        }
-        orderBy: [count_DESC]
-      ) {
-        count
-        dimensions {
-          queryName
         }
       }
     }
@@ -291,32 +261,32 @@ query GatewayDns(
 
     acct = accounts_data[0]
 
-    # Decision summary
+    # Split by decision from single query
     decisions: dict = {}
-    for group in acct.get("allDecisions", []):
-        decision = group["dimensions"].get("policyDecision", "unknown")
-        decisions[decision] = decisions.get(decision, 0) + group["count"]
+    blocked = []
+    allowed_top = []
+
+    for group in acct.get("topDomains", []):
+        dims = group["dimensions"]
+        decision = dims.get("policyDecision", "unknown")
+        cnt = group["count"]
+        decisions[decision] = decisions.get(decision, 0) + cnt
+
+        if decision == "block":
+            blocked.append({
+                "domain": dims.get("queryName"),
+                "policy": dims.get("policyName"),
+                "decision": decision,
+                "count": cnt,
+            })
+        elif decision == "allow" and len(allowed_top) < 10:
+            allowed_top.append({
+                "domain": dims.get("queryName"),
+                "count": cnt,
+            })
 
     total = sum(decisions.values())
-
-    # Top blocked domains
-    blocked = []
-    for group in acct.get("blockedDomains", []):
-        dims = group["dimensions"]
-        blocked.append({
-            "domain": dims.get("queryName"),
-            "policy": dims.get("policyName"),
-            "decision": dims.get("policyDecision"),
-            "count": group["count"],
-        })
-
-    # Top allowed domains (context for what's passing)
-    allowed_top = []
-    for group in acct.get("allowedTopDomains", [])[:10]:
-        allowed_top.append({
-            "domain": group["dimensions"].get("queryName"),
-            "count": group["count"],
-        })
+    blocked.sort(key=lambda x: x["count"], reverse=True)
 
     return json.dumps({
         "period_hours": hours,
@@ -367,9 +337,8 @@ query ZoneAnalytics(
       ) {
         count
         sum {
-          cachedBytes
-          edgeResponseBytes
-          encryptedBytes
+          bytes
+          cachedRequests
         }
         dimensions {
           cacheStatus
@@ -431,16 +400,17 @@ query ZoneAnalytics(
     cached_bytes = 0
     cache_by_status: dict = {}
 
+    total_cached_requests = 0
     for group in zone.get("requests", []):
         cnt = group["count"]
         total_requests += cnt
         sums = group.get("sum") or {}
-        total_bytes += sums.get("edgeResponseBytes") or 0
-        cached_bytes += sums.get("cachedBytes") or 0
+        total_bytes += sums.get("bytes") or 0
+        total_cached_requests += sums.get("cachedRequests") or 0
         status = group["dimensions"].get("cacheStatus", "unknown")
         cache_by_status[status] = cache_by_status.get(status, 0) + cnt
 
-    cache_hit_pct = round(cached_bytes / total_bytes * 100, 1) if total_bytes else 0
+    cache_hit_pct = round(total_cached_requests / total_requests * 100, 1) if total_requests else 0
 
     # Threat/security breakdown
     threat_summary: dict = {}
