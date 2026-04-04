@@ -220,6 +220,7 @@ async def handle_slash(ack, body, say):
             "*First Light AI — Commands*\n\n"
             "`/firstlight status` — Quick infrastructure health check\n"
             "`/firstlight report` — Generate a full daily report now\n"
+            "`/firstlight weekly` — Weekly trend summary: recurring issues and overdue actions\n"
             "`/firstlight ask <question>` — Ask anything about the network\n"
             "`/firstlight help` — Show this message\n\n"
             "_Or `@firstlight <question>` for a natural language query._"
@@ -235,6 +236,25 @@ async def handle_slash(ack, body, say):
             channel,
         )
         await _post_chunks(say, answer)
+        return
+
+    if text == "weekly":
+        await say(":hourglass_flowing_sand: Generating weekly trend summary... this takes about a minute.")
+        try:
+            from agent.reports.weekly_summary import generate_weekly_summary_async
+            from agent.notifications import broadcast_report, register_defaults
+            from agent.notifications.registry import get_channels
+            if not get_channels():
+                await register_defaults()
+            report = await generate_weekly_summary_async()
+            await broadcast_report(report)
+            await say(
+                f":white_check_mark: Weekly summary complete: "
+                f"`{report['date_range']}` ({report['days_analyzed']} days analysed)"
+            )
+        except Exception as e:
+            logger.error("Weekly summary failed: %s", e, exc_info=True)
+            await say(f":warning: Weekly summary failed: {e}")
         return
 
     if text == "report":
