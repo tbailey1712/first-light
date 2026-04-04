@@ -150,3 +150,137 @@ def query_crowdsec_decisions(limit: int = 100) -> str:
         })
 
     return json.dumps({"total": len(decisions), "decisions": decisions}, indent=2)
+
+
+@tool
+def query_crowdsec_metrics() -> str:
+    """Get CrowdSec acquisition and decision metrics to verify log ingestion health.
+
+    Combines two sources:
+    - LAPI connectivity check via /v1/alerts (watcher JWT auth)
+    - Prometheus metrics endpoint at http://fl-crowdsec:6060/metrics (no auth)
+
+    Extracted metrics:
+    - cs_active_decisions: current number of active bans
+    - cs_alerts: total alerts ever fired
+    - cs_lapi_requests_total: LAPI endpoint call counts
+    - cs_parser_hits_total / cs_parser_ok_total: parse rates per log source
+
+    Returns:
+        JSON with active_decisions, total_alerts, lapi_requests, and sources list
+        of {source, lines_read, lines_parsed, parse_rate_pct}.
+    """
+    # Step 1: confirm LAPI connectivity via watcher auth (limit=1 to minimise load)
+    lapi_ok = True
+    lapi_error: Optional[str] = None
+    connectivity_check = _watcher_get("/v1/alerts", {"limit": 1})
+    if isinstance(connectivity_check, dict) and "error" in connectivity_check:
+        lapi_ok = False
+        lapi_error = connectivity_check["error"]
+
+    # Step 2: scrape the Prometheus metrics endpoint (unauthenticated)
+    _METRICS_URL = "http://fl-crowdsec:6060/metrics"
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(_METRICS_URL)
+            resp.raise_for_status()
+            prom_text = resp.text
+    except Exception as e:
+        return json.dumps({
+            "lapi_reachable": lapi_ok,
+            "lapi_error": lapi_error,
+            "error": f"Prometheus metrics endpoint unreachable: {e}",
+        })
+
+    # Step 3: parse Prometheus text format
+    active_decisions: Optional[int] = None
+    total_alerts: Optional[int] = None
+    lapi_requests: dict = {}          # route -> count
+    parser_hits: dict = {}            # source -> int
+    parser_ok: dict = {}              # source -> int
+
+    for line in prom_text.splitlines():
+        line = line.strip()
+        if line.startswith("#"):
+            continue
+
+        # cs_active_decisions <value>
+        if line.startswith("cs_active_decisions "):
+            try:
+                active_decisions = int(float(line.split()[-1]))
+            except ValueError:
+                pass
+
+        # cs_alerts <value>
+        elif line.startswith("cs_alerts "):
+            try:
+                total_alerts = int(float(line.split()[-1]))
+            except ValueError:
+                pass
+
+        # cs_lapi_requests_total{route="/v1/...",...} <value>
+        elif line.startswith("cs_lapi_requests_total{"):
+            try:
+                labels_part = line[len("cs_lapi_requests_total{"):line.index("}")]
+                value_part = line[line.index("}") + 1:].strip()
+                labels = dict(
+                    kv.split("=", 1) for kv in labels_part.split(",") if "=" in kv
+                )
+                route = labels.get("route", "").strip('"')
+                count = int(float(value_part))
+                lapi_requests[route] = lapi_requests.get(route, 0) + count
+            except Exception:
+                pass
+
+        # cs_parser_hits_total{source="...",...} <value>
+        elif line.startswith("cs_parser_hits_total{"):
+            try:
+                labels_part = line[len("cs_parser_hits_total{"):line.index("}")]
+                value_part = line[line.index("}") + 1:].strip()
+                labels = dict(
+                    kv.split("=", 1) for kv in labels_part.split(",") if "=" in kv
+                )
+                source = labels.get("source", "unknown").strip('"')
+                count = int(float(value_part))
+                parser_hits[source] = parser_hits.get(source, 0) + count
+            except Exception:
+                pass
+
+        # cs_parser_ok_total{source="...",...} <value>
+        elif line.startswith("cs_parser_ok_total{"):
+            try:
+                labels_part = line[len("cs_parser_ok_total{"):line.index("}")]
+                value_part = line[line.index("}") + 1:].strip()
+                labels = dict(
+                    kv.split("=", 1) for kv in labels_part.split(",") if "=" in kv
+                )
+                source = labels.get("source", "unknown").strip('"')
+                count = int(float(value_part))
+                parser_ok[source] = parser_ok.get(source, 0) + count
+            except Exception:
+                pass
+
+    # Build per-source parse rate summary
+    all_sources = sorted(set(list(parser_hits.keys()) + list(parser_ok.keys())))
+    sources = []
+    for src in all_sources:
+        hits = parser_hits.get(src, 0)
+        ok = parser_ok.get(src, 0)
+        rate = round(ok / hits * 100, 1) if hits > 0 else 0.0
+        sources.append({
+            "source": src,
+            "lines_read": hits,
+            "lines_parsed": ok,
+            "parse_rate_pct": rate,
+        })
+
+    return json.dumps({
+        "lapi_reachable": lapi_ok,
+        "lapi_error": lapi_error,
+        "active_decisions": active_decisions,
+        "total_alerts": total_alerts,
+        "lapi_requests": {
+            k: v for k, v in sorted(lapi_requests.items(), key=lambda x: x[1], reverse=True)
+        },
+        "sources": sources,
+    }, indent=2)

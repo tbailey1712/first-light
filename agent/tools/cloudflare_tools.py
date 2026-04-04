@@ -546,3 +546,117 @@ query DnsAnalytics($zoneTag: String!, $from: Time!, $to: Time!) {
         "nxdomain_queries": sorted(nxdomain, key=lambda x: x["count"], reverse=True)[:10],
         "recon_indicators": sorted(recon_indicators, key=lambda x: x["count"], reverse=True)[:10],
     }, indent=2)
+
+
+@tool
+def query_cloudflare_dns_records() -> str:
+    """List all DNS records for the mcducklabs.com zone via the Cloudflare REST API.
+
+    Useful for auditing what hostnames are publicly exposed, verifying that
+    records are correct, and detecting unexpected or stale entries.
+
+    Returns:
+        JSON with total record count and a sorted list of records containing
+        name, type, content, proxied status, and TTL.
+    """
+    cfg = get_config()
+    headers = _cf_headers()
+    if not headers:
+        return json.dumps({"error": "CLOUDFLARE_API_TOKEN not set"})
+
+    zone_id = getattr(cfg, "cloudflare_zone_id", None)
+    if not zone_id:
+        return json.dumps({"error": "CLOUDFLARE_ZONE_ID not set"})
+
+    url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records"
+    records: list = []
+    page = 1
+    per_page = 100
+
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            while True:
+                resp = client.get(
+                    url,
+                    headers=headers,
+                    params={"page": page, "per_page": per_page},
+                )
+                resp.raise_for_status()
+                body = resp.json()
+                if not body.get("success"):
+                    return json.dumps({"error": f"Cloudflare API error: {body.get('errors')}"})
+                batch = body.get("result", [])
+                records.extend(batch)
+                result_info = body.get("result_info", {})
+                if page >= result_info.get("total_pages", 1):
+                    break
+                page += 1
+    except Exception as e:
+        return json.dumps({"error": f"Cloudflare DNS records request failed: {e}"})
+
+    # Filter out the bare root zone SOA/NS records that Cloudflare auto-inserts
+    filtered = [
+        r for r in records
+        if not (r.get("type") in ("SOA", "NS") and r.get("name", "").rstrip(".") == "mcducklabs.com")
+    ]
+
+    formatted = [
+        {
+            "name": r.get("name", ""),
+            "type": r.get("type", ""),
+            "content": r.get("content", ""),
+            "proxied": r.get("proxied", False),
+            "ttl": r.get("ttl", 1),
+        }
+        for r in sorted(filtered, key=lambda x: x.get("name", ""))
+    ]
+
+    return json.dumps({"total": len(formatted), "records": formatted}, indent=2)
+
+
+@tool
+def query_cloudflare_access_apps() -> str:
+    """List all Cloudflare Access (Zero Trust) applications for the account.
+
+    Shows which hostnames are protected behind Cloudflare Access authentication,
+    verifying that sensitive services are not accidentally left unprotected.
+
+    Returns:
+        JSON with total count and a list of apps containing name, domain,
+        session_duration, and enabled status.
+    """
+    cfg = get_config()
+    headers = _cf_headers()
+    if not headers:
+        return json.dumps({"error": "CLOUDFLARE_API_TOKEN not set"})
+
+    account_id = getattr(cfg, "cloudflare_account_id", None)
+    if not account_id:
+        return json.dumps({"error": "CLOUDFLARE_ACCOUNT_ID not set"})
+
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/access/apps"
+
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            resp = client.get(url, headers=headers)
+            resp.raise_for_status()
+            body = resp.json()
+    except Exception as e:
+        return json.dumps({"error": f"Cloudflare Access apps request failed: {e}"})
+
+    if not body.get("success"):
+        return json.dumps({"error": f"Cloudflare API error: {body.get('errors')}"})
+
+    raw_apps = body.get("result", [])
+
+    apps = [
+        {
+            "name": a.get("name", ""),
+            "domain": a.get("domain", ""),
+            "session_duration": a.get("session_duration", ""),
+            "enabled": not a.get("app_launcher_visible", False) or True,
+        }
+        for a in sorted(raw_apps, key=lambda x: x.get("domain", ""))
+    ]
+
+    return json.dumps({"total": len(apps), "apps": apps}, indent=2)

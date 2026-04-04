@@ -273,3 +273,120 @@ def query_proxmox_health() -> str:
         "alerts": alerts,
         "healthy": len(alerts) == 0,
     }, indent=2)
+
+
+@tool
+def query_proxmox_vm_configs() -> str:
+    """Read VM and container configuration from Proxmox API.
+
+    Returns per-VM/CT configuration: CPU cores, RAM allocation, disk sizes,
+    boot order, agent status, and backup schedule (via Proxmox backup job configs).
+
+    Useful for: verifying vm/115 backup schedule, confirming which VMs exist,
+    checking HA VM disk allocation, identifying VMs without backup jobs.
+
+    Returns:
+        JSON with vms and containers lists (config details) plus backup_jobs list.
+    """
+    cfg = get_config()
+    client = _proxmox_api_client()
+    if client is None:
+        return json.dumps({
+            "error": "Proxmox API not configured — set PROXMOX_HOST, PROXMOX_TOKEN_ID, PROXMOX_TOKEN_SECRET"
+        })
+
+    node = cfg.proxmox_node or "pve"
+
+    try:
+        vms = []
+        cts = []
+
+        # --- VMs ---
+        resp = client.get(f"/nodes/{node}/qemu")
+        if resp.status_code == 200:
+            for vm in resp.json().get("data", []):
+                vmid = vm.get("vmid")
+                # Fetch full config for this VM
+                cfg_resp = client.get(f"/nodes/{node}/qemu/{vmid}/config")
+                if cfg_resp.status_code != 200:
+                    vms.append({"vmid": vmid, "name": vm.get("name"), "error": f"HTTP {cfg_resp.status_code}"})
+                    continue
+                c = cfg_resp.json().get("data", {})
+
+                # Parse disk sizes
+                disks = {}
+                for key, val in c.items():
+                    if key.startswith(("scsi", "virtio", "ide", "sata")) and isinstance(val, str) and "size=" in val:
+                        # e.g. "local-lvm:vm-100-disk-0,size=32G"
+                        size_part = next((p for p in val.split(",") if p.startswith("size=")), "")
+                        disks[key] = size_part.replace("size=", "") if size_part else val.split(",")[0]
+
+                vms.append({
+                    "vmid": vmid,
+                    "name": vm.get("name"),
+                    "status": vm.get("status"),
+                    "cores": c.get("cores", c.get("sockets", 1)),
+                    "memory_mb": c.get("memory"),
+                    "agent_enabled": bool(c.get("agent", "").startswith("enabled=1") if isinstance(c.get("agent"), str) else c.get("agent")),
+                    "disks": disks,
+                    "tags": c.get("tags", ""),
+                    "onboot": c.get("onboot", 0),
+                })
+
+        # --- Containers ---
+        resp = client.get(f"/nodes/{node}/lxc")
+        if resp.status_code == 200:
+            for ct in resp.json().get("data", []):
+                ctid = ct.get("vmid")
+                cfg_resp = client.get(f"/nodes/{node}/lxc/{ctid}/config")
+                if cfg_resp.status_code != 200:
+                    cts.append({"ctid": ctid, "name": ct.get("name"), "error": f"HTTP {cfg_resp.status_code}"})
+                    continue
+                c = cfg_resp.json().get("data", {})
+
+                # Parse rootfs and mount points
+                disks = {}
+                for key in ("rootfs",) + tuple(f"mp{i}" for i in range(10)):
+                    val = c.get(key)
+                    if val and isinstance(val, str):
+                        size_part = next((p for p in val.split(",") if p.startswith("size=")), "")
+                        disks[key] = size_part.replace("size=", "") if size_part else val.split(",")[0]
+
+                cts.append({
+                    "ctid": ctid,
+                    "name": ct.get("name"),
+                    "status": ct.get("status"),
+                    "cores": c.get("cores"),
+                    "memory_mb": c.get("memory"),
+                    "swap_mb": c.get("swap"),
+                    "disks": disks,
+                    "onboot": c.get("onboot", 0),
+                })
+
+        # --- Backup jobs ---
+        backup_jobs = []
+        resp = client.get("/cluster/backup")
+        if resp.status_code == 200:
+            for job in resp.json().get("data", []):
+                backup_jobs.append({
+                    "id": job.get("id"),
+                    "enabled": bool(job.get("enabled", 1)),
+                    "schedule": job.get("schedule"),
+                    "storage": job.get("storage"),
+                    "vmids": job.get("vmid", "all"),
+                    "mode": job.get("mode", "snapshot"),
+                    "comment": job.get("comment", ""),
+                })
+
+        client.close()
+        return json.dumps({
+            "node": node,
+            "vms": sorted(vms, key=lambda x: x.get("vmid", 0)),
+            "containers": sorted(cts, key=lambda x: x.get("ctid", 0)),
+            "backup_jobs": backup_jobs,
+        }, indent=2)
+
+    except Exception as e:
+        if not client.is_closed:
+            client.close()
+        return json.dumps({"error": str(e)})

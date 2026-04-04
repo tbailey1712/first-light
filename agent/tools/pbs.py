@@ -212,3 +212,54 @@ def query_pbs_backup_status() -> str:
     result["overall_status"] = "critical" if result["failed_tasks_48h"] or result["stale_backups"] else "ok"
 
     return json.dumps(result, indent=2)
+
+
+@tool
+def query_pbs_prune_policies() -> str:
+    """Read Proxmox Backup Server datastore prune and retention policies.
+
+    Returns the prune schedule and keep-* retention settings for each datastore.
+    Useful for determining whether a stale backup group is intentionally excluded
+    (pruned by policy) vs. a genuine backup failure.
+
+    Returns:
+        JSON with per-datastore prune config: schedule, keep_last, keep_hourly,
+        keep_daily, keep_weekly, keep_monthly, keep_yearly.
+    """
+    datastores = _pbs_get("admin/datastore")
+    if isinstance(datastores, dict) and "error" in datastores:
+        return json.dumps(datastores)
+
+    if not datastores:
+        return json.dumps({"error": "No datastores found — check PBS_TOKEN_SECRET and Audit ACL"})
+
+    result = []
+    for ds in datastores:
+        store_name = ds.get("store") or ds.get("name")
+        if not store_name:
+            continue
+
+        # Fetch datastore config — contains prune schedule and keep-* settings
+        config = _pbs_get(f"admin/datastore/{store_name}/config")
+        if isinstance(config, dict) and "error" in config:
+            result.append({"datastore": store_name, "error": config["error"]})
+            continue
+
+        if not isinstance(config, dict):
+            result.append({"datastore": store_name, "error": "Unexpected response format"})
+            continue
+
+        result.append({
+            "datastore": store_name,
+            "prune_schedule": config.get("prune-schedule"),
+            "keep_last": config.get("keep-last"),
+            "keep_hourly": config.get("keep-hourly"),
+            "keep_daily": config.get("keep-daily"),
+            "keep_weekly": config.get("keep-weekly"),
+            "keep_monthly": config.get("keep-monthly"),
+            "keep_yearly": config.get("keep-yearly"),
+            "gc_schedule": config.get("gc-schedule"),
+            "verify_new": config.get("verify-new"),
+        })
+
+    return json.dumps({"datastores": result}, indent=2)
