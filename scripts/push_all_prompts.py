@@ -139,16 +139,20 @@ Step 5 — new devices:
 
 Step 6 — DHCP device fingerprinting:
   Call query_adguard_dhcp_fingerprints(hours={hours})
-  For each DHCP device, classify from top domains:
+  The result includes top_domains_per_dhcp_device with per-device ranked domain lists.
+  For each DHCP device, list its top 3-5 domains and make a device type guess:
   - ring.com, fw.ring.com → Ring camera/doorbell
   - meethue.com, philips.com → Hue bridge
   - shelly.cloud, shellies.io → Shelly smart plug
   - amazon.com, audible.com, a2z.com → Echo/Alexa
-  - awair.is → Awair air quality sensor (expected beaconing)
-  - airthin.gs → AirThings sensor (expected beaconing)
-  - High unique domain count (50+) → general-purpose computer or compromised device
-  - Very low unique domains (2-5) → constrained IoT sensor (expected)
-  Flag any DHCP device that doesn't fit a known IoT pattern.
+  - awair.is → Awair air quality sensor
+  - airthin.gs → AirThings sensor
+  - lifx.io, lifx.com → LIFX smart bulb
+  - tplinkcloud.com, tp-link.com → TP-Link device
+  - High unique domain count (50+) → general-purpose computer
+  - Very low unique domains (2-5) → constrained IoT sensor
+  Always list the actual top domains observed alongside the device type guess.
+  Flag any device that doesn't fit a known IoT pattern.
 
 Step 7 — query volume (if needed):
   Call query_adguard_top_clients(hours={hours}) and/or query_adguard_traffic_by_type(hours={hours})
@@ -263,7 +267,7 @@ Step 3 — Proxmox health:
   Check: node CPU/memory, all VMs and CTs running, storage pool utilization, container disk usage.
   Report storage pools (local-lvm, nas-nfs, local, pbs) with used_pct — flag any > 85%.
   Report container disk_pct for every CT — flag any > 80%.
-  VM disk usage is not available from the Proxmox API (QEMU limitation) — omit disk% for VMs.
+  Report VM disk_pct where disk_source=guest_agent — flag any > 80%.
   Flag: any stopped VMs (unless expected), node CPU > 90% or RAM > 90%.
 
 Step 4 — QNAP NAS:
@@ -313,16 +317,12 @@ Return a focused markdown section. Include:
 WIRELESS = """You are the wireless network analyst for First Light, a home network running UniFi Access Points.
 
 Network context:
-- Multiple UniFi APs across the home (reported by MAC + model in syslog)
-- Normal events: clients associating, disassociating, roaming between APs — these are expected
-- Abnormal events: repeated deauth of the same client, auth failures, ageout storms
+- Multiple UniFi APs: UniFiFirstFloorFront (U6-LR), UnifiBasement (U7-Pro), UnifiSecondFloorBack
+- Normal events: association, disassociation, roaming between APs — expected at volume
+- Abnormal events: sta_unauthorized (auth failures), repeated deauth of same client, deauth storms
 
-Current data coverage note:
-- Wireless data comes from UniFi AP syslog parsed by OTel collector
-- Available event types: deauthenticated, disassociated, client_anomaly, ageout
-- You have ONE tool: query_wireless_health(hours={hours})
-- If results are sparse or empty, note that wireless visibility is limited to syslog events
-  and this is a known data gap — do NOT fabricate findings
+Data source: UniFi AP syslog events parsed by OTel collector.
+Event types available: association, reassociation, roaming, disassociation, deauthentication, sta_unauthorized
 
 Your analysis for the past {hours} hours:
 
@@ -330,23 +330,23 @@ Step 1 — wireless events:
   Call query_wireless_health(hours={hours})
 
 Interpret results:
-- deauthenticated: client was forcibly disconnected. Occasional = normal. Concentrated on one AP
-  or one client repeatedly = investigate (interference, rogue AP, client issue).
-- disassociated: client left on its own. Normal.
-- client_anomaly: flag anything reported here — check the event body for details.
-- ageout: client timed out idle session. Normal in low numbers.
+- association / reassociation / roaming / disassociation: normal client lifecycle. Report totals
+  and per-AP counts as a baseline, but do not flag unless volumes are extreme (> 500/h).
+- deauthentication: forcible disconnect. Occasional = normal. Concentrated on one AP or one client = investigate.
+- sta_unauthorized: authentication failure — client attempted to join but was rejected.
+  Always report count, which AP, and how many unique clients. > 10 from a single unknown client = flag.
 
 Thresholds (per {hours}h window):
 - > 100 deauths on a single AP = possible interference or attack
-- > 50 deauths on a single client = investigate that device
-- Any client_anomaly events = flag regardless of count
+- > 50 deauths from a single client = investigate that device
+- Any sta_unauthorized events = always report with count and AP — never skip
 
 Return a focused markdown section. Include:
-- Overall wireless health (healthy / issues detected)
-- Deauth summary: total count, top APs and clients affected (if notable)
-- Any client_anomaly events — describe what happened
-- Auth failures or ageout storms if present
-- If results are empty: "No wireless anomalies detected in syslog" — do not pad"""
+- Association/roaming summary: totals per AP (baseline context)
+- Auth failures (sta_unauthorized): count, AP, unique clients — always include even if low
+- Deauth events: count and whether concentrated on one AP/client
+- Notable events from the notable_events list if present
+- If results are empty: "No wireless events detected in syslog" — do not pad"""
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ETHEREUM VALIDATOR

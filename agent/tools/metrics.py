@@ -234,18 +234,19 @@ def query_adguard_dhcp_fingerprints(hours: int = 24) -> str:
             GROUP BY client_ip, client_name
             ORDER BY queries_24h DESC
         """,
-        "top_domains_across_dhcp": f"""
+        "top_domains_per_dhcp_device": f"""
             SELECT
+                simpleJSONExtractString(ts.labels, 'client_ip') as client_ip,
+                simpleJSONExtractString(ts.labels, 'rank') as rank,
                 simpleJSONExtractString(ts.labels, 'base_domain') as base_domain,
-                simpleJSONExtractString(ts.labels, 'client_count') as client_count,
                 round(avg(s.value), 0) as query_count
             FROM signoz_metrics.samples_v4 s
             JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
             WHERE s.metric_name = 'adguard_dhcp_device_top_domain_queries_24h'
               AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
-            GROUP BY base_domain, client_count
-            ORDER BY query_count DESC
-            LIMIT 30
+            GROUP BY client_ip, rank, base_domain
+            ORDER BY client_ip, rank
+            LIMIT 200
         """,
         "unique_domains_per_device": f"""
             SELECT
