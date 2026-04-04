@@ -28,10 +28,10 @@ class FirstLightConfig(BaseSettings):
     timezone: str = "America/Chicago"
     data_dir: str = "/opt/first-light/data"
 
-    # pfSense
+    # pfSense (XML-RPC auth — standard pfSense user account, not the API package)
     pfsense_host: Optional[str] = None
-    pfsense_api_key: Optional[str] = None
-    pfsense_api_secret: Optional[str] = None
+    pfsense_username: Optional[str] = None
+    pfsense_password: Optional[str] = None
     pfsense_syslog_port: int = 5514
 
     # AdGuard Home

@@ -178,7 +178,7 @@ def main():
         "query_pfsense_firewall_rules",
         lambda: query_pfsense_firewall_rules.invoke({}),
         required_keys=["nat_rules", "nat_rule_count"],
-        skip_if_missing="PFSENSE_API_KEY",  # skip if creds not set
+        skip_if_missing="PFSENSE_USERNAME",  # skip if creds not set
     )
     if d:
         nat = d.get("nat_rule_count", 0)
@@ -189,7 +189,7 @@ def main():
         "query_pfsense_dns_overrides",
         lambda: query_pfsense_dns_overrides.invoke({}),
         required_keys=["total", "host_overrides"],
-        skip_if_missing="PFSENSE_API_KEY",
+        skip_if_missing="PFSENSE_USERNAME",
     )
     if d:
         print(f"         → {d.get('total', 0)} DNS host overrides")
@@ -291,83 +291,33 @@ def main():
                       f"keep_weekly={ds.get('keep_weekly')} "
                       f"schedule={ds.get('prune_schedule')}")
 
-    # ── 6. AdGuard Direct API (TOOL-5, TOOL-6, DG-2, DG-4) ──────────────────
-    section("AdGuard: Per-Client Query Log (direct API)")
+    # ── 6. AdGuard ClickHouse metrics (via exporter) ──────────────────────────
+    section("AdGuard: ClickHouse Metrics (via exporter)")
 
-    from agent.tools.adguard_tools import (
-        query_adguard_client_blocked_domains,
-        query_adguard_nxdomain_clients,
-        query_adguard_custom_rules,
+    from agent.tools.metrics import query_adguard_network_summary, query_adguard_high_risk_clients
+
+    run_test(
+        "query_adguard_network_summary",
+        lambda: query_adguard_network_summary.invoke({"hours": 24}),
+        docker_internal=True,
     )
 
-    # Test with a connectivity check first (custom rules — lightweight)
-    d = run_test(
-        "query_adguard_custom_rules (connectivity check)",
-        lambda: query_adguard_custom_rules.invoke({}),
-        required_keys=["total_custom_rules"],
-        skip_if_missing="ADGUARD_USERNAME",  # skip if creds not set
+    run_test(
+        "query_adguard_high_risk_clients",
+        lambda: query_adguard_high_risk_clients.invoke({"hours": 24, "limit": 5}),
+        docker_internal=True,
     )
-    if d:
-        print(f"         → {d.get('total_custom_rules', 0)} custom rules, "
-              f"{len(d.get('allowlist_rules', []))} allowlist entries")
 
-    d = run_test(
-        "query_adguard_nxdomain_clients",
-        lambda: query_adguard_nxdomain_clients.invoke({"limit": 200, "top_n": 10}),
-        required_keys=["entries_scanned", "total_nxdomain", "top_clients_by_nxdomain"],
-        skip_if_missing="ADGUARD_USERNAME",
+    # ── 7. UniFi via syslog/ClickHouse ────────────────────────────────────────
+    section("UniFi: Wireless Health (via syslog/ClickHouse)")
+
+    from agent.tools.logs import query_wireless_health
+
+    run_test(
+        "query_wireless_health",
+        lambda: query_wireless_health.invoke({"hours": 6}),
+        docker_internal=True,
     )
-    if d:
-        print(f"         → scanned {d.get('entries_scanned', 0)} entries, "
-              f"{d.get('total_nxdomain', 0)} NXDomain responses")
-        for c in d.get("top_clients_by_nxdomain", [])[:3]:
-            print(f"           {c['client_ip']}: {c['nxdomain_count']} NXDomains")
-
-    d = run_test(
-        "query_adguard_client_blocked_domains (192.168.1.1 sample)",
-        lambda: query_adguard_client_blocked_domains.invoke({
-            "client_ip": "192.168.1.1",
-            "limit": 50,
-        }),
-        required_keys=["client_ip", "total_blocked", "top_blocked_domains"],
-        skip_if_missing="ADGUARD_USERNAME",
-    )
-    if d:
-        print(f"         → {d.get('total_blocked', 0)} blocked queries for test client")
-
-    # ── 7. UniFi (TOOL-10, TOOL-11) ───────────────────────────────────────────
-    section("UniFi: Client List + AP Stats")
-
-    from agent.tools.unifi_tools import query_unifi_clients, query_unifi_ap_stats
-
-    d = run_test(
-        "query_unifi_clients",
-        lambda: query_unifi_clients.invoke({"include_inactive": False}),
-        required_keys=["total_clients", "clients"],
-        skip_if_missing="UNIFI_USERNAME",  # skip if creds not set
-    )
-    if d:
-        total = d.get("total_clients", 0)
-        auth_fails = d.get("auth_failure_clients", [])
-        print(f"         → {total} connected clients")
-        if auth_fails:
-            print(f"  {WARN} {len(auth_fails)} clients with auth failures:")
-            for c in auth_fails[:5]:
-                print(f"           MAC={c['mac']} hostname={c['hostname']} "
-                      f"ap={c['ap_name']} failures={c['auth_failures']}")
-
-    d = run_test(
-        "query_unifi_ap_stats",
-        lambda: query_unifi_ap_stats.invoke({}),
-        required_keys=["total_aps", "online_aps", "aps"],
-        skip_if_missing="UNIFI_USERNAME",
-    )
-    if d:
-        total = d.get("total_aps", 0)
-        online = d.get("online_aps", 0)
-        print(f"         → {online}/{total} APs online")
-        for alert in d.get("alerts", []):
-            print(f"  {WARN} {alert}")
 
     # ── 8. Existing tools — smoke test post-refactor ──────────────────────────
     section("Smoke Tests: Pre-existing Tools (post-refactor verification)")
@@ -411,7 +361,7 @@ def main():
         "query_pfsense_firewall_rules (XML-RPC connectivity)",
         lambda: query_pfsense_firewall_rules.invoke({}),
         required_keys=["nat_rules"],
-        skip_if_missing="PFSENSE_API_KEY",
+        skip_if_missing="PFSENSE_USERNAME",
     )
 
     # ── Summary ────────────────────────────────────────────────────────────────
@@ -424,18 +374,12 @@ def main():
     if results["skip"] > 0:
         print(f"\n{WARN} Skipped tests require env vars not set in .env:")
         skipped_vars = []
-        if not os.environ.get("PFSENSE_HOST"):
-            skipped_vars.append("  PFSENSE_HOST, PFSENSE_API_KEY, PFSENSE_API_SECRET — pfSense XML-RPC")
-        if not os.environ.get("ADGUARD_HOST"):
-            skipped_vars.append("  ADGUARD_HOST, ADGUARD_USERNAME, ADGUARD_PASSWORD — AdGuard direct API")
-        if not os.environ.get("UNIFI_HOST"):
-            skipped_vars.append("  UNIFI_HOST, UNIFI_USERNAME, UNIFI_PASSWORD — UniFi Controller")
+        if not os.environ.get("PFSENSE_USERNAME"):
+            skipped_vars.append("  PFSENSE_USERNAME, PFSENSE_PASSWORD — pfSense XML-RPC user")
         if not os.environ.get("PBS_TOKEN_SECRET"):
             skipped_vars.append("  PBS_TOKEN_SECRET — Proxmox Backup Server")
         if not os.environ.get("CROWDSEC_API_KEY"):
             skipped_vars.append("  CROWDSEC_API_KEY — CrowdSec bouncer key")
-        if not os.environ.get("CLOUDFLARE_API_TOKEN"):
-            skipped_vars.append("  CLOUDFLARE_API_TOKEN — Cloudflare API")
         for v in skipped_vars:
             print(v)
 

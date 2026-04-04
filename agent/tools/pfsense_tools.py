@@ -11,9 +11,9 @@ Available XML-RPC method:
   pfsense.backup_config_section(section_names: list[str]) -> base64-encoded XML
 
 .env vars required:
-  PFSENSE_HOST        IP or hostname of the pfSense firewall (no scheme)
-  PFSENSE_API_KEY     username for Basic auth (XML-RPC credential)
-  PFSENSE_API_SECRET  password for Basic auth (XML-RPC credential)
+  PFSENSE_HOST      IP or hostname of the pfSense firewall (no scheme)
+  PFSENSE_USERNAME  pfSense user account created for XML-RPC access
+  PFSENSE_PASSWORD  password for that account
 
 IMPORTANT: Never SSH to pfSense (192.168.1.1). Use XML-RPC over HTTPS only.
 """
@@ -59,8 +59,8 @@ def _get_proxy() -> xmlrpc.client.ServerProxy | None:
     """Build an XML-RPC proxy for pfSense, or return None if not configured."""
     cfg = get_config()
     host = getattr(cfg, "pfsense_host", None)
-    username = getattr(cfg, "pfsense_api_key", None)
-    password = getattr(cfg, "pfsense_api_secret", None)
+    username = getattr(cfg, "pfsense_username", None)
+    password = getattr(cfg, "pfsense_password", None)
 
     if not host:
         return None
@@ -82,7 +82,7 @@ def _backup_section(section: str) -> ET.Element | dict:
         cfg = get_config()
         if not getattr(cfg, "pfsense_host", None):
             return {"error": "pfsense_host not configured"}
-        return {"error": "pfsense_api_key or pfsense_api_secret not configured"}
+        return {"error": "pfsense_username or pfsense_password not configured"}
 
     try:
         result = proxy.pfsense.backup_config_section([section])
