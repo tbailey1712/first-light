@@ -76,6 +76,14 @@ class FirstLightConfig(BaseSettings):
     # AI Agent
     anthropic_api_key: Optional[str] = None
 
+    # Proxmox API (direct — for guest agent disk stats)
+    proxmox_host: Optional[str] = None
+    proxmox_port: int = 8006
+    proxmox_token_id: Optional[str] = None       # format: user@realm!tokenname
+    proxmox_token_secret: Optional[str] = None
+    proxmox_node: str = "pve"
+    proxmox_verify_ssl: bool = True
+
     # QNAP File Station API (for directory size analysis)
     qnap_api_url: Optional[str] = None
     qnap_api_user: Optional[str] = None
