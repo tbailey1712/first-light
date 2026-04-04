@@ -3,7 +3,7 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 
 from agent.langfuse_integration import get_prompt_manager
 
@@ -486,12 +486,14 @@ This is distinct from the internal pfSense perimeter: pfSense guards the LAN, Cl
 guards the public services.
 
 Exposed services (publicly resolvable via Cloudflare DNS):
-- ai.mcducklabs.com: Open WebUI (LLM interface) — high-value target, lock with CF Access
-- ntfy.mcducklabs.com: Self-hosted push notifications — recently stood up, being scanned
-- adguard.mcducklabs.com, pve.mcducklabs.com, portainer.mcducklabs.com, pbs.mcducklabs.com: admin interfaces
+- ai.mcducklabs.com: Open WebUI (LLM interface) — protected by CF Access (one-time PIN)
+- ntfy.mcducklabs.com: Self-hosted push notifications — auth enforced via ntfy's own user/password auth
+- adguard.mcducklabs.com: AdGuard Home admin — should have CF Access
 - model-router.mcducklabs.com, langfuse.mcducklabs.com: AI infrastructure
 - ha.mcducklabs.com: Home Assistant
-- firewall.mcducklabs.com: pfSense — should NOT be publicly accessible
+- bank.mcducklabs.com: Known GCP-hosted app — NORMAL, do not flag
+- pve.mcducklabs.com, portainer.mcducklabs.com, pbs.mcducklabs.com: Proxmox/container admin — should NOT be externally routed; DNS entries to be removed or Access-protected
+- firewall.mcducklabs.com: pfSense — should NOT be publicly accessible; DNS entry to be removed
 
 Known normal patterns:
 - WAF managed rules blocking PHP scanner probes (/wp-config.php, /admin/*.php, /.env) = normal background noise

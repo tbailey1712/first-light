@@ -16,13 +16,14 @@ from typing import Union
 from agent.notifications.base import NotificationChannel
 from agent.notifications.telegram import TelegramChannel, build_telegram_channel
 from agent.notifications.slack import SlackWebhookChannel, build_slack_channel
+from agent.notifications.ntfy import NtfyChannel, build_ntfy_channel
 
 logger = logging.getLogger(__name__)
 
-_channels: list[Union[TelegramChannel, SlackWebhookChannel]] = []
+_channels: list[Union[TelegramChannel, SlackWebhookChannel, NtfyChannel]] = []
 
 
-def register_channel(channel: Union[TelegramChannel, SlackWebhookChannel]) -> None:
+def register_channel(channel: Union[TelegramChannel, SlackWebhookChannel, NtfyChannel]) -> None:
     """Register a channel. Idempotent: won't add the same name twice."""
     for existing in _channels:
         if existing.name == channel.name:
@@ -69,6 +70,13 @@ async def register_defaults() -> None:
             register_channel(slack)
         else:
             logger.debug("Slack webhook not configured (SLACK_WEBHOOK_URL missing)")
+
+    if _want("ntfy"):
+        ntfy = build_ntfy_channel()
+        if ntfy:
+            register_channel(ntfy)
+        else:
+            logger.debug("ntfy not configured (NTFY_SERVER/TOPIC/USERNAME/PASSWORD missing)")
 
     logger.info("Notification registry ready: %d channel(s) active", len(_channels))
 

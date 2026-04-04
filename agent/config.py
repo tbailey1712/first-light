@@ -118,9 +118,10 @@ class FirstLightConfig(BaseSettings):
     smtp_from: Optional[str] = None
     smtp_to: Optional[str] = None
 
-    ntfy_enabled: bool = False
+    ntfy_server: str = "https://ntfy.mcducklabs.com"
     ntfy_topic: Optional[str] = None
-    ntfy_server: str = "https://ntfy.sh"
+    ntfy_username: Optional[str] = None
+    ntfy_password: Optional[str] = None
 
     # Proxmox Backup Server
     pbs_host: str = "192.168.2.8"
