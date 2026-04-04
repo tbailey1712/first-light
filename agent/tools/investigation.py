@@ -46,17 +46,15 @@ def query_clickhouse_raw(sql: str) -> str:
         allowed = ", ".join(_ALLOWED_TABLES)
         return json.dumps({"error": f"Query must only target: {allowed}"})
 
-    # Enforce row limit
-    match = _LIMIT_RE.search(sql)
-    if match:
-        existing_limit = int(match.group(1))
-        if existing_limit > _MAX_ROWS:
-            sql = _LIMIT_RE.sub(f"LIMIT {_MAX_ROWS}", sql)
-    else:
-        sql = sql.rstrip(";").rstrip() + f" LIMIT {_MAX_ROWS}"
+    # Strip any existing LIMIT clauses and always append our own — more reliable
+    # than regex substitution which can be defeated by subqueries or comments.
+    # Also pass max_result_rows as a server-side hard cap.
+    sql = _LIMIT_RE.sub("", sql).rstrip(";").rstrip() + f" LIMIT {_MAX_ROWS}"
 
     try:
-        result = _execute_clickhouse_query(sql)
+        result = _execute_clickhouse_query(
+            sql, ch_settings={"max_result_rows": _MAX_ROWS}
+        )
         return result
     except Exception as e:
         logger.error("query_clickhouse_raw failed: %s", e)

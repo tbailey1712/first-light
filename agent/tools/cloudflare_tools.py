@@ -351,6 +351,8 @@ def query_cloudflare_zone_analytics(hours: int = 24) -> str:
 
     from_ts, to_ts = _time_range(hours)
 
+    # Two separate aliases with distinct dimension sets — prevents cross-product
+    # double-counting that occurs when both dimensions are mixed in one query.
     query = """
 query ZoneAnalytics($zoneTag: String!, $from: Time!, $to: Time!) {
   viewer {
@@ -359,6 +361,7 @@ query ZoneAnalytics($zoneTag: String!, $from: Time!, $to: Time!) {
         limit: 50
         filter: { datetime_geq: $from, datetime_leq: $to }
         orderBy: [count_DESC]
+        groupBy: [edgeResponseStatus, cacheStatus]
       ) {
         count
         dimensions {
@@ -370,6 +373,7 @@ query ZoneAnalytics($zoneTag: String!, $from: Time!, $to: Time!) {
         limit: 20
         filter: { datetime_geq: $from, datetime_leq: $to }
         orderBy: [count_DESC]
+        groupBy: [clientCountryName]
       ) {
         count
         dimensions {

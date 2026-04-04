@@ -601,13 +601,18 @@ def query_outbound_blocks(hours: int = 24) -> str:
         return f"Error querying outbound blocks: {str(e)}"
 
 
-def _execute_clickhouse_query(query: str, query_params: Optional[dict] = None) -> str:
+def _execute_clickhouse_query(
+    query: str,
+    query_params: Optional[dict] = None,
+    ch_settings: Optional[dict] = None,
+) -> str:
     """Execute a ClickHouse query via HTTP.
 
     Args:
         query: SQL query, optionally with {name:Type} placeholders.
         query_params: Dict of substitution values; each key 'foo' maps to
                       HTTP param 'param_foo' per ClickHouse HTTP interface spec.
+        ch_settings: Optional ClickHouse server-side settings (e.g. max_result_rows).
     """
     config = get_config()
 
@@ -618,6 +623,8 @@ def _execute_clickhouse_query(query: str, query_params: Optional[dict] = None) -
     if query_params:
         for k, v in query_params.items():
             params[f"param_{k}"] = v
+    if ch_settings:
+        params.update(ch_settings)
 
     headers = {
         "X-ClickHouse-User": config.signoz_clickhouse_user,

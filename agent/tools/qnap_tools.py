@@ -9,6 +9,7 @@ query_qnap_directory_sizes: uses the QNAP File Station API for directory analysi
 import hashlib
 import json
 import re
+import threading
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -22,6 +23,7 @@ from agent.config import get_config
 # Module-level session cache — reuse QNAP auth token for up to 50 minutes
 _qnap_sid: Optional[str] = None
 _qnap_sid_expiry: float = 0.0
+_qnap_sid_lock = threading.Lock()
 
 
 def _parse_prometheus(text: str) -> Dict[str, List[Tuple[Dict, float]]]:
@@ -173,35 +175,36 @@ def _qnap_get_sid() -> Optional[str]:
     """Authenticate with QNAP and return a session ID, reusing cached token if valid."""
     global _qnap_sid, _qnap_sid_expiry
 
-    if _qnap_sid and time.time() < _qnap_sid_expiry:
-        return _qnap_sid
+    with _qnap_sid_lock:
+        if _qnap_sid and time.time() < _qnap_sid_expiry:
+            return _qnap_sid
 
-    cfg = get_config()
-    if not cfg.qnap_api_url or not cfg.qnap_api_user or not cfg.qnap_api_pass:
-        return None
-
-    # QNAP authLogin uses MD5-hashed password
-    passwd_md5 = hashlib.md5(cfg.qnap_api_pass.encode()).hexdigest()
-
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.get(
-                f"{cfg.qnap_api_url.rstrip('/')}/cgi-bin/authLogin.cgi",
-                params={"user": cfg.qnap_api_user, "passwd": passwd_md5},
-            )
-            resp.raise_for_status()
-
-        root = ET.fromstring(resp.text)
-        sid_el = root.find("authSid")
-        if sid_el is None or not sid_el.text:
+        cfg = get_config()
+        if not cfg.qnap_api_url or not cfg.qnap_api_user or not cfg.qnap_api_pass:
             return None
 
-        _qnap_sid = sid_el.text
-        _qnap_sid_expiry = time.time() + 3000  # 50 minutes
-        return _qnap_sid
+        # QNAP authLogin uses MD5-hashed password
+        passwd_md5 = hashlib.md5(cfg.qnap_api_pass.encode()).hexdigest()
 
-    except Exception as e:
-        return None
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.get(
+                    f"{cfg.qnap_api_url.rstrip('/')}/cgi-bin/authLogin.cgi",
+                    params={"user": cfg.qnap_api_user, "passwd": passwd_md5},
+                )
+                resp.raise_for_status()
+
+            root = ET.fromstring(resp.text)
+            sid_el = root.find("authSid")
+            if sid_el is None or not sid_el.text:
+                return None
+
+            _qnap_sid = sid_el.text
+            _qnap_sid_expiry = time.time() + 3000  # 50 minutes
+            return _qnap_sid
+
+        except Exception:
+            return None
 
 
 @tool

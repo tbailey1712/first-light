@@ -542,10 +542,14 @@ def _extract_baseline_metrics(domain_summaries: dict[str, str]) -> dict[str, Any
             pass
 
     infra = domain_summaries.get("infrastructure", "")
-    m = re.search(r'(\d+\.?\d*)\s*%\s*(?:used|full|capacity)', infra, re.IGNORECASE)
-    if m:
+    # Anchor to a QNAP-specific context line before extracting percentage
+    qnap_match = re.search(
+        r'(?:QNAP|NAS|QVR)[^\n]*\n(?:[^\n]*\n){0,3}[^\n]*?(\d+\.?\d*)\s*%\s*(?:used|full|capacity)',
+        infra, re.IGNORECASE
+    )
+    if qnap_match:
         try:
-            metrics["qnap_vol1_used_pct"] = float(m.group(1))
+            metrics["qnap_vol1_used_pct"] = float(qnap_match.group(1))
         except ValueError:
             pass
 
