@@ -42,11 +42,19 @@ def run_firewall_threat_agent(
     )
 
     from agent.tools.crowdsec import query_crowdsec_alerts, query_crowdsec_decisions
+    from agent.tools.cloudflare_tools import (
+        query_cloudflare_waf_events,
+        query_cloudflare_gateway_dns,
+        query_cloudflare_zone_analytics,
+    )
     tools = [
         query_threat_intel_summary, query_security_summary,
         query_auth_events, query_outbound_blocks,
         lookup_ip_threat_intel, query_threat_intel_coverage,
         query_crowdsec_alerts, query_crowdsec_decisions,
+        query_cloudflare_waf_events,
+        query_cloudflare_gateway_dns,
+        query_cloudflare_zone_analytics,
     ]
     if not prompt_override:
         raise ValueError("firewall_threat agent requires a prompt — ensure Langfuse prompt 'first-light-firewall-threat' exists with label=production")

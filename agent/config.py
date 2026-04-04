@@ -128,6 +128,11 @@ class FirstLightConfig(BaseSettings):
     pbs_token_id: str = "root@pam!firstlight"
     pbs_token_secret: Optional[str] = None
 
+    # Cloudflare
+    cloudflare_api_token: Optional[str] = None    # Zone:Analytics:Read + Zone:Firewall:Read + Account:Zero Trust:Read
+    cloudflare_zone_id: Optional[str] = None      # Zone ID for mcducklabs.com
+    cloudflare_account_id: Optional[str] = None   # Cloudflare account ID
+
     # CrowdSec
     crowdsec_enrollment_key: Optional[str] = None
     crowdsec_api_key: Optional[str] = None         # bouncer key: cscli bouncers add firstlight-agent

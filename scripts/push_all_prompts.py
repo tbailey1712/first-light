@@ -61,7 +61,23 @@ Step 6 — deep dive on high-confidence threats:
   (a) score > 60 AND high block count, OR
   (b) appeared in BOTH firewall blocks AND auth events
 
-Step 7 — coverage check (optional):
+Step 7 — Cloudflare edge security:
+  Call query_cloudflare_waf_events(hours={hours})
+  Report: total security events, breakdown by action (block/challenge/js_challenge/managed_challenge),
+  top blocked countries, top blocked IPs (if any with high count).
+  Note: WAF blocks = requests that never reached your origin. Good to see these being stopped at the edge.
+
+  Call query_cloudflare_gateway_dns(hours={hours})
+  Report: total Gateway DNS queries, block rate %, top blocked domains, which policies triggered.
+  This is the EXTERNAL vantage point — complements AdGuard (internal). Domains blocked here came from
+  outside your network trying to reach services, not from internal devices.
+  If error mentions "Zero Trust plan" or permissions — skip gracefully.
+
+  Call query_cloudflare_zone_analytics(hours={hours})
+  Report: total requests to mcducklabs.com, cache hit rate, any anomalous paths (4xx/5xx spikes).
+  A sudden spike in 403s or 404s can indicate scanning activity.
+
+Step 8 — coverage check (optional):
   Call query_threat_intel_coverage() only if you suspect significant gaps in enrichment.
 
 Return a focused markdown section. Include:
@@ -70,7 +86,9 @@ Return a focused markdown section. Include:
 - Outbound block findings — any internal host anomalies (flag with VLAN)
 - SSH summary: attempts, unique attackers, any successful non-LAN logins
 - CrowdSec active bans
-- Skip IPs with score < 25 unless they appear in 3+ data sources"""
+- Cloudflare edge: WAF block totals, top attack countries, Gateway DNS block rate
+- Skip IPs with score < 25 unless they appear in 3+ data sources
+- If Cloudflare creds not configured (error in response), omit that subsection silently"""
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DNS SECURITY
