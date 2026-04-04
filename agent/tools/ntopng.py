@@ -250,6 +250,37 @@ def query_ntopng_active_flows(
 
 
 @tool
+def query_ntopng_flows_by_host(
+    host_ip: str,
+    ifid: int = 3,
+    perPage: int = 50,
+) -> str:
+    """Get recent flows involving a specific host IP (as source or destination).
+
+    Use this to investigate suspicious outbound connections, e.g. IoT devices
+    calling 1.1.1.1, or any host making unexpected connections.
+
+    Args:
+        host_ip: IP address to filter flows for (e.g. "1.1.1.1" or "192.168.2.45")
+        ifid: Interface ID (default: 3)
+        perPage: Number of flows to return (default: 50)
+
+    Returns:
+        JSON with flows involving the host including peer IPs, ports, bytes, protocol.
+    """
+    config = get_config()
+    if not config.ntopng_host:
+        return "Error: ntopng_host not configured in .env"
+    return _get("/lua/rest/v2/get/flow/active.lua", {
+        "ifid": ifid,
+        "host": host_ip,
+        "perPage": perPage,
+        "sortColumn": "bytes",
+        "sortOrder": "desc",
+    })
+
+
+@tool
 def query_ntopng_l7_protocols(ifid: int = 3) -> str:
     """Get Layer 7 application protocol traffic counters.
 
