@@ -614,18 +614,19 @@ def _execute_clickhouse_query(query: str, query_params: Optional[dict] = None) -
     # ClickHouse HTTP interface (port 8123 by default)
     clickhouse_url = f"http://{config.signoz_clickhouse_host}:8123"
 
-    params: dict = {
-        "user": config.signoz_clickhouse_user,
-        "password": config.signoz_clickhouse_password,
-        "query": query,
-    }
+    params: dict = {"query": query}
     if query_params:
         for k, v in query_params.items():
             params[f"param_{k}"] = v
 
+    headers = {
+        "X-ClickHouse-User": config.signoz_clickhouse_user,
+        "X-ClickHouse-Key": config.signoz_clickhouse_password,
+    }
+
     try:
         with httpx.Client(timeout=30.0) as client:
-            response = client.post(clickhouse_url, params=params)
+            response = client.post(clickhouse_url, params=params, headers=headers)
 
             if response.status_code != 200:
                 raise Exception(f"HTTP {response.status_code} - {response.text}")

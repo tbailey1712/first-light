@@ -50,7 +50,7 @@ def run_firewall_threat_agent(
     ]
     if not prompt_override:
         raise ValueError("firewall_threat agent requires a prompt — ensure Langfuse prompt 'first-light-firewall-threat' exists with label=production")
-    system = prompt_override.format(hours=hours)
+    system = prompt_override.replace("{hours}", str(hours))
     user = FIREWALL_THREAT_USER.format(hours=hours)
 
     logger.info("Running firewall_threat_agent...")
@@ -101,7 +101,7 @@ def run_dns_agent(
     ]
     if not prompt_override:
         raise ValueError("dns agent requires a prompt — ensure Langfuse prompt 'first-light-dns' exists with label=production")
-    system = prompt_override.format(hours=hours)
+    system = prompt_override.replace("{hours}", str(hours))
     user = DNS_USER.format(hours=hours)
 
     logger.info("Running dns_agent...")
@@ -162,7 +162,7 @@ def run_network_flow_agent(
     ]
     if not prompt_override:
         raise ValueError("network_flow agent requires a prompt — ensure Langfuse prompt 'first-light-network-flow' exists with label=production")
-    system = prompt_override.format(hours=hours)
+    system = prompt_override.replace("{hours}", str(hours))
     user = NETWORK_FLOW_USER.format(hours=hours)
 
     logger.info("Running network_flow_agent...")
@@ -214,7 +214,7 @@ def run_infrastructure_agent(
     ]
     if not prompt_override:
         raise ValueError("infrastructure agent requires a prompt — ensure Langfuse prompt 'first-light-infrastructure' exists with label=production")
-    system = prompt_override.format(hours=hours)
+    system = prompt_override.replace("{hours}", str(hours))
     user = INFRASTRUCTURE_USER.format(hours=hours)
 
     logger.info("Running infrastructure_agent...")
@@ -243,7 +243,7 @@ def run_wireless_agent(
     tools = [query_wireless_health]
     if not prompt_override:
         raise ValueError("wireless agent requires a prompt — ensure Langfuse prompt 'first-light-wireless' exists with label=production")
-    system = prompt_override.format(hours=hours)
+    system = prompt_override.replace("{hours}", str(hours))
     user = WIRELESS_USER.format(hours=hours)
 
     logger.info("Running wireless_agent...")
@@ -272,7 +272,7 @@ def run_validator_agent(
     tools = [query_validator_health]
     if not prompt_override:
         raise ValueError("validator agent requires a prompt — ensure Langfuse prompt 'first-light-validator' exists with label=production")
-    system = prompt_override.format(hours=hours)
+    system = prompt_override.replace("{hours}", str(hours))
     user = VALIDATOR_USER.format(hours=hours)
 
     logger.info("Running validator_agent...")
@@ -311,7 +311,7 @@ def run_cloudflare_agent(
     ]
     if not prompt_override:
         raise ValueError("cloudflare agent requires a prompt — ensure Langfuse prompt 'first-light-cloudflare' exists with label=production")
-    system = prompt_override.format(hours=hours)
+    system = prompt_override.replace("{hours}", str(hours))
     user = CLOUDFLARE_USER.format(hours=hours)
 
     logger.info("Running cloudflare_agent...")

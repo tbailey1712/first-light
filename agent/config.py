@@ -128,6 +128,7 @@ class FirstLightConfig(BaseSettings):
     pbs_port: int = 8007
     pbs_token_id: str = "root@pam!firstlight"
     pbs_token_secret: Optional[str] = None
+    pbs_verify_ssl: bool = False  # PBS uses self-signed cert; set to CA path to verify
 
     # Cloudflare
     cloudflare_api_token: Optional[str] = None    # Zone:Analytics:Read + Zone:Firewall:Read + Account:Zero Trust:Read

@@ -38,11 +38,13 @@ def query_clickhouse_raw(sql: str) -> str:
     """
     from agent.tools.logs import _execute_clickhouse_query
 
-    # Validate table access
-    sql_upper = sql.upper()
-    if not any(t.upper() in sql_upper for t in _ALLOWED_TABLES):
+    # Validate table access — extract actual FROM/JOIN targets, not substring match
+    _TABLE_RE = re.compile(r'\bFROM\s+([\w.]+)|\bJOIN\s+([\w.]+)', re.IGNORECASE)
+    referenced = {(m.group(1) or m.group(2)).upper() for m in _TABLE_RE.finditer(sql)}
+    allowed_upper = {t.upper() for t in _ALLOWED_TABLES}
+    if not referenced or not referenced.issubset(allowed_upper):
         allowed = ", ".join(_ALLOWED_TABLES)
-        return json.dumps({"error": f"Query must target one of: {allowed}"})
+        return json.dumps({"error": f"Query must only target: {allowed}"})
 
     # Enforce row limit
     match = _LIMIT_RE.search(sql)

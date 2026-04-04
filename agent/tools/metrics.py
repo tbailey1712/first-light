@@ -479,11 +479,11 @@ def _execute_clickhouse_query(query: str) -> str:
         with httpx.Client(timeout=30.0) as client:
             response = client.post(
                 clickhouse_url,
-                params={
-                    "user": config.signoz_clickhouse_user,
-                    "password": config.signoz_clickhouse_password,
-                    "query": query,
-                }
+                params={"query": query},
+                headers={
+                    "X-ClickHouse-User": config.signoz_clickhouse_user,
+                    "X-ClickHouse-Key": config.signoz_clickhouse_password,
+                },
             )
             if response.status_code != 200:
                 return f"Error: HTTP {response.status_code} — {response.text[:200]}"

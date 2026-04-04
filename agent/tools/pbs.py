@@ -41,7 +41,7 @@ def _pbs_get(path: str, params: Optional[dict] = None) -> dict | list:
         return {"error": "PBS_TOKEN_SECRET not configured in .env"}
 
     try:
-        with httpx.Client(verify=False, timeout=15.0) as client:
+        with httpx.Client(verify=cfg.pbs_verify_ssl, timeout=15.0) as client:
             r = client.get(
                 f"https://{host}:{port}/api2/json/{path}",
                 headers={"Authorization": f"PBSAPIToken={token_id}:{token_secret}"},
