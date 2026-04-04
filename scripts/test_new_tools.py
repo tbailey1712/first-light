@@ -433,6 +433,32 @@ def main():
         if d.get("fee_recipient"):
             print(f"           fee_recipient={d.get('fee_recipient')}")
 
+    # ── 13. Slack Bot connectivity (SLK-3) ────────────────────────────────────
+    section("Slack: Bot Token Auth")
+
+    def _test_slack_auth() -> str:
+        import httpx
+        token = os.environ.get("SLACK_BOT_TOKEN", "")
+        if not token:
+            raise ValueError("SLACK_BOT_TOKEN not set")
+        resp = httpx.get(
+            "https://slack.com/api/auth.test",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        return json.dumps(resp.json())
+
+    d = run_test(
+        "slack_auth_test (SLACK_BOT_TOKEN)",
+        _test_slack_auth,
+        required_keys=["ok"],
+        skip_if_missing="SLACK_BOT_TOKEN",
+    )
+    if d and d.get("ok"):
+        print(f"         → team={d.get('team')} bot_id={d.get('bot_id')} user={d.get('user')}")
+    elif d and not d.get("ok"):
+        print(f"  {FAIL}  Slack auth.test returned ok=false: {d.get('error')}")
+
     # ── Summary ────────────────────────────────────────────────────────────────
     print(f"\n{'='*60}")
     total_run = results["pass"] + results["fail"]

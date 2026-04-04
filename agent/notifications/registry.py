@@ -15,15 +15,15 @@ from typing import Union
 
 from agent.notifications.base import NotificationChannel
 from agent.notifications.telegram import TelegramChannel, build_telegram_channel
-from agent.notifications.slack import SlackWebhookChannel, build_slack_channel
+from agent.notifications.slack import SlackWebhookChannel, SlackBotChannel, build_slack_channel, build_slack_bot_channel
 from agent.notifications.ntfy import NtfyChannel, build_ntfy_channel
 
 logger = logging.getLogger(__name__)
 
-_channels: list[Union[TelegramChannel, SlackWebhookChannel, NtfyChannel]] = []
+_channels: list[Union[TelegramChannel, SlackWebhookChannel, SlackBotChannel, NtfyChannel]] = []
 
 
-def register_channel(channel: Union[TelegramChannel, SlackWebhookChannel, NtfyChannel]) -> None:
+def register_channel(channel: Union[TelegramChannel, SlackWebhookChannel, SlackBotChannel, NtfyChannel]) -> None:
     """Register a channel. Idempotent: won't add the same name twice."""
     for existing in _channels:
         if existing.name == channel.name:
@@ -65,11 +65,17 @@ async def register_defaults() -> None:
             logger.info("Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing)")
 
     if _want("slack"):
-        slack = build_slack_channel()
-        if slack:
-            register_channel(slack)
+        # Prefer the bot channel (channel routing + interactive buttons) when
+        # SLACK_BOT_TOKEN is available; fall back to webhook for outbound-only.
+        slack_bot = build_slack_bot_channel()
+        if slack_bot:
+            register_channel(slack_bot)
         else:
-            logger.debug("Slack webhook not configured (SLACK_WEBHOOK_URL missing)")
+            slack = build_slack_channel()
+            if slack:
+                register_channel(slack)
+            else:
+                logger.debug("Slack not configured (SLACK_BOT_TOKEN and SLACK_WEBHOOK_URL both missing)")
 
     if _want("ntfy"):
         ntfy = build_ntfy_channel()

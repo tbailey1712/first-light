@@ -192,3 +192,141 @@ def build_slack_channel() -> Optional[SlackWebhookChannel]:
     if cfg.slack_webhook_url:
         return SlackWebhookChannel(cfg.slack_webhook_url)
     return None
+
+
+class SlackBotChannel:
+    """
+    Posts reports and alerts to specific channels via the bot token (SLK-3).
+
+    Unlike SlackWebhookChannel (which is tied to one webhook URL), this channel
+    uses chat.postMessage so reports go to SLACK_REPORTS_CHANNEL and alerts go
+    to SLACK_ALERTS_CHANNEL.  Alert messages include interactive buttons
+    (Investigate / Acknowledge / Snooze) that are handled by the running
+    fl-slack-bot Socket Mode app.
+
+    Required: SLACK_BOT_TOKEN
+    Optional: SLACK_REPORTS_CHANNEL (default: #firstlight-reports)
+              SLACK_ALERTS_CHANNEL  (default: #firstlight-alerts)
+    """
+
+    name = "slack-bot"
+
+    def __init__(
+        self,
+        bot_token: str,
+        reports_channel: str = "#firstlight-reports",
+        alerts_channel: str = "#firstlight-alerts",
+    ):
+        self._token = bot_token
+        self._reports_channel = reports_channel
+        self._alerts_channel = alerts_channel
+
+    async def _post_blocks(
+        self,
+        channel: str,
+        blocks: list[dict],
+        text: str = "",
+    ) -> Optional[str]:
+        """POST to chat.postMessage. Returns message ts on success."""
+        payload: dict = {"channel": channel, "blocks": blocks}
+        if text:
+            payload["text"] = text
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    "https://slack.com/api/chat.postMessage",
+                    headers={
+                        "Authorization": f"Bearer {self._token}",
+                        "Content-Type": "application/json; charset=utf-8",
+                    },
+                    json=payload,
+                )
+            data = resp.json()
+            if data.get("ok"):
+                return data.get("ts")
+            logger.warning(
+                "SlackBotChannel post to %s failed: %s", channel, data.get("error")
+            )
+            return None
+        except Exception as e:
+            logger.error("SlackBotChannel post error: %s", e)
+            return None
+
+    async def send_report(self, report: dict) -> None:
+        """Post the daily report to SLACK_REPORTS_CHANNEL as Block Kit blocks."""
+        report_text = report.get("report_text", "")
+        header = f"First Light Daily Report — {report.get('date', 'N/A')}"
+        body = _md_to_mrkdwn(report_text)
+        blocks = _build_blocks(header, body)
+
+        chunk_size = 48  # Slack hard limit: 50 blocks per message
+        for i in range(0, len(blocks), chunk_size):
+            await self._post_blocks(
+                self._reports_channel,
+                blocks[i : i + chunk_size],
+                text=header,
+            )
+        logger.info("Report sent to Slack channel %s (%d blocks)", self._reports_channel, len(blocks))
+
+    async def send_alert(self, message: str) -> None:
+        """
+        Post an alert to SLACK_ALERTS_CHANNEL with interactive buttons (SLK-2).
+
+        Buttons:
+          :mag: Investigate  — triggers a targeted query in-thread via fl-slack-bot
+          :white_check_mark: Acknowledge — marks alert seen, removes buttons
+          :zzz: Snooze 4h    — suppresses follow-up, removes buttons
+        """
+        text = _md_to_mrkdwn(message)
+
+        # Use the first non-empty line as the subject for the Investigate button
+        first_line = next(
+            (ln.lstrip("#").strip() for ln in message.strip().splitlines() if ln.strip()),
+            "Investigate this alert",
+        )
+        investigate_q = f"Investigate this alert: {first_line}"[:200]
+
+        blocks: list[dict] = [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": text[:_BLOCK_MAX]},
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": ":mag: Investigate", "emoji": True},
+                        "action_id": "alert_investigate",
+                        "value": investigate_q,
+                        "style": "danger",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": ":white_check_mark: Acknowledge", "emoji": True},
+                        "action_id": "alert_acknowledge",
+                        "value": "ack",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": ":zzz: Snooze 4h", "emoji": True},
+                        "action_id": "alert_snooze",
+                        "value": "240",
+                    },
+                ],
+            },
+        ]
+        await self._post_blocks(self._alerts_channel, blocks, text=first_line[:150])
+        logger.info("Alert sent to Slack channel %s", self._alerts_channel)
+
+
+def build_slack_bot_channel() -> Optional["SlackBotChannel"]:
+    """Build a SlackBotChannel from config, or None if SLACK_BOT_TOKEN is not set."""
+    import os
+    from agent.config import get_config
+    cfg = get_config()
+    if not cfg.slack_bot_token:
+        return None
+    reports_ch = os.getenv("SLACK_REPORTS_CHANNEL", "#firstlight-reports")
+    alerts_ch = os.getenv("SLACK_ALERTS_CHANNEL", "#firstlight-alerts")
+    return SlackBotChannel(cfg.slack_bot_token, reports_ch, alerts_ch)

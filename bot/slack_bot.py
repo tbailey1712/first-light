@@ -1,14 +1,23 @@
 """
-First Light Slack Bot (S3-03)
+First Light Slack Bot (SLK-1 — SLK-4)
 
 Uses Slack Bolt in Socket Mode — no public URL required. Listens for:
-  - App mentions (@firstlight <question>)
-  - /firstlight slash command with optional subcommands:
+  - App mentions (@firstlight <question>) — replies in-thread (SLK-2)
+  - Direct messages to the bot
+  - /firstlight slash command with subcommands:
       /firstlight status
       /firstlight report
+      /firstlight weekly
       /firstlight ask <question>
+      /firstlight help
+  - Interactive button actions on alert messages (SLK-2):
+      alert_investigate  — run an investigation query in-thread
+      alert_acknowledge  — mark alert as acknowledged (removes buttons)
+      alert_snooze       — snooze the alert for 4h (removes buttons)
 
-Conversation history per channel is stored in Redis (same structure as Telegram).
+Conversation history per thread (or channel for DMs) is stored in Redis
+keyed by thread_ts when available, otherwise by channel (SLK-4).
+TTL: 24h. Max turns: 20.
 
 Required env vars:
   SLACK_BOT_TOKEN   — xoxb-... (OAuth bot token)
@@ -32,7 +41,7 @@ logging.basicConfig(
 logger = logging.getLogger("slack_bot")
 
 _MSG_CHUNK = int(os.getenv("SLACK_MSG_CHUNK", "2800"))
-_HISTORY_TTL = 3600 * 4
+_HISTORY_TTL = 3600 * 24   # SLK-4: 24h
 _HISTORY_MAX_TURNS = 20
 
 # Module-level Redis singleton — avoids a new connection per message
@@ -57,38 +66,35 @@ def _get_redis():
         return None
 
 
-def _history_key(channel: str) -> str:
+def _history_key(channel: str, thread_ts: str | None = None) -> str:
+    """SLK-4: key by thread_ts when in a thread, otherwise by channel (DMs)."""
+    if thread_ts:
+        return f"slack:history:thread:{thread_ts}"
     return f"slack:history:{channel}"
 
 
-def _load_history(channel: str) -> list[dict]:
+def _load_history(channel: str, thread_ts: str | None = None) -> list[dict]:
     r = _get_redis()
     if not r:
         return []
     try:
-        raw = r.get(_history_key(channel))
+        raw = r.get(_history_key(channel, thread_ts))
         return json.loads(raw) if raw else []
     except Exception:
         return []
 
 
-def _save_history(channel: str, history: list[dict]) -> None:
+def _atomic_append_turns(
+    channel: str,
+    turns: list[dict],
+    thread_ts: str | None = None,
+    max_retries: int = 3,
+) -> None:
+    """Atomically append turns to conversation history using WATCH/MULTI/EXEC."""
     r = _get_redis()
     if not r:
         return
-    try:
-        trimmed = history[-_HISTORY_MAX_TURNS:]
-        r.setex(_history_key(channel), _HISTORY_TTL, json.dumps(trimmed))
-    except Exception:
-        pass
-
-
-def _atomic_append_turns(channel: str, turns: list[dict], max_retries: int = 3) -> None:
-    """Atomically append turns to Slack conversation history using WATCH/MULTI/EXEC."""
-    r = _get_redis()
-    if not r:
-        return
-    key = _history_key(channel)
+    key = _history_key(channel, thread_ts)
     for attempt in range(max_retries + 1):
         try:
             with r.pipeline() as pipe:
@@ -104,7 +110,8 @@ def _atomic_append_turns(channel: str, turns: list[dict], max_retries: int = 3) 
         except Exception as e:
             import redis as _redis
             if isinstance(e, _redis.WatchError) and attempt < max_retries:
-                import random, time as _time
+                import random
+                import time as _time
                 _time.sleep(random.uniform(0.05, 0.15))
                 continue
             try:
@@ -116,51 +123,62 @@ def _atomic_append_turns(channel: str, turns: list[dict], max_retries: int = 3) 
 
 # ── Message chunking ─────────────────────────────────────────────────────────────
 
-async def _post_chunks(say, text: str) -> None:
+async def _post_chunks(say, text: str, thread_ts: str | None = None) -> None:
     """Post a potentially long response as multiple messages."""
     chunks = split_message(text, _MSG_CHUNK)
     for i, chunk in enumerate(chunks):
         suffix = f"\n_(continued {i+1}/{len(chunks)})_" if len(chunks) > 1 else ""
-        await say(chunk + suffix)
+        if thread_ts:
+            await say(chunk + suffix, thread_ts=thread_ts)
+        else:
+            await say(chunk + suffix)
 
 
 # ── Query helper ─────────────────────────────────────────────────────────────────
 
-async def _run_query(question: str, channel: str, session_prefix: str = "slack") -> str:
-    """Run the interactive agent query with history. Returns answer text."""
-    history = _load_history(channel)
+async def _run_query(
+    question: str,
+    channel: str,
+    session_prefix: str = "slack",
+    thread_ts: str | None = None,
+) -> str:
+    """Run the interactive agent query with thread-keyed history. Returns answer text."""
+    history = _load_history(channel, thread_ts)
     try:
         from agent.graph import run_interactive_query
         answer = await run_interactive_query(
             question=question,
             history=history,
-            session_id=f"{session_prefix}-{channel}",
+            session_id=f"{session_prefix}-{thread_ts or channel}",
         )
         _atomic_append_turns(channel, [
             {"role": "user", "content": question},
             {"role": "assistant", "content": answer},
-        ])
+        ], thread_ts=thread_ts)
         return answer
     except Exception as e:
         logger.error("Slack query failed: %s", e, exc_info=True)
         return f":warning: Query failed: {e}"
 
 
-# ── Handler functions (registered inside _main to avoid module-level AsyncApp) ──
+# ── Event handlers ───────────────────────────────────────────────────────────────
 
 async def handle_mention(event, say):
-    """Handle @firstlight <question> mentions."""
+    """Handle @firstlight <question> mentions — reply in-thread (SLK-2)."""
     text = event.get("text", "")
     # Remove <@BOTID> prefix
     question = text.split(">", 1)[-1].strip() if ">" in text else text.strip()
     if not question:
-        await say("Hi! Ask me anything about your network, or use `/firstlight help`.")
+        thread_ts = event.get("ts")
+        await say("Hi! Ask me anything about your network, or use `/firstlight help`.", thread_ts=thread_ts)
         return
 
     channel = event.get("channel", "unknown")
-    await say(":hourglass_flowing_sand: Querying the network data...")
-    answer = await _run_query(question, channel)
-    await _post_chunks(say, answer)
+    # SLK-2: reply in the same thread as the mention
+    thread_ts = event.get("thread_ts") or event.get("ts")
+    await say(":hourglass_flowing_sand: Querying the network data...", thread_ts=thread_ts)
+    answer = await _run_query(question, channel, thread_ts=thread_ts)
+    await _post_chunks(say, answer, thread_ts=thread_ts)
 
 
 _GREETINGS = {"hi", "hey", "hello", "yo", "sup", "howdy"}
@@ -168,7 +186,6 @@ _GREETINGS = {"hi", "hey", "hello", "yo", "sup", "howdy"}
 
 async def handle_dm(event, say):
     """Handle direct messages to the bot."""
-    # Ignore bot messages and message edits
     if event.get("bot_id") or event.get("subtype"):
         return
     text = (event.get("text") or "").strip()
@@ -184,6 +201,88 @@ async def handle_dm(event, say):
     answer = await _run_query(question=text, channel=channel, session_prefix="slack-dm")
     await _post_chunks(say, answer)
 
+
+# ── Interactive button handlers (SLK-2) ──────────────────────────────────────────
+
+async def handle_investigate_action(ack, body, say, client):
+    """Investigate button on an alert — run a targeted query and reply in-thread."""
+    await ack()
+    question = body["actions"][0]["value"]
+    channel = body["channel"]["id"]
+    message_ts = body["message"]["ts"]
+
+    await say(
+        f":mag: *Investigating:* _{question[:120]}_",
+        thread_ts=message_ts,
+    )
+    answer = await _run_query(
+        question=question,
+        channel=channel,
+        session_prefix="slack-investigate",
+        thread_ts=message_ts,
+    )
+    await _post_chunks(say, answer, thread_ts=message_ts)
+
+
+async def handle_acknowledge_action(ack, body, client):
+    """Acknowledge button — removes action buttons and appends an acknowledgement note."""
+    await ack()
+    channel = body["channel"]["id"]
+    message_ts = body["message"]["ts"]
+    user_id = body["user"]["id"]
+
+    original_blocks = body["message"].get("blocks", [])
+    updated_blocks = [b for b in original_blocks if b.get("type") != "actions"]
+    updated_blocks.append({
+        "type": "context",
+        "elements": [{"type": "mrkdwn", "text": f":white_check_mark: Acknowledged by <@{user_id}>"}],
+    })
+    try:
+        await client.chat_update(
+            channel=channel,
+            ts=message_ts,
+            blocks=updated_blocks,
+            text="Alert acknowledged",
+        )
+    except Exception as e:
+        logger.error("Failed to acknowledge alert message: %s", e)
+
+
+async def handle_snooze_action(ack, body, client):
+    """Snooze button — stores snooze state in Redis, removes action buttons."""
+    await ack()
+    channel = body["channel"]["id"]
+    message_ts = body["message"]["ts"]
+    user_id = body["user"]["id"]
+    minutes = int(body["actions"][0]["value"] or "240")
+    hours = minutes // 60
+
+    # Store snooze so downstream alert senders can check before re-alerting
+    r = _get_redis()
+    if r:
+        try:
+            r.setex(f"slack:snooze:{channel}:{message_ts}", minutes * 60, user_id)
+        except Exception:
+            pass
+
+    original_blocks = body["message"].get("blocks", [])
+    updated_blocks = [b for b in original_blocks if b.get("type") != "actions"]
+    updated_blocks.append({
+        "type": "context",
+        "elements": [{"type": "mrkdwn", "text": f":zzz: Snoozed {hours}h by <@{user_id}>"}],
+    })
+    try:
+        await client.chat_update(
+            channel=channel,
+            ts=message_ts,
+            blocks=updated_blocks,
+            text=f"Alert snoozed {hours}h",
+        )
+    except Exception as e:
+        logger.error("Failed to snooze alert message: %s", e)
+
+
+# ── Slash command handler ─────────────────────────────────────────────────────────
 
 def _can_acquire_report_lock() -> bool:
     """Try to acquire the shared report lock. Returns True if acquired, False if already held."""
@@ -300,15 +399,22 @@ async def _main():
     if not bot_token:
         raise ValueError("SLACK_BOT_TOKEN is not set")
 
-    # Import here so module-level import doesn't fail when slack-bolt is installed
-    # but tokens are not yet configured (e.g., during test discovery)
     from slack_bolt.async_app import AsyncApp
     from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 
     app = AsyncApp(token=bot_token)
+
+    # Event handlers
     app.event("app_mention")(handle_mention)
     app.event({"type": "message", "channel_type": "im"})(handle_dm)
+
+    # Slash command
     app.command("/firstlight")(handle_slash)
+
+    # Interactive button actions (SLK-2)
+    app.action("alert_investigate")(handle_investigate_action)
+    app.action("alert_acknowledge")(handle_acknowledge_action)
+    app.action("alert_snooze")(handle_snooze_action)
 
     logger.info("First Light Slack bot starting (Socket Mode)...")
 
@@ -318,7 +424,6 @@ async def _main():
         try:
             handler = AsyncSocketModeHandler(app, app_token)
             await handler.start_async()
-            # start_async() returned cleanly (shouldn't happen in normal op — treat as disconnect)
             backoff = 5
         except asyncio.CancelledError:
             logger.info("Slack bot shutting down (CancelledError)")

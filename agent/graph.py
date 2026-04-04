@@ -28,6 +28,7 @@ from agent.tools.logs import (
     query_wireless_health,
     query_infrastructure_events,
     search_logs_by_ip,
+    search_logs_by_hostname,
 )
 from agent.tools.threat_intel_tools import (
     query_threat_intel_summary,
@@ -35,26 +36,53 @@ from agent.tools.threat_intel_tools import (
     query_threat_intel_coverage,
 )
 from agent.tools.qnap_tools import query_qnap_health, query_qnap_directory_sizes
-from agent.tools.proxmox_tools import query_proxmox_health
+from agent.tools.proxmox_tools import query_proxmox_health, query_proxmox_vm_configs
+from agent.tools.dns_tools import resolve_hostname, resolve_multiple_hostnames
+from agent.tools.crowdsec import query_crowdsec_metrics
+from agent.tools.cloudflare_tools import query_cloudflare_dns_records, query_cloudflare_access_apps
+from agent.tools.pbs import query_pbs_backup_status, query_pbs_prune_policies
+from agent.tools.switch_tools import query_switch_port_status
+from agent.tools.validator import query_validator_node_config
+from agent.tools.uptime_kuma import query_uptime_kuma_monitors
 
 
-# Full tool set available to the interactive agent (Sprint 3 adds validator + qnap directory)
+# Full tool set available to the interactive agent
 INTERACTIVE_TOOLS = [
+    # AdGuard DNS (via ClickHouse metrics)
     query_adguard_top_clients,
     query_adguard_block_rates,
     query_adguard_high_risk_clients,
     query_adguard_blocked_domains,
     query_adguard_traffic_by_type,
+    # Logs — security, wireless, infrastructure
     query_security_summary,
     query_wireless_health,
     query_infrastructure_events,
     search_logs_by_ip,
+    search_logs_by_hostname,
+    # Threat intelligence
     query_threat_intel_summary,
     lookup_ip_threat_intel,
     query_threat_intel_coverage,
+    # Hardware & infrastructure
     query_qnap_health,
     query_qnap_directory_sizes,
     query_proxmox_health,
+    query_proxmox_vm_configs,
+    # Backup & storage
+    query_pbs_backup_status,
+    query_pbs_prune_policies,
+    # Network services
+    query_crowdsec_metrics,
+    query_cloudflare_dns_records,
+    query_cloudflare_access_apps,
+    query_switch_port_status,
+    query_uptime_kuma_monitors,
+    # Validator
+    query_validator_node_config,
+    # DNS resolution
+    resolve_hostname,
+    resolve_multiple_hostnames,
 ]
 
 
@@ -119,7 +147,11 @@ You have tools to query:
 - **Wireless Health**: UniFi deauth events, client anomalies, roaming issues (query_wireless_health)
 - **Infrastructure**: Docker health checks, Home Assistant errors, Proxmox operations (query_infrastructure_events)
 - **IP Investigation**: Search all logs for a specific IP address (search_logs_by_ip)
-- **Hardware Health**: query_qnap_health (NAS volumes/disks/temps), query_proxmox_health (VMs/containers/storage)
+- **Hardware Health**: query_qnap_health (NAS volumes/disks/temps), query_proxmox_health (VMs/containers/storage), query_proxmox_vm_configs (detailed VM/CT config + backup job coverage)
+- **Backup**: query_pbs_backup_status (last backup per VM, stale/failed tasks), query_pbs_prune_policies (retention schedules per datastore)
+- **Network Services**: query_crowdsec_metrics (active decisions, alerts, parser hit rates), query_cloudflare_dns_records (all DNS records for mcducklabs.com), query_cloudflare_access_apps (Zero Trust Access apps), query_switch_port_status (port operational state and traffic), query_uptime_kuma_monitors (monitor status and notification config)
+- **Validator**: query_validator_node_config (Nimbus sync status, peer count, fee recipient, bloXroute BDN check)
+- **DNS**: resolve_hostname / resolve_multiple_hostnames — verify hostname resolution via system DNS (AdGuard)
 - **Threat Intelligence**: Enriched IP reputation from AbuseIPDB, VirusTotal, AlienVault:
   - query_threat_intel_summary(hours, min_score) — blocked IPs joined with threat scores, sorted by severity
   - lookup_ip_threat_intel(ip) — full reputation profile for a specific IP
