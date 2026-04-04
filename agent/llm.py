@@ -165,6 +165,7 @@ def run_react_loop(
     agent_name: str,
     agent_type: AgentType = "micro",
     session_id: Optional[str] = None,
+    max_iterations: int = MAX_TOOL_ITERATIONS,
 ) -> str:
     """
     ReAct tool-calling loop via LiteLLM.
@@ -191,7 +192,7 @@ def run_react_loop(
         {"role": "user", "content": user_prompt},
     ]
 
-    for _ in range(MAX_TOOL_ITERATIONS):
+    for _ in range(max_iterations):
         response = chat(
             messages,
             agent_type,

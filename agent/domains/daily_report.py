@@ -142,6 +142,7 @@ def run_network_flow_agent(
         query_switch_port_errors,
         query_pfsense_interface_traffic,
     )
+    from agent.tools.pfsense_dhcp import query_dhcp_device_inventory
 
     tools = [
         query_ntopng_alerts,
@@ -157,6 +158,7 @@ def run_network_flow_agent(
         query_switch_port_traffic,
         query_switch_port_errors,
         query_pfsense_interface_traffic,
+        query_dhcp_device_inventory,
     ]
     if not prompt_override:
         raise ValueError("network_flow agent requires a prompt — ensure Langfuse prompt 'first-light-network-flow' exists with label=production")

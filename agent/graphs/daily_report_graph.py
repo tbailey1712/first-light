@@ -66,6 +66,7 @@ LANGFUSE_PROMPT_NAMES = {
     "cloudflare":      "first-light-cloudflare",
     "synthesis":       "first-light-synthesis",
     "correlation":     "first-light-correlation",
+    "investigation":   "first-light-investigation",
 }
 
 # Redis key prefix for baseline storage
@@ -102,6 +103,13 @@ class DomainNodeInput(TypedDict):
     prompt_override: str
 
 
+class SuspiciousItem(TypedDict):
+    type: str           # "ip", "mac", "event"
+    value: str          # the IP / MAC / event description
+    reason: str         # why it's suspicious
+    source_domain: str  # which domain flagged it
+
+
 class DailyReportState(TypedDict):
     hours: int
     session_id: str
@@ -110,6 +118,8 @@ class DailyReportState(TypedDict):
     baseline: dict[str, Any]        # yesterday's metrics from Redis
     correlation_findings: str       # output of correlation pass
     final_report: Optional[str]
+    suspicious_items: list[SuspiciousItem]   # populated by synthesize Phase A
+    investigation_findings: Optional[str]    # populated by investigate node
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -192,7 +202,7 @@ def initialize(state: DailyReportState) -> dict:
     prompts = {}
 
     for domain, slug in LANGFUSE_PROMPT_NAMES.items():
-        if domain in ("synthesis", "correlation"):
+        if domain in ("synthesis", "correlation", "investigation"):
             prompts[domain] = manager.get_prompt(slug)
         else:
             prompts[domain] = manager.get_prompt(slug, hours=hours)
@@ -318,19 +328,62 @@ def correlate(state: DailyReportState) -> dict:
 
 
 def synthesize(state: DailyReportState) -> dict:
-    """Synthesis node — reads domain results + correlation findings, writes final report."""
+    """Synthesis node — reads domain results + correlation findings, writes final report.
+
+    Phase A: structured suspicious-item extraction (best-effort, never blocks report).
+    Phase B: full narrative synthesis.
+    """
     domain_summaries = {r["domain"]: r["summary"] for r in state["domain_results"]}
 
+    # ── Phase A: extract suspicious items for investigation ────────────────────
+    suspicious_items: list[SuspiciousItem] = []
+    try:
+        all_summaries = "\n\n---\n\n".join(
+            f"## {k.upper()}\n{v}" for k, v in domain_summaries.items()
+        )
+        if state.get("correlation_findings"):
+            all_summaries += f"\n\n---\n\n## CORRELATION\n{state['correlation_findings']}"
+
+        extraction_prompt = (
+            "You are a security triage assistant. Review the domain summaries below and "
+            "identify items that warrant deeper automated investigation. Return ONLY a JSON "
+            "array (no markdown, no explanation) of objects with keys: "
+            "type (ip/mac/event), value, reason, source_domain. "
+            "Include only genuine anomalies: external IPs with threat scores > 60, "
+            "internal IPs making unexpected cross-VLAN or external connections, "
+            "devices with unusual behaviour, events explicitly flagged as suspicious. "
+            "Return [] if nothing warrants investigation. Maximum 10 items.\n\n"
+            f"{all_summaries}"
+        )
+        extract_response = chat(
+            [{"role": "user", "content": extraction_prompt}],
+            "synthesis",
+            session_id=state["session_id"],
+            agent_name="synthesize/extract",
+        )
+        raw = (extract_response.choices[0].message.content or "").strip()
+        # Strip markdown fences if present
+        raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw, flags=re.MULTILINE).strip()
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            suspicious_items = parsed[:10]
+            if suspicious_items:
+                logger.info("Synthesis Phase A: %d suspicious items flagged for investigation", len(suspicious_items))
+    except Exception as e:
+        logger.warning("Synthesis Phase A (suspicious item extraction) failed: %s — continuing", e)
+
+    # ── Phase B: narrative synthesis ───────────────────────────────────────────
     synthesis_system = state["prompts"]["synthesis"]
 
-    # Inject baseline comparison context if available
     baseline_context = _format_baseline_context(state.get("baseline", {}))
     if baseline_context:
         synthesis_system = synthesis_system + f"\n\n{baseline_context}"
 
+    if suspicious_items:
+        synthesis_system += f"\n\nNote: {len(suspicious_items)} item(s) flagged for automated deep investigation — see Investigation Findings section that will follow this report."
+
     date_str = datetime.now().strftime("%Y-%m-%d")
 
-    # Build the user message — include correlation findings if present
     correlation_section = ""
     if state.get("correlation_findings"):
         correlation_section = f"""
@@ -363,13 +416,90 @@ def synthesize(state: DailyReportState) -> dict:
     final_report = response.choices[0].message.content or ""
     logger.info("Synthesis complete.")
 
-    # Extract baseline metrics from domain summaries for next run
-    # Best-effort — parse known patterns from the summaries
     new_baseline = _extract_baseline_metrics(domain_summaries)
     if new_baseline:
         _save_baseline(new_baseline)
 
-    return {"final_report": final_report}
+    return {"final_report": final_report, "suspicious_items": suspicious_items}
+
+
+@observe(as_type="span", capture_input=False, capture_output=False)
+def investigate(state: DailyReportState) -> dict:
+    """Deep-dive ReAct agent for suspicious items flagged during synthesis."""
+    from agent.tools.logs import search_logs_by_ip, query_outbound_blocks
+    from agent.tools.threat_intel_tools import lookup_ip_threat_intel
+    from agent.tools.ntopng import query_ntopng_flows_by_host, query_ntopng_active_hosts
+    from agent.tools.investigation import query_clickhouse_raw
+
+    from langfuse import get_client as get_langfuse_client
+    from opentelemetry import trace as otel_trace
+    from langfuse import LangfuseOtelSpanAttributes
+
+    lf = get_langfuse_client()
+    span = otel_trace.get_current_span()
+    span.set_attribute(LangfuseOtelSpanAttributes.TRACE_SESSION_ID, state["session_id"])
+
+    items = state.get("suspicious_items", [])
+    if not items:
+        return {"investigation_findings": None}
+
+    tools = [
+        search_logs_by_ip,
+        lookup_ip_threat_intel,
+        query_ntopng_flows_by_host,
+        query_ntopng_active_hosts,
+        query_outbound_blocks,
+        query_clickhouse_raw,
+    ]
+
+    item_lines = "\n".join(
+        f"  [{i+1}] type={item['type']} value={item['value']} "
+        f"source={item['source_domain']} reason={item['reason']}"
+        for i, item in enumerate(items)
+    )
+    user_msg = (
+        f"Investigate the following {len(items)} suspicious item(s) flagged during today's report:\n\n"
+        f"{item_lines}\n\n"
+        "For each item: gather evidence, assess severity (low/medium/high/critical), "
+        "identify the affected host, and recommend a specific action. "
+        "Use all available tools. Cross-reference across sources. "
+        "Produce a concise incident report grouped by item."
+    )
+
+    investigation_prompt = state["prompts"].get("investigation", "")
+    if not investigation_prompt:
+        investigation_prompt = (
+            "You are a network security incident investigator for First Light. "
+            "Investigate suspicious items using the available tools. "
+            "Produce structured findings: severity, evidence, affected hosts, recommended actions."
+        )
+
+    logger.info("Running investigation node for %d item(s)...", len(items))
+    try:
+        findings = run_react_loop(
+            investigation_prompt,
+            user_msg,
+            tools,
+            "investigate",
+            agent_type="supervisor",
+            session_id=state["session_id"],
+            max_iterations=20,
+        )
+    except Exception as e:
+        logger.error("Investigation node failed: %s", e, exc_info=True)
+        findings = f"Investigation failed: {e}"
+
+    lf.update_current_span(output=findings[:500])
+    return {"investigation_findings": findings}
+
+
+def append_investigation(state: DailyReportState) -> dict:
+    """Append investigation findings to the final report."""
+    report = state.get("final_report") or ""
+    findings = state.get("investigation_findings") or ""
+    if findings:
+        report += f"\n\n---\n\n## INCIDENT INVESTIGATION\n\n{findings}"
+    return {"final_report": report}
 
 
 def _extract_baseline_metrics(domain_summaries: dict[str, str]) -> dict[str, Any]:
@@ -486,17 +616,26 @@ def dispatch_domains(state: DailyReportState) -> list[Send]:
 
 # ── Graph ──────────────────────────────────────────────────────────────────────
 
+def should_investigate(state: DailyReportState) -> str:
+    """Route to investigate if synthesis flagged suspicious items, else END."""
+    return "investigate" if state.get("suspicious_items") else "end"
+
+
 _builder = StateGraph(DailyReportState)
 _builder.add_node("initialize", initialize)
 _builder.add_node("run_domain", run_domain)
 _builder.add_node("correlate", correlate)
 _builder.add_node("synthesize", synthesize)
+_builder.add_node("investigate", investigate)
+_builder.add_node("append_investigation", append_investigation)
 
 _builder.add_edge(START, "initialize")
 _builder.add_conditional_edges("initialize", dispatch_domains, ["run_domain"])
 _builder.add_edge("run_domain", "correlate")
 _builder.add_edge("correlate", "synthesize")
-_builder.add_edge("synthesize", END)
+_builder.add_conditional_edges("synthesize", should_investigate, {"investigate": "investigate", "end": END})
+_builder.add_edge("investigate", "append_investigation")
+_builder.add_edge("append_investigation", END)
 
 graph = _builder.compile()
 
@@ -537,6 +676,8 @@ def generate_daily_report(hours: int = 24) -> str:
         "baseline": {},
         "correlation_findings": "",
         "final_report": None,
+        "suspicious_items": [],
+        "investigation_findings": None,
     }
 
     result = graph.invoke(initial_state)
