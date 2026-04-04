@@ -42,19 +42,11 @@ def run_firewall_threat_agent(
     )
 
     from agent.tools.crowdsec import query_crowdsec_alerts, query_crowdsec_decisions
-    from agent.tools.cloudflare_tools import (
-        query_cloudflare_waf_events,
-        query_cloudflare_gateway_dns,
-        query_cloudflare_zone_analytics,
-    )
     tools = [
         query_threat_intel_summary, query_security_summary,
         query_auth_events, query_outbound_blocks,
         lookup_ip_threat_intel, query_threat_intel_coverage,
         query_crowdsec_alerts, query_crowdsec_decisions,
-        query_cloudflare_waf_events,
-        query_cloudflare_gateway_dns,
-        query_cloudflare_zone_analytics,
     ]
     if not prompt_override:
         raise ValueError("firewall_threat agent requires a prompt — ensure Langfuse prompt 'first-light-firewall-threat' exists with label=production")
@@ -285,3 +277,42 @@ def run_validator_agent(
     except Exception as e:
         logger.error(f"validator_agent failed: {e}", exc_info=True)
         return f"**Validator**: Agent failed — {e}"
+
+
+# ─────────────────────────────────────────────
+# Domain Agent: Cloudflare Edge Security
+# ─────────────────────────────────────────────
+
+CLOUDFLARE_USER = "Analyse Cloudflare edge security and external exposure for the past {hours} hours."
+
+
+def run_cloudflare_agent(
+    hours: int = 24,
+    prompt_override: str = "",
+    session_id: Optional[str] = None,
+) -> str:
+    """Run the Cloudflare edge security domain agent."""
+    from agent.tools.cloudflare_tools import (
+        query_cloudflare_waf_events,
+        query_cloudflare_gateway_dns,
+        query_cloudflare_zone_analytics,
+        query_cloudflare_dns_analytics,
+    )
+
+    tools = [
+        query_cloudflare_waf_events,
+        query_cloudflare_dns_analytics,
+        query_cloudflare_gateway_dns,
+        query_cloudflare_zone_analytics,
+    ]
+    if not prompt_override:
+        raise ValueError("cloudflare agent requires a prompt — ensure Langfuse prompt 'first-light-cloudflare' exists with label=production")
+    system = prompt_override.format(hours=hours)
+    user = CLOUDFLARE_USER.format(hours=hours)
+
+    logger.info("Running cloudflare_agent...")
+    try:
+        return run_react_loop(system, user, tools, "cloudflare", session_id=session_id)
+    except Exception as e:
+        logger.error(f"cloudflare_agent failed: {e}", exc_info=True)
+        return f"**Cloudflare**: Agent failed — {e}"

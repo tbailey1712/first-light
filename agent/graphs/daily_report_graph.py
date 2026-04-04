@@ -36,6 +36,7 @@ from agent.domains.daily_report import (
     run_infrastructure_agent,
     run_wireless_agent,
     run_validator_agent,
+    run_cloudflare_agent,
 )
 from langfuse import observe
 from agent.langfuse_integration import get_prompt_manager
@@ -52,6 +53,7 @@ DOMAIN_AGENTS = {
     "infrastructure":  run_infrastructure_agent,
     "wireless":        run_wireless_agent,
     "validator":       run_validator_agent,
+    "cloudflare":      run_cloudflare_agent,
 }
 
 LANGFUSE_PROMPT_NAMES = {
@@ -61,6 +63,7 @@ LANGFUSE_PROMPT_NAMES = {
     "infrastructure":  "first-light-infrastructure",
     "wireless":        "first-light-wireless",
     "validator":       "first-light-validator",
+    "cloudflare":      "first-light-cloudflare",
     "synthesis":       "first-light-synthesis",
     "correlation":     "first-light-correlation",
 }
@@ -346,6 +349,7 @@ def synthesize(state: DailyReportState) -> dict:
         infrastructure=domain_summaries.get("infrastructure", "No data"),
         wireless=domain_summaries.get("wireless", "No data"),
         validator=domain_summaries.get("validator", "No data"),
+        cloudflare=domain_summaries.get("cloudflare", "No data"),
         correlation_section=correlation_section,
     )
 
@@ -453,6 +457,11 @@ Analysis period: {date}, past {hours} hours
 
 ## ETHEREUM VALIDATOR
 {validator}
+
+---
+
+## CLOUDFLARE EDGE SECURITY
+{cloudflare}
 {correlation_section}
 ---
 

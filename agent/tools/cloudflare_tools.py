@@ -114,6 +114,11 @@ query WafEvents($zoneTag: String!, $from: Time!, $to: Time!) {
         clientIP
         clientCountryName
         ruleId
+        clientRequestHTTPHost
+        clientRequestPath
+        userAgent
+        clientASNDescription
+        datetime
       }
     }
   }
@@ -142,32 +147,64 @@ query WafEvents($zoneTag: String!, $from: Time!, $to: Time!) {
     by_action: dict = {}
     by_source: dict = {}
     by_country: dict = {}
-    ip_counts: dict = {}
+    by_host: dict = {}
+    ip_info: dict = {}  # ip -> {count, country, asn, paths}
+    path_counts: dict = {}
+    ua_counts: dict = {}
 
     for e in events:
         action = e.get("action", "unknown")
         source = e.get("source", "unknown")
         country = e.get("clientCountryName", "unknown")
         ip = e.get("clientIP", "unknown")
+        host = e.get("clientRequestHTTPHost", "unknown")
+        path = e.get("clientRequestPath", "/")
+        ua = e.get("userAgent", "")
+        asn = e.get("clientASNDescription", "")
 
         by_action[action] = by_action.get(action, 0) + 1
         by_source[source] = by_source.get(source, 0) + 1
         by_country[country] = by_country.get(country, 0) + 1
-        ip_counts[ip] = ip_counts.get(ip, 0) + 1
+        by_host[host] = by_host.get(host, 0) + 1
+        path_key = f"{host}{path}"
+        path_counts[path_key] = path_counts.get(path_key, 0) + 1
+
+        if ip not in ip_info:
+            ip_info[ip] = {"count": 0, "country": country, "asn": asn, "paths": set(), "hosts": set()}
+        ip_info[ip]["count"] += 1
+        ip_info[ip]["paths"].add(path)
+        ip_info[ip]["hosts"].add(host)
+
+        # Classify UA
+        ua_lower = ua.lower()
+        if not ua:
+            ua_class = "no_ua"
+        elif any(x in ua_lower for x in ["python", "curl", "wget", "go-http", "java", "libwww", "zgrab", "masscan", "nuclei", "sqlmap"]):
+            ua_class = "scanner"
+        elif any(x in ua_lower for x in ["mozilla", "chrome", "safari", "firefox", "edge"]):
+            ua_class = "browser_ua"  # may still be a bot
+        else:
+            ua_class = "other"
+        ua_counts[ua_class] = ua_counts.get(ua_class, 0) + 1
 
     top_countries = sorted(by_country.items(), key=lambda x: x[1], reverse=True)[:10]
-    top_ips = sorted(ip_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    top_hosts = sorted(by_host.items(), key=lambda x: x[1], reverse=True)[:10]
+    top_paths = sorted(path_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    top_ips = sorted(ip_info.items(), key=lambda x: x[1]["count"], reverse=True)[:10]
 
-    # Add country to top IPs
-    ip_country = {e.get("clientIP"): e.get("clientCountryName") for e in events}
     top_ips_detail = [
-        {"ip": ip, "count": cnt, "country": ip_country.get(ip)}
-        for ip, cnt in top_ips
+        {
+            "ip": ip,
+            "count": info["count"],
+            "country": info["country"],
+            "asn": info["asn"],
+            "targeted_hosts": list(info["hosts"]),
+            "paths": list(info["paths"])[:5],
+        }
+        for ip, info in top_ips
     ]
 
-    note = ""
-    if len(events) == 500:
-        note = "Result capped at 500 events — actual count may be higher"
+    note = "Result capped at 500 events — actual count may be higher" if len(events) == 500 else ""
 
     return json.dumps({
         "period_hours": min(hours, 23),
@@ -175,7 +212,10 @@ query WafEvents($zoneTag: String!, $from: Time!, $to: Time!) {
         "note": note,
         "by_action": {k: v for k, v in sorted(by_action.items(), key=lambda x: x[1], reverse=True)},
         "by_source": {k: v for k, v in sorted(by_source.items(), key=lambda x: x[1], reverse=True)},
+        "ua_classification": ua_counts,
         "top_countries": [{"country": c, "count": n} for c, n in top_countries],
+        "top_targeted_services": [{"host": h, "count": n} for h, n in top_hosts],
+        "top_attacked_paths": [{"path": p, "count": n} for p, n in top_paths],
         "top_ips": top_ips_detail,
     }, indent=2)
 
@@ -393,4 +433,112 @@ query ZoneAnalytics($zoneTag: String!, $from: Time!, $to: Time!) {
         "error_rate_pct": error_rate,
         "cache_by_status": by_cache,
         "top_countries": [{"country": c, "count": n} for c, n in top_countries],
+    }, indent=2)
+
+
+@tool
+def query_cloudflare_dns_analytics(hours: int = 24) -> str:
+    """Get authoritative DNS query analytics for mcducklabs.com in the last N hours.
+
+    Shows which subdomains are being resolved externally — useful for detecting
+    subdomain enumeration, reconnaissance, and identifying exposed services.
+    All subdomains in the results are publicly resolvable via Cloudflare DNS.
+
+    Args:
+        hours: Lookback window in hours (default: 24, capped at 23h)
+
+    Returns:
+        JSON with top queried subdomains, query types, response codes.
+    """
+    cfg = get_config()
+    headers = _cf_headers()
+    if not headers:
+        return json.dumps({"error": "CLOUDFLARE_API_TOKEN not set"})
+
+    zone_id = getattr(cfg, "cloudflare_zone_id", None)
+    if not zone_id:
+        return json.dumps({"error": "CLOUDFLARE_ZONE_ID not set"})
+
+    from_ts, to_ts = _time_range(hours)
+
+    query = """
+query DnsAnalytics($zoneTag: String!, $from: Time!, $to: Time!) {
+  viewer {
+    zones(filter: {zoneTag: $zoneTag}) {
+      dnsAnalyticsAdaptiveGroups(
+        limit: 200
+        filter: { datetime_geq: $from, datetime_leq: $to }
+        orderBy: [count_DESC]
+      ) {
+        count
+        dimensions {
+          queryName
+          queryType
+          responseCode
+        }
+      }
+    }
+  }
+}
+"""
+    try:
+        data = _graphql(
+            query,
+            {"zoneTag": zone_id, "from": from_ts, "to": to_ts},
+            headers,
+        )
+    except Exception as e:
+        return json.dumps({"error": f"Cloudflare DNS analytics GraphQL failed: {e}"})
+
+    errors = data.get("errors")
+    if errors:
+        return json.dumps({"error": f"DNS analytics errors: {[e.get('message') for e in errors]}"})
+
+    zones_data = data.get("data", {}).get("viewer", {}).get("zones", [])
+    if not zones_data:
+        return json.dumps({"total_queries": 0, "subdomains": []})
+
+    rows = zones_data[0].get("dnsAnalyticsAdaptiveGroups", [])
+
+    # Aggregate by subdomain
+    by_name: dict = {}
+    by_type: dict = {}
+    nxdomain: list = []
+    recon_indicators: list = []
+
+    for row in rows:
+        dims = row["dimensions"]
+        name = dims.get("queryName", "")
+        qtype = dims.get("queryType", "")
+        rcode = dims.get("responseCode", "")
+        cnt = row["count"]
+
+        by_name[name] = by_name.get(name, 0) + cnt
+        by_type[qtype] = by_type.get(qtype, 0) + cnt
+
+        if rcode == "NXDOMAIN":
+            nxdomain.append({"name": name, "type": qtype, "count": cnt})
+
+        # Flag suspicious patterns
+        name_lower = name.lower()
+        if (
+            # Random-looking subdomains (enumeration artifacts)
+            any(c.isdigit() for c in name[:8]) and len(name.split(".")[0]) > 8
+            # IP addresses encoded as subdomains (DNS rebinding probes)
+            or "_" in name and any(c.isdigit() for c in name)
+            # Known bad patterns
+            or "baidu" in name_lower or "test" in name_lower
+        ):
+            recon_indicators.append({"name": name, "count": cnt, "reason": "enum_or_rebind_probe"})
+
+    top_subdomains = sorted(by_name.items(), key=lambda x: x[1], reverse=True)
+
+    return json.dumps({
+        "period_hours": min(hours, 23),
+        "total_queries": sum(by_name.values()),
+        "unique_subdomains_queried": len(by_name),
+        "query_type_breakdown": {k: v for k, v in sorted(by_type.items(), key=lambda x: x[1], reverse=True)},
+        "top_subdomains": [{"name": n, "count": c} for n, c in top_subdomains[:30]],
+        "nxdomain_queries": sorted(nxdomain, key=lambda x: x["count"], reverse=True)[:10],
+        "recon_indicators": sorted(recon_indicators, key=lambda x: x["count"], reverse=True)[:10],
     }, indent=2)
