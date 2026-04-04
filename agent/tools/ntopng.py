@@ -263,21 +263,57 @@ def query_ntopng_flows_by_host(
     Args:
         host_ip: IP address to filter flows for (e.g. "1.1.1.1" or "192.168.2.45")
         ifid: Interface ID (default: 3)
-        perPage: Number of flows to return (default: 50)
+        perPage: Number of flows to return (default: 50, capped at 200 fetched)
 
     Returns:
         JSON with flows involving the host including peer IPs, ports, bytes, protocol.
     """
     config = get_config()
     if not config.ntopng_host:
-        return "Error: ntopng_host not configured in .env"
-    return _get("/lua/rest/v2/get/flow/active.lua", {
+        return json.dumps({"error": "ntopng_host not configured in .env"})
+
+    # ntopng Community Edition does not support server-side host filtering on
+    # /flow/active.lua — fetch a broader set and filter client-side.
+    raw = _get("/lua/rest/v2/get/flow/active.lua", {
         "ifid": ifid,
-        "host": host_ip,
-        "perPage": perPage,
+        "perPage": 200,
         "sortColumn": "bytes",
         "sortOrder": "desc",
     })
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return raw
+
+    if "error" in data:
+        return raw
+
+    flows_data = data.get("rsp", {})
+    if isinstance(flows_data, dict):
+        all_flows = flows_data.get("data", [])
+    else:
+        all_flows = []
+
+    matched = []
+    for f in all_flows:
+        client_ip = f.get("client", {}).get("ip", "")
+        server_ip = f.get("server", {}).get("ip", "")
+        if host_ip in (client_ip, server_ip):
+            matched.append({
+                "client_ip": client_ip,
+                "server_ip": server_ip,
+                "client_port": f.get("client", {}).get("port"),
+                "server_port": f.get("server", {}).get("port"),
+                "l7_proto": f.get("proto", {}).get("l7", ""),
+                "bytes": f.get("thpt", {}).get("bps", 0),
+                "vlan": f.get("vlan", 0),
+                "first_seen": f.get("first_seen"),
+                "last_seen": f.get("last_seen"),
+            })
+        if len(matched) >= perPage:
+            break
+
+    return json.dumps({"host": host_ip, "total_flows": len(matched), "flows": matched}, indent=2)
 
 
 @tool

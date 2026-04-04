@@ -1,15 +1,14 @@
 """
 Daily Report Graph — LangGraph implementation.
 
-Six domain agents run via LangGraph Send API fan-out, results collected
-via operator.add reducer, then passed through a correlation pass before
-a final synthesis node.
+Domain agents run in parallel via ThreadPoolExecutor, results collected
+then passed through a correlation pass before a final synthesis node.
 
 Flow:
   START
-    └─ initialize  (fetch Langfuse prompts, load Redis baseline)
-         └─ [Send x6]  run_domain  (fan-out)
-              └─ correlate  (cross-domain IP/device lookups)
+    └─ initialize          (fetch Langfuse prompts, load Redis baseline)
+         └─ run_domains_parallel  (all domain agents concurrently)
+              └─ correlate        (cross-domain IP/device lookups)
                    └─ synthesize  (writes final report, saves baseline)
                         └─ END
 
@@ -23,11 +22,11 @@ import json
 import logging
 import operator
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Annotated, Any, Optional, TypedDict
 
 from langgraph.graph import StateGraph, START, END
-from langgraph.types import Send
 
 from agent.domains.daily_report import (
     run_firewall_threat_agent,
@@ -94,13 +93,6 @@ class DomainResult(TypedDict):
     domain: str
     summary: str
     flagged_ips: list[str]      # IPs extracted from summary for correlation pass
-
-
-class DomainNodeInput(TypedDict):
-    domain: str
-    hours: int
-    session_id: str
-    prompt_override: str
 
 
 class SuspiciousItem(TypedDict):
@@ -218,26 +210,39 @@ def initialize(state: DailyReportState) -> dict:
     return {"prompts": prompts, "baseline": baseline}
 
 
-def run_domain(state: DomainNodeInput) -> dict:
-    """Single domain node, invoked 6 times via Send fan-out."""
-    domain_name = state["domain"]
+def run_domains_parallel(state: DailyReportState) -> dict:
+    """Run all domain agents in parallel using a thread pool."""
     hours = state["hours"]
     session_id = state["session_id"]
-    prompt_override = state.get("prompt_override") or ""
+    prompts = state["prompts"]
 
-    fn = DOMAIN_AGENTS[domain_name]
-    logger.info("Running %s (Langfuse prompt)...", domain_name)
-    try:
-        summary = fn(hours, prompt_override=prompt_override, session_id=session_id)
-    except Exception as e:
-        logger.error(f"Domain node '{domain_name}' failed: {e}", exc_info=True)
-        summary = f"**{domain_name}**: Agent failed — {e}"
+    def _run_one(domain_name: str) -> dict:
+        prompt_override = prompts.get(domain_name, "")
+        fn = DOMAIN_AGENTS[domain_name]
+        logger.info("Starting domain agent: %s", domain_name)
+        try:
+            summary = fn(hours, prompt_override=prompt_override, session_id=session_id)
+        except Exception as e:
+            logger.error(f"Domain '{domain_name}' failed: {e}", exc_info=True)
+            summary = f"**{domain_name}**: Agent failed — {e}"
 
-    flagged_ips = _extract_ips(summary)
-    if flagged_ips:
-        logger.info(f"{domain_name}: extracted {len(flagged_ips)} IPs for correlation")
+        flagged_ips = _extract_ips(summary)
+        if flagged_ips:
+            logger.info(f"{domain_name}: extracted {len(flagged_ips)} IPs for correlation")
+        return {"domain": domain_name, "summary": summary, "flagged_ips": flagged_ips}
 
-    return {"domain_results": [{"domain": domain_name, "summary": summary, "flagged_ips": flagged_ips}]}
+    results = []
+    with ThreadPoolExecutor(max_workers=len(DOMAIN_AGENTS)) as executor:
+        futures = {executor.submit(_run_one, name): name for name in DOMAIN_AGENTS}
+        for future in as_completed(futures):
+            try:
+                results.append(future.result())
+            except Exception as e:
+                name = futures[future]
+                logger.error(f"Domain thread '{name}' raised: {e}", exc_info=True)
+                results.append({"domain": name, "summary": f"**{name}**: Agent failed — {e}", "flagged_ips": []})
+
+    return {"domain_results": results}
 
 
 @observe(as_type="span", capture_input=False, capture_output=False)
@@ -603,21 +608,6 @@ Write the final synthesized report now.
 """
 
 
-# ── Routing ────────────────────────────────────────────────────────────────────
-
-def dispatch_domains(state: DailyReportState) -> list[Send]:
-    """Fan-out: emit one Send per domain agent."""
-    return [
-        Send("run_domain", {
-            "domain": domain_name,
-            "hours": state["hours"],
-            "session_id": state["session_id"],
-            "prompt_override": state["prompts"].get(domain_name, ""),
-        })
-        for domain_name in DOMAIN_AGENTS
-    ]
-
-
 # ── Graph ──────────────────────────────────────────────────────────────────────
 
 def should_investigate(state: DailyReportState) -> str:
@@ -627,15 +617,15 @@ def should_investigate(state: DailyReportState) -> str:
 
 _builder = StateGraph(DailyReportState)
 _builder.add_node("initialize", initialize)
-_builder.add_node("run_domain", run_domain)
+_builder.add_node("run_domains_parallel", run_domains_parallel)
 _builder.add_node("correlate", correlate)
 _builder.add_node("synthesize", synthesize)
 _builder.add_node("investigate", investigate)
 _builder.add_node("append_investigation", append_investigation)
 
 _builder.add_edge(START, "initialize")
-_builder.add_conditional_edges("initialize", dispatch_domains, ["run_domain"])
-_builder.add_edge("run_domain", "correlate")
+_builder.add_edge("initialize", "run_domains_parallel")
+_builder.add_edge("run_domains_parallel", "correlate")
 _builder.add_edge("correlate", "synthesize")
 _builder.add_conditional_edges("synthesize", should_investigate, {"investigate": "investigate", "end": END})
 _builder.add_edge("investigate", "append_investigation")
