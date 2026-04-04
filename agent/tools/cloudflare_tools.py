@@ -2,6 +2,11 @@
 Cloudflare security tools — queries WAF events, Zero Trust Gateway DNS blocks,
 and zone traffic analytics via the Cloudflare GraphQL Analytics API.
 
+Confirmed-working GraphQL datasets (tested against live CF account):
+  - firewallEventsAdaptive (individual events, max 500/query)
+  - gatewayResolverQueriesAdaptiveGroups (resolverDecision: 9=block, 5=allow/no-policy, 10=explicit-allow)
+  - httpRequestsAdaptiveGroups (count + dimensions only, no sum block needed)
+
 Required env vars:
   CLOUDFLARE_API_TOKEN   — API token with Zone:Analytics:Read + Zone:Firewall:Read
                            + Account:Zero Trust:Read (for Gateway DNS)
@@ -22,7 +27,13 @@ from agent.config import get_config
 logger = logging.getLogger(__name__)
 
 _CF_GRAPHQL = "https://api.cloudflare.com/client/v4/graphql"
-_CF_API = "https://api.cloudflare.com/client/v4"
+
+# resolverDecision codes for gatewayResolverQueriesAdaptiveGroups
+_GATEWAY_DECISIONS = {
+    5: "allowed_no_policy",   # no policy matched, allowed by default
+    9: "blocked",             # blocked by a Gateway policy
+    10: "allowed_by_policy",  # explicitly allowed by a rule
+}
 
 
 def _cf_headers() -> Optional[dict]:
@@ -38,9 +49,14 @@ def _cf_headers() -> Optional[dict]:
 
 
 def _time_range(hours: int) -> tuple[str, str]:
-    """Return (from_iso, to_iso) for the last N hours in UTC."""
+    """Return (from_iso, to_iso) for the last N hours in UTC.
+
+    Note: Cloudflare GraphQL enforces a 1-day max range on free/pro plans.
+    We cap at 23h to stay safely within limit.
+    """
     to_dt = datetime.now(timezone.utc)
-    from_dt = to_dt - timedelta(hours=hours)
+    effective_hours = min(hours, 23)
+    from_dt = to_dt - timedelta(hours=effective_hours)
     fmt = "%Y-%m-%dT%H:%M:%SZ"
     return from_dt.strftime(fmt), to_dt.strftime(fmt)
 
@@ -59,16 +75,16 @@ def _graphql(query: str, variables: dict, headers: dict) -> dict:
 
 @tool
 def query_cloudflare_waf_events(hours: int = 24) -> str:
-    """Get Cloudflare WAF and firewall events for the last N hours.
+    """Get Cloudflare WAF and firewall events for mcducklabs.com in the last N hours.
 
-    Covers: WAF rule blocks, rate limit bans, managed rules, custom rules,
-    DDoS mitigation actions, bot management challenges.
+    Covers: WAF rule blocks, managed rules, custom rules, rate limit bans.
+    These are requests stopped at Cloudflare's edge before reaching origin.
 
     Args:
-        hours: Lookback window in hours (default: 24)
+        hours: Lookback window in hours (default: 24, capped at 23h by CF plan limit)
 
     Returns:
-        JSON with action breakdown, top blocked IPs, countries, and rule IDs.
+        JSON with total events, action breakdown, top countries, top blocked IPs, rule sources.
     """
     cfg = get_config()
     headers = _cf_headers()
@@ -81,41 +97,23 @@ def query_cloudflare_waf_events(hours: int = 24) -> str:
 
     from_ts, to_ts = _time_range(hours)
 
-    # Aggregated WAF events grouped by action + source + country
+    # firewallEventsAdaptive returns individual events (not grouped).
+    # firewallEventsAdaptiveGroups requires Business/Enterprise plan.
+    # We fetch up to 500 individual events and aggregate in Python.
     query = """
-query WafEventsGrouped(
-  $zoneTag: String!
-  $from: Time!
-  $to: Time!
-) {
+query WafEvents($zoneTag: String!, $from: Time!, $to: Time!) {
   viewer {
     zones(filter: {zoneTag: $zoneTag}) {
-      actionGroups: firewallEventsAdaptiveGroups(
-        limit: 100
+      firewallEventsAdaptive(
+        limit: 500
         filter: { datetime_geq: $from, datetime_leq: $to }
-        orderBy: [count_DESC]
+        orderBy: [datetime_DESC]
       ) {
-        count
-        dimensions {
-          action
-          source
-          clientCountryName
-          ruleId
-        }
-      }
-      topIPs: firewallEventsAdaptiveGroups(
-        limit: 20
-        filter: { datetime_geq: $from, datetime_leq: $to, action_neq: "allow" }
-        orderBy: [count_DESC]
-      ) {
-        count
-        dimensions {
-          clientIP
-          clientCountryName
-          action
-          clientRequestHTTPHost
-          userAgent
-        }
+        action
+        source
+        clientIP
+        clientCountryName
+        ruleId
       }
     }
   }
@@ -132,58 +130,53 @@ query WafEventsGrouped(
 
     errors = data.get("errors")
     if errors:
-        return json.dumps({"error": f"GraphQL errors: {errors}"})
+        return json.dumps({"error": f"GraphQL errors: {[e.get('message') for e in errors]}"})
 
     zones_data = data.get("data", {}).get("viewer", {}).get("zones", [])
     if not zones_data:
-        return json.dumps({"waf_events": [], "top_ips": [], "total_events": 0})
+        return json.dumps({"total_events": 0, "by_action": {}, "by_source": {}, "top_countries": [], "top_ips": []})
 
-    zone = zones_data[0]
-    action_groups = zone.get("actionGroups", [])
-    top_ips = zone.get("topIPs", [])
+    events = zones_data[0].get("firewallEventsAdaptive", [])
 
-    # Aggregate by action
-    action_summary: dict = {}
+    # Aggregate
+    by_action: dict = {}
     by_source: dict = {}
     by_country: dict = {}
-    total = 0
+    ip_counts: dict = {}
 
-    for group in action_groups:
-        cnt = group["count"]
-        total += cnt
-        dims = group["dimensions"]
-        action = dims.get("action", "unknown")
-        source = dims.get("source", "unknown")
-        country = dims.get("clientCountryName", "unknown")
+    for e in events:
+        action = e.get("action", "unknown")
+        source = e.get("source", "unknown")
+        country = e.get("clientCountryName", "unknown")
+        ip = e.get("clientIP", "unknown")
 
-        action_summary[action] = action_summary.get(action, 0) + cnt
-        by_source[source] = by_source.get(source, 0) + cnt
-        by_country[country] = by_country.get(country, 0) + cnt
+        by_action[action] = by_action.get(action, 0) + 1
+        by_source[source] = by_source.get(source, 0) + 1
+        by_country[country] = by_country.get(country, 0) + 1
+        ip_counts[ip] = ip_counts.get(ip, 0) + 1
 
-    # Top blocked IPs (exclude action=allow)
-    blocked_ips = []
-    for group in top_ips:
-        dims = group["dimensions"]
-        if dims.get("action") == "allow":
-            continue
-        blocked_ips.append({
-            "ip": dims.get("clientIP"),
-            "country": dims.get("clientCountryName"),
-            "action": dims.get("action"),
-            "host": dims.get("clientRequestHTTPHost"),
-            "count": group["count"],
-        })
-
-    # Top countries (non-allow)
     top_countries = sorted(by_country.items(), key=lambda x: x[1], reverse=True)[:10]
+    top_ips = sorted(ip_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    # Add country to top IPs
+    ip_country = {e.get("clientIP"): e.get("clientCountryName") for e in events}
+    top_ips_detail = [
+        {"ip": ip, "count": cnt, "country": ip_country.get(ip)}
+        for ip, cnt in top_ips
+    ]
+
+    note = ""
+    if len(events) == 500:
+        note = "Result capped at 500 events — actual count may be higher"
 
     return json.dumps({
-        "period_hours": hours,
-        "total_security_events": total,
-        "by_action": action_summary,
+        "period_hours": min(hours, 23),
+        "total_events": len(events),
+        "note": note,
+        "by_action": {k: v for k, v in sorted(by_action.items(), key=lambda x: x[1], reverse=True)},
         "by_source": {k: v for k, v in sorted(by_source.items(), key=lambda x: x[1], reverse=True)},
         "top_countries": [{"country": c, "count": n} for c, n in top_countries],
-        "top_blocked_ips": blocked_ips[:15],
+        "top_ips": top_ips_detail,
     }, indent=2)
 
 
@@ -191,14 +184,18 @@ query WafEventsGrouped(
 def query_cloudflare_gateway_dns(hours: int = 24) -> str:
     """Get Cloudflare Zero Trust Gateway DNS activity for the last N hours.
 
-    Shows blocked domains, policy decisions, and top DNS query patterns from
-    Cloudflare's DNS-over-HTTPS Gateway (the external DNS filter layer).
+    Gateway is the external DNS-over-HTTPS filter — external vantage point
+    complementing AdGuard (internal). Shows what Cloudflare is blocking for
+    devices using the Gateway resolver.
+
+    resolverDecision codes: 9=blocked by policy, 5=allowed (no policy matched),
+    10=allowed by explicit policy rule.
 
     Args:
-        hours: Lookback window in hours (default: 24)
+        hours: Lookback window in hours (default: 24, capped at 23h)
 
     Returns:
-        JSON with blocked domains, policy decisions, and query stats.
+        JSON with query totals, decision breakdown, top blocked domains and policies.
     """
     cfg = get_config()
     headers = _cf_headers()
@@ -212,26 +209,20 @@ def query_cloudflare_gateway_dns(hours: int = 24) -> str:
     from_ts, to_ts = _time_range(hours)
 
     query = """
-query GatewayDns(
-  $accountTag: String!
-  $from: Time!
-  $to: Time!
-) {
+query GatewayDns($accountTag: String!, $from: Time!, $to: Time!) {
   viewer {
     accounts(filter: {accountTag: $accountTag}) {
-      topDomains: gatewayResolverQueriesAdaptiveGroups(
-        limit: 100
-        filter: {
-          datetime_geq: $from
-          datetime_leq: $to
-        }
+      gatewayResolverQueriesAdaptiveGroups(
+        limit: 200
+        filter: { datetime_geq: $from, datetime_leq: $to }
         orderBy: [count_DESC]
       ) {
         count
         dimensions {
           queryName
-          policyDecision
+          resolverDecision
           policyName
+          policyId
         }
       }
     }
@@ -249,67 +240,65 @@ query GatewayDns(
 
     errors = data.get("errors")
     if errors:
-        # Gateway analytics may require Zero Trust plan — surface helpful error
-        error_msgs = [e.get("message", str(e)) for e in errors]
         return json.dumps({
-            "error": f"Gateway DNS GraphQL errors (check Zero Trust plan + token permissions): {error_msgs}"
+            "error": f"Gateway DNS errors: {[e.get('message') for e in errors]}"
         })
 
     accounts_data = data.get("data", {}).get("viewer", {}).get("accounts", [])
     if not accounts_data:
-        return json.dumps({"blocked_domains": [], "decision_summary": {}, "total_queries": 0})
+        return json.dumps({"total_queries": 0, "blocked": 0, "top_blocked_domains": []})
 
-    acct = accounts_data[0]
+    rows = accounts_data[0].get("gatewayResolverQueriesAdaptiveGroups", [])
 
-    # Split by decision from single query
-    decisions: dict = {}
-    blocked = []
-    allowed_top = []
+    # Aggregate by decision code
+    decision_totals: dict = {}
+    blocked_domains: list = []
+    policy_counts: dict = {}
+    total = 0
 
-    for group in acct.get("topDomains", []):
-        dims = group["dimensions"]
-        decision = dims.get("policyDecision", "unknown")
-        cnt = group["count"]
-        decisions[decision] = decisions.get(decision, 0) + cnt
+    for row in rows:
+        dims = row["dimensions"]
+        cnt = row["count"]
+        total += cnt
+        decision_code = dims.get("resolverDecision", 0)
+        decision_label = _GATEWAY_DECISIONS.get(decision_code, f"code_{decision_code}")
+        decision_totals[decision_label] = decision_totals.get(decision_label, 0) + cnt
 
-        if decision == "block":
-            blocked.append({
+        if decision_code == 9:  # blocked
+            policy = dims.get("policyName") or "unknown policy"
+            blocked_domains.append({
                 "domain": dims.get("queryName"),
-                "policy": dims.get("policyName"),
-                "decision": decision,
+                "policy": policy,
                 "count": cnt,
             })
-        elif decision == "allow" and len(allowed_top) < 10:
-            allowed_top.append({
-                "domain": dims.get("queryName"),
-                "count": cnt,
-            })
+            policy_counts[policy] = policy_counts.get(policy, 0) + cnt
 
-    total = sum(decisions.values())
-    blocked.sort(key=lambda x: x["count"], reverse=True)
+    blocked_total = decision_totals.get("blocked", 0)
+    block_rate = round(blocked_total / total * 100, 2) if total else 0
 
     return json.dumps({
-        "period_hours": hours,
+        "period_hours": min(hours, 23),
         "total_queries": total,
-        "decision_summary": decisions,
-        "block_rate_pct": round(decisions.get("block", 0) / total * 100, 2) if total else 0,
-        "top_blocked_domains": blocked[:20],
-        "top_allowed_domains": allowed_top,
+        "decision_breakdown": decision_totals,
+        "blocked_total": blocked_total,
+        "block_rate_pct": block_rate,
+        "blocks_by_policy": {k: v for k, v in sorted(policy_counts.items(), key=lambda x: x[1], reverse=True)},
+        "top_blocked_domains": sorted(blocked_domains, key=lambda x: x["count"], reverse=True)[:20],
     }, indent=2)
 
 
 @tool
 def query_cloudflare_zone_analytics(hours: int = 24) -> str:
-    """Get Cloudflare zone-level traffic analytics for the last N hours.
+    """Get Cloudflare zone-level traffic analytics for mcducklabs.com in the last N hours.
 
-    Shows overall request volume, threats mitigated, bot traffic percentage,
-    cache performance, and bandwidth served vs origin.
+    Shows overall request volume, response status distribution, cache performance,
+    and top requesting countries.
 
     Args:
-        hours: Lookback window in hours (default: 24)
+        hours: Lookback window in hours (default: 24, capped at 23h)
 
     Returns:
-        JSON with traffic totals, threat breakdown, and cache stats.
+        JSON with request totals, status code distribution, cache stats, top countries.
     """
     cfg = get_config()
     headers = _cf_headers()
@@ -323,51 +312,28 @@ def query_cloudflare_zone_analytics(hours: int = 24) -> str:
     from_ts, to_ts = _time_range(hours)
 
     query = """
-query ZoneAnalytics(
-  $zoneTag: String!
-  $from: Time!
-  $to: Time!
-) {
+query ZoneAnalytics($zoneTag: String!, $from: Time!, $to: Time!) {
   viewer {
     zones(filter: {zoneTag: $zoneTag}) {
-      requests: httpRequestsAdaptiveGroups(
-        limit: 10
+      byStatus: httpRequestsAdaptiveGroups(
+        limit: 50
         filter: { datetime_geq: $from, datetime_leq: $to }
         orderBy: [count_DESC]
       ) {
         count
-        sum {
-          bytes
-          cachedRequests
-        }
         dimensions {
+          edgeResponseStatus
           cacheStatus
         }
       }
-      threats: httpRequestsAdaptiveGroups(
+      byCountry: httpRequestsAdaptiveGroups(
         limit: 20
-        filter: {
-          datetime_geq: $from
-          datetime_leq: $to
-          securityLevel_neq: "off"
-        }
-        orderBy: [count_DESC]
-      ) {
-        count
-        dimensions {
-          securityLevel
-          clientCountryName
-        }
-      }
-      topPaths: httpRequestsAdaptiveGroups(
-        limit: 10
         filter: { datetime_geq: $from, datetime_leq: $to }
         orderBy: [count_DESC]
       ) {
         count
         dimensions {
-          clientRequestPath
-          edgeResponseStatus
+          clientCountryName
         }
       }
     }
@@ -385,65 +351,46 @@ query ZoneAnalytics(
 
     errors = data.get("errors")
     if errors:
-        error_msgs = [e.get("message", str(e)) for e in errors]
-        return json.dumps({"error": f"Zone analytics GraphQL errors: {error_msgs}"})
+        return json.dumps({"error": f"Zone analytics errors: {[e.get('message') for e in errors]}"})
 
     zones_data = data.get("data", {}).get("viewer", {}).get("zones", [])
     if not zones_data:
-        return json.dumps({"total_requests": 0, "threats": {}, "cache": {}})
+        return json.dumps({"total_requests": 0})
 
     zone = zones_data[0]
 
-    # Request totals and cache stats
+    # Request totals and status distribution
     total_requests = 0
-    total_bytes = 0
-    cached_bytes = 0
-    cache_by_status: dict = {}
+    by_status: dict = {}
+    by_cache: dict = {}
 
-    total_cached_requests = 0
-    for group in zone.get("requests", []):
+    for group in zone.get("byStatus", []):
         cnt = group["count"]
         total_requests += cnt
-        sums = group.get("sum") or {}
-        total_bytes += sums.get("bytes") or 0
-        total_cached_requests += sums.get("cachedRequests") or 0
-        status = group["dimensions"].get("cacheStatus", "unknown")
-        cache_by_status[status] = cache_by_status.get(status, 0) + cnt
+        status = group["dimensions"].get("edgeResponseStatus", 0)
+        cache = group["dimensions"].get("cacheStatus", "unknown")
+        status_class = f"{status // 100}xx" if status else "unknown"
+        by_status[status_class] = by_status.get(status_class, 0) + cnt
+        by_cache[cache] = by_cache.get(cache, 0) + cnt
 
-    cache_hit_pct = round(total_cached_requests / total_requests * 100, 1) if total_requests else 0
-
-    # Threat/security breakdown
-    threat_summary: dict = {}
-    by_country: dict = {}
-    for group in zone.get("threats", []):
-        cnt = group["count"]
-        level = group["dimensions"].get("securityLevel", "unknown")
+    # Top countries
+    country_counts: dict = {}
+    for group in zone.get("byCountry", []):
         country = group["dimensions"].get("clientCountryName", "unknown")
-        if level not in ("off", "essentially_off"):
-            threat_summary[level] = threat_summary.get(level, 0) + cnt
-            by_country[country] = by_country.get(country, 0) + cnt
+        country_counts[country] = country_counts.get(country, 0) + group["count"]
 
-    top_threat_countries = sorted(by_country.items(), key=lambda x: x[1], reverse=True)[:8]
+    top_countries = sorted(country_counts.items(), key=lambda x: x[1], reverse=True)[:10]
 
-    # Top paths (4xx/5xx indicate scanning or attack surface issues)
-    top_paths = []
-    for group in zone.get("topPaths", [])[:10]:
-        dims = group["dimensions"]
-        status = dims.get("edgeResponseStatus", 0)
-        top_paths.append({
-            "path": dims.get("clientRequestPath"),
-            "status": status,
-            "count": group["count"],
-            "anomalous": status in (400, 403, 404, 429, 500, 502, 503),
-        })
+    # Flag anomalous status codes
+    error_requests = by_status.get("4xx", 0) + by_status.get("5xx", 0)
+    error_rate = round(error_requests / total_requests * 100, 1) if total_requests else 0
 
     return json.dumps({
-        "period_hours": hours,
+        "period_hours": min(hours, 23),
         "total_requests": total_requests,
-        "total_bytes_gb": round(total_bytes / 1e9, 3),
-        "cache_hit_pct": cache_hit_pct,
-        "cache_by_status": cache_by_status,
-        "security_events": threat_summary,
-        "threat_countries": [{"country": c, "count": n} for c, n in top_threat_countries],
-        "top_paths": top_paths,
+        "by_status_class": {k: v for k, v in sorted(by_status.items(), key=lambda x: x[1], reverse=True)},
+        "error_requests": error_requests,
+        "error_rate_pct": error_rate,
+        "cache_by_status": by_cache,
+        "top_countries": [{"country": c, "count": n} for c, n in top_countries],
     }, indent=2)
