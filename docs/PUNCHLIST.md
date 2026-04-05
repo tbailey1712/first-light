@@ -57,11 +57,9 @@ Stale finding from Mar 7 audit. Parser is live in the OTel pipeline at `otel-col
 
 ### Data Gaps
 
-**DG-1: UniFi Controller API tools** (was DATA-4 in improvement plan)
-Wireless domain currently only uses syslog (`query_wireless_health`). UniFi Controller has a full REST API for client list, AP stats, roaming history, RF environment. High leverage for the wireless agent.
+**~~DG-1: UniFi Controller API tools~~** ✅ DONE — `query_unifi_clients`, `query_unifi_ap_stats`, `lookup_unifi_client_by_mac` in `agent/tools/unifi_tools.py`. Commit: `53c94f9`. Also fixed `query_wireless_health` to extract MACs from `STA_ASSOC_TRACKER` syslog events (commit `243b7a1`) — identified `d8:d5:b9:00:bb:9f` (Rainforest Automation smartmeter) as the source of 219 daily auth failures.
 
-**DG-2: Per-client blocked domains tool** (was DATA-1)
-AdGuard can return top blocked domains per client IP. Needed for the DNS agent to investigate high-risk clients like `bookstack` (100% block rate flagged in today's report).
+**DG-2: Per-client blocked domains tool** ⏳ PENDING — Spec written and handed off to AdGuard analytics agent. Requires adding `export_per_client_blocked_domains()` to `/home/tbailey/adgh/adguard_metrics_exporter_v2.py` on the AdGuard LXC. Once deployed, add `query_adguard_per_client_blocked_domains` to `agent/tools/metrics.py`.
 
 **DG-3: Validator block proposals and attestation delay** (was DATA-3)
 `query_validator_health` returns balance and peer count but not attestation inclusion delay or block proposal history. Add beacon API calls for these.
