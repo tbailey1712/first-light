@@ -433,7 +433,42 @@ def main():
         if d.get("fee_recipient"):
             print(f"           fee_recipient={d.get('fee_recipient')}")
 
-    # ── 13. Slack Bot connectivity (SLK-3) ────────────────────────────────────
+    # ── 13. UniFi Controller (DG-1) ───────────────────────────────────────────
+    section("UniFi: AP Stats + Client Inventory")
+
+    from agent.tools.unifi_tools import query_unifi_ap_stats, query_unifi_clients, lookup_unifi_client_by_mac
+
+    d = run_test(
+        "query_unifi_ap_stats",
+        lambda: query_unifi_ap_stats.invoke({}),
+        required_keys=["ap_count", "access_points"],
+        skip_if_missing="UNIFI_USERNAME",
+    )
+    if d and "error" not in d:
+        print(f"         → {d['ap_count']} APs, {d['total_clients']} total clients")
+        for ap in d.get("access_points", []):
+            print(f"           {ap['name']} ({ap['model']}) clients={ap['clients']} satisfaction={ap.get('satisfaction')}")
+
+    d = run_test(
+        "query_unifi_clients",
+        lambda: query_unifi_clients.invoke({}),
+        required_keys=["total_wireless_clients", "clients"],
+        skip_if_missing="UNIFI_USERNAME",
+    )
+    if d and "error" not in d:
+        print(f"         → {d['total_wireless_clients']} wireless clients, "
+              f"{d['poor_signal_count']} poor signal, {d['low_satisfaction_count']} low satisfaction")
+
+    d = run_test(
+        "lookup_unifi_client_by_mac (known-failing MAC)",
+        lambda: lookup_unifi_client_by_mac.invoke({"mac": "d8:d5:b9:00:bb:9f"}),
+        required_keys=["found"],
+        skip_if_missing="UNIFI_USERNAME",
+    )
+    if d:
+        print(f"         → found={d['found']} hostname={d.get('hostname','N/A')} connected={d.get('currently_connected','N/A')}")
+
+    # ── 14. Slack Bot connectivity (SLK-3) ────────────────────────────────────
     section("Slack: Bot Token Auth")
 
     def _test_slack_auth() -> str:

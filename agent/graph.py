@@ -44,6 +44,7 @@ from agent.tools.pbs import query_pbs_backup_status, query_pbs_prune_policies
 from agent.tools.switch_tools import query_switch_port_status
 from agent.tools.validator import query_validator_node_config
 from agent.tools.uptime_kuma import query_uptime_kuma_monitors
+from agent.tools.unifi_tools import query_unifi_clients, query_unifi_ap_stats, lookup_unifi_client_by_mac
 
 
 # Full tool set available to the interactive agent
@@ -83,6 +84,10 @@ INTERACTIVE_TOOLS = [
     # DNS resolution
     resolve_hostname,
     resolve_multiple_hostnames,
+    # UniFi Controller
+    query_unifi_clients,
+    query_unifi_ap_stats,
+    lookup_unifi_client_by_mac,
 ]
 
 
