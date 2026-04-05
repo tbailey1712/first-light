@@ -149,25 +149,32 @@ def query_qnap_health() -> str:
     # --- Volumes ---
     # SNMP: qnap_volume_size_bytes, qnap_volume_used_bytes, qnap_volume_free_bytes
     # REST API: qnap_volume_capacity_bytes, qnap_volume_used_bytes, qnap_volume_free_bytes
+    # SNMP is preferred source; REST API fills in only when SNMP has no data at all.
+    # Do NOT mix per-metric sources — label names differ between exporters (e.g. "Vol1" vs
+    # "DataVolume"), which would create phantom duplicate volumes and double-alert.
     volumes = {}
-    for labels, val in (m_snmp.get("qnap_volume_size_bytes", []) or m_api.get("qnap_volume_capacity_bytes", [])):
-        vol = labels.get("volume", "unknown")
-        volumes.setdefault(vol, {})["total_gb"] = _gb(val)
-    for labels, val in m_snmp.get("qnap_volume_used_bytes", []) + m_api.get("qnap_volume_used_bytes", []):
-        vol = labels.get("volume", "unknown")
-        if "used_gb" not in volumes.setdefault(vol, {}):
-            volumes[vol]["used_gb"] = _gb(val)
-    for labels, val in m_snmp.get("qnap_volume_free_bytes", []) + m_api.get("qnap_volume_free_bytes", []):
-        vol = labels.get("volume", "unknown")
-        if "free_gb" not in volumes.setdefault(vol, {}):
-            volumes[vol]["free_gb"] = _gb(val)
-    # Also try REST API capacity key
-    for labels, val in m_api.get("qnap_volume_capacity_bytes", []):
-        vol = labels.get("volume", "unknown")
-        pool = labels.get("pool", "")
-        key = f"{vol} ({pool})" if pool and pool != "unknown" else vol
-        if key not in volumes:
-            volumes.setdefault(key, {})["total_gb"] = _gb(val)
+    _snmp_has_volumes = bool(m_snmp.get("qnap_volume_size_bytes"))
+    if _snmp_has_volumes:
+        for labels, val in m_snmp.get("qnap_volume_size_bytes", []):
+            vol = labels.get("volume", "unknown")
+            volumes.setdefault(vol, {})["total_gb"] = _gb(val)
+        for labels, val in m_snmp.get("qnap_volume_used_bytes", []):
+            vol = labels.get("volume", "unknown")
+            volumes.setdefault(vol, {})["used_gb"] = _gb(val)
+        for labels, val in m_snmp.get("qnap_volume_free_bytes", []):
+            vol = labels.get("volume", "unknown")
+            volumes.setdefault(vol, {})["free_gb"] = _gb(val)
+    else:
+        # SNMP exporter down — fall back to REST API entirely
+        for labels, val in m_api.get("qnap_volume_capacity_bytes", []):
+            vol = labels.get("volume", "unknown")
+            volumes.setdefault(vol, {})["total_gb"] = _gb(val)
+        for labels, val in m_api.get("qnap_volume_used_bytes", []):
+            vol = labels.get("volume", "unknown")
+            volumes.setdefault(vol, {})["used_gb"] = _gb(val)
+        for labels, val in m_api.get("qnap_volume_free_bytes", []):
+            vol = labels.get("volume", "unknown")
+            volumes.setdefault(vol, {})["free_gb"] = _gb(val)
     for vol, info in volumes.items():
         info["used_pct"] = _pct(info.get("used_gb"), info.get("total_gb"))
 

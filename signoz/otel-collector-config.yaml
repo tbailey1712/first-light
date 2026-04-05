@@ -214,49 +214,51 @@ processors:
           - set(log.attributes["security.severity"], "low") where IsMatch(log.body, "Connection closed|Disconnected from|session closed for user")
 
           # ===== SUDO Parsing =====
+          # Guard every sudo statement with not IsMatch(sshd) — sshd log bodies can contain
+          # the substring "sudo:" (e.g. PAM messages) and would otherwise overwrite ssh attributes.
 
           # Sudo service detection
-          - set(log.attributes["security.service"], "sudo") where IsMatch(log.body, "sudo:")
+          - set(log.attributes["security.service"], "sudo") where IsMatch(log.body, "sudo:") and not IsMatch(log.body, "sshd\\[\\d+\\]")
 
           # Sudo command execution
-          - set(log.attributes["sudo.event"], "command_executed") where IsMatch(log.body, "sudo:.*COMMAND=")
+          - set(log.attributes["sudo.event"], "command_executed") where IsMatch(log.body, "sudo:.*COMMAND=") and not IsMatch(log.body, "sshd\\[\\d+\\]")
 
           # Sudo authentication failure
-          - set(log.attributes["sudo.event"], "auth_failure") where IsMatch(log.body, "sudo:.*authentication failure")
+          - set(log.attributes["sudo.event"], "auth_failure") where IsMatch(log.body, "sudo:.*authentication failure") and not IsMatch(log.body, "sshd\\[\\d+\\]")
 
           # Sudo not allowed
-          - set(log.attributes["sudo.event"], "command_not_allowed") where IsMatch(log.body, "sudo:.*command not allowed")
+          - set(log.attributes["sudo.event"], "command_not_allowed") where IsMatch(log.body, "sudo:.*command not allowed") and not IsMatch(log.body, "sshd\\[\\d+\\]")
 
           # Extract sudo fields - format is key=value pairs separated by semicolons
           # Extract TTY
-          - merge_maps(log.attributes, ExtractPatterns(log.body, "TTY=(?P<tty>[^;\\s]+)"), "upsert") where IsMatch(log.body, "TTY=")
-          - set(log.attributes["sudo.tty"], log.attributes["tty"]) where IsMatch(log.body, "TTY=")
-          - delete_key(log.attributes, "tty") where IsMatch(log.body, "TTY=")
+          - merge_maps(log.attributes, ExtractPatterns(log.body, "TTY=(?P<tty>[^;\\s]+)"), "upsert") where IsMatch(log.body, "TTY=") and not IsMatch(log.body, "sshd\\[\\d+\\]")
+          - set(log.attributes["sudo.tty"], log.attributes["tty"]) where IsMatch(log.body, "TTY=") and not IsMatch(log.body, "sshd\\[\\d+\\]")
+          - delete_key(log.attributes, "tty") where IsMatch(log.body, "TTY=") and not IsMatch(log.body, "sshd\\[\\d+\\]")
 
           # Extract PWD (working directory)
-          - merge_maps(log.attributes, ExtractPatterns(log.body, "PWD=(?P<pwd>[^;]+)"), "upsert") where IsMatch(log.body, "PWD=")
-          - set(log.attributes["sudo.pwd"], log.attributes["pwd"]) where IsMatch(log.body, "PWD=")
-          - delete_key(log.attributes, "pwd") where IsMatch(log.body, "PWD=")
+          - merge_maps(log.attributes, ExtractPatterns(log.body, "PWD=(?P<pwd>[^;]+)"), "upsert") where IsMatch(log.body, "PWD=") and not IsMatch(log.body, "sshd\\[\\d+\\]")
+          - set(log.attributes["sudo.pwd"], log.attributes["pwd"]) where IsMatch(log.body, "PWD=") and not IsMatch(log.body, "sshd\\[\\d+\\]")
+          - delete_key(log.attributes, "pwd") where IsMatch(log.body, "PWD=") and not IsMatch(log.body, "sshd\\[\\d+\\]")
 
           # Extract target USER (the user sudo is switching to)
-          - merge_maps(log.attributes, ExtractPatterns(log.body, "USER=(?P<target_user>[^;\\s]+)"), "upsert") where IsMatch(log.body, "USER=")
-          - set(log.attributes["sudo.target_user"], log.attributes["target_user"]) where IsMatch(log.body, "USER=")
-          - delete_key(log.attributes, "target_user") where IsMatch(log.body, "USER=")
+          - merge_maps(log.attributes, ExtractPatterns(log.body, "USER=(?P<target_user>[^;\\s]+)"), "upsert") where IsMatch(log.body, "USER=") and not IsMatch(log.body, "sshd\\[\\d+\\]")
+          - set(log.attributes["sudo.target_user"], log.attributes["target_user"]) where IsMatch(log.body, "USER=") and not IsMatch(log.body, "sshd\\[\\d+\\]")
+          - delete_key(log.attributes, "target_user") where IsMatch(log.body, "USER=") and not IsMatch(log.body, "sshd\\[\\d+\\]")
 
           # Extract COMMAND
-          - merge_maps(log.attributes, ExtractPatterns(log.body, "COMMAND=(?P<command>[^\\n]+)"), "upsert") where IsMatch(log.body, "COMMAND=")
-          - set(log.attributes["sudo.command"], log.attributes["command"]) where IsMatch(log.body, "COMMAND=")
-          - delete_key(log.attributes, "command") where IsMatch(log.body, "COMMAND=")
+          - merge_maps(log.attributes, ExtractPatterns(log.body, "COMMAND=(?P<command>[^\\n]+)"), "upsert") where IsMatch(log.body, "COMMAND=") and not IsMatch(log.body, "sshd\\[\\d+\\]")
+          - set(log.attributes["sudo.command"], log.attributes["command"]) where IsMatch(log.body, "COMMAND=") and not IsMatch(log.body, "sshd\\[\\d+\\]")
+          - delete_key(log.attributes, "command") where IsMatch(log.body, "COMMAND=") and not IsMatch(log.body, "sshd\\[\\d+\\]")
 
           # Extract sudo username (the user running sudo)
-          - merge_maps(log.attributes, ExtractPatterns(log.body, "sudo:\\s*(?P<sudo_user>[a-zA-Z0-9_-]+)\\s*:"), "upsert") where IsMatch(log.body, "sudo:")
-          - set(log.attributes["sudo.user"], log.attributes["sudo_user"]) where IsMatch(log.body, "sudo:")
-          - delete_key(log.attributes, "sudo_user") where IsMatch(log.body, "sudo:")
+          - merge_maps(log.attributes, ExtractPatterns(log.body, "sudo:\\s*(?P<sudo_user>[a-zA-Z0-9_-]+)\\s*:"), "upsert") where IsMatch(log.body, "sudo:") and not IsMatch(log.body, "sshd\\[\\d+\\]")
+          - set(log.attributes["sudo.user"], log.attributes["sudo_user"]) where IsMatch(log.body, "sudo:") and not IsMatch(log.body, "sshd\\[\\d+\\]")
+          - delete_key(log.attributes, "sudo_user") where IsMatch(log.body, "sudo:") and not IsMatch(log.body, "sshd\\[\\d+\\]")
 
           # Tag severity based on body content (avoids attribute nil comparisons)
-          - set(log.attributes["security.severity"], "critical") where IsMatch(log.body, "sudo:.*authentication failure")
-          - set(log.attributes["security.severity"], "warning") where IsMatch(log.body, "sudo:.*command not allowed")
-          - set(log.attributes["security.severity"], "info") where IsMatch(log.body, "sudo:.*COMMAND=")
+          - set(log.attributes["security.severity"], "critical") where IsMatch(log.body, "sudo:.*authentication failure") and not IsMatch(log.body, "sshd\\[\\d+\\]")
+          - set(log.attributes["security.severity"], "warning") where IsMatch(log.body, "sudo:.*command not allowed") and not IsMatch(log.body, "sshd\\[\\d+\\]")
+          - set(log.attributes["security.severity"], "info") where IsMatch(log.body, "sudo:.*COMMAND=") and not IsMatch(log.body, "sshd\\[\\d+\\]")
 
           # ===== Common Security Attributes =====
 
@@ -333,7 +335,7 @@ processors:
           # Network Direction
           - set(attributes["network.direction"], "inbound") where attributes["_is_ntopng"] == "true" and IsMatch(attributes["ntopng.flow.src_host"], "^\\d+\\.\\d+\\.\\d+\\.\\d+$") and not IsMatch(attributes["ntopng.flow.src_host"], "^192\\.168\\.")
           - set(attributes["network.direction"], "outbound") where attributes["_is_ntopng"] == "true" and IsMatch(attributes["ntopng.flow.dst_host"], "^\\d+\\.\\d+\\.\\d+\\.\\d+$") and not IsMatch(attributes["ntopng.flow.dst_host"], "^192\\.168\\.")
-          - set(attributes["network.direction"], "internal") where attributes["_is_ntopng"] == "true" and attributes["network.direction"] == nil
+          - set(attributes["network.direction"], "internal") where attributes["_is_ntopng"] == "true" and not IsMatch(attributes["network.direction"], "inbound|outbound")
 
           # Cleanup
           - delete_key(attributes, "_is_ntopng") where attributes["_is_ntopng"] != nil

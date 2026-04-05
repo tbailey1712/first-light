@@ -270,7 +270,7 @@ def run_domains_parallel(state: DailyReportState) -> dict:
         if structured:
             logger.info(f"{domain_name}: structured output parsed — severity={overall_severity}, {len(findings)} findings, {len(metrics)} metrics")
         else:
-            logger.info(f"{domain_name}: no structured output block found — falling back to free-text")
+            logger.warning(f"{domain_name}: no structured JSON block found — overall_severity defaulting to 'ok', falling back to free-text extraction")
 
         flagged_ips = _extract_ips(summary)
         if flagged_ips:
@@ -409,7 +409,7 @@ def synthesize(state: DailyReportState) -> dict:
                 continue
             affected_list = finding.get("affected") or [""]
             for affected in affected_list[:3]:  # cap per-finding
-                item_type = "ip" if (affected and _IP_RE.match(affected)) else "event"
+                item_type = "ip" if (affected and _IP_RE.search(affected)) else "event"
                 suspicious_items.append({
                     "type": item_type,
                     "value": affected or finding.get("title", "unknown"),
