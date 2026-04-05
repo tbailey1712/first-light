@@ -70,73 +70,122 @@ def _pct(used, total):
 
 @tool
 def query_qnap_health() -> str:
-    """Get QNAP NAS health summary: volumes, CPU, memory, temperatures, disk SMART status.
+    """Get QNAP NAS health summary: volumes, CPU, memory, temperatures, fans, disk SMART status, and ZFS filesystem usage.
+
+    Pulls from two exporters:
+    - fl-qnap-api-exporter (port 9004): REST API — volumes, RAID status, uptime
+    - fl-qnap-snmp-exporter (port 9003): SNMP — CPU, RAM, temperatures, fan RPMs,
+      per-ZFS-dataset filesystem usage, network counters
 
     Returns:
-        JSON with system resources, volume usage, and health indicators.
+        JSON with system resources, volume usage, fan speeds, filesystem usage, and health indicators.
     """
+    # --- Fetch from REST API exporter ---
     try:
         with httpx.Client(timeout=10.0) as client:
-            resp = client.get("http://fl-qnap-api-exporter:9004/metrics")
-            resp.raise_for_status()
+            api_resp = client.get("http://fl-qnap-api-exporter:9004/metrics")
+            api_resp.raise_for_status()
+        m_api = _parse_prometheus(api_resp.text)
     except Exception as e:
-        return json.dumps({"error": f"Could not reach QNAP exporter: {e}"})
+        m_api = {}
+        api_error = str(e)
+    else:
+        api_error = None
 
-    m = _parse_prometheus(resp.text)
+    # --- Fetch from SNMP exporter ---
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            snmp_resp = client.get("http://fl-qnap-snmp-exporter:9003/metrics")
+            snmp_resp.raise_for_status()
+        m_snmp = _parse_prometheus(snmp_resp.text)
+    except Exception as e:
+        m_snmp = {}
+        snmp_error = str(e)
+    else:
+        snmp_error = None
 
-    # --- CPU / Memory ---
-    cpu = _first(m, "qnap_cpu_usage_percent")
-    mem_used = _first(m, "qnap_memory_used_bytes")
-    mem_total = _first(m, "qnap_memory_total_bytes")
-    mem_free = _first(m, "qnap_memory_free_bytes")
+    if not m_api and not m_snmp:
+        return json.dumps({"error": f"Both exporters unreachable. API: {api_error}, SNMP: {snmp_error}"})
+
+    # --- CPU / Memory (SNMP preferred, API fallback) ---
+    cpu = _first(m_snmp, "qnap_cpu_usage_percent") or _first(m_api, "qnap_cpu_usage_percent")
+    mem_used = _first(m_snmp, "qnap_memory_used_bytes") or _first(m_api, "qnap_memory_used_bytes")
+    mem_total = _first(m_snmp, "qnap_memory_total_bytes") or _first(m_api, "qnap_memory_total_bytes")
+    mem_free = _first(m_snmp, "qnap_memory_free_bytes") or _first(m_api, "qnap_memory_free_bytes")
     mem_pct = _pct(mem_used, mem_total)
     uptime_days = None
-    uptime_s = _first(m, "qnap_uptime_seconds")
+    uptime_s = _first(m_snmp, "qnap_uptime_seconds") or _first(m_api, "qnap_uptime_seconds")
     if uptime_s:
         uptime_days = round(uptime_s / 86400, 1)
 
-    # --- Temperatures ---
+    # --- Temperatures (SNMP preferred) ---
     temps = {}
-    cpu_temp = _first(m, "qnap_cpu_temperature_celsius")
-    sys_temp = _first(m, "qnap_system_temperature_celsius")
+    cpu_temp = _first(m_snmp, "qnap_cpu_temperature_celsius") or _first(m_api, "qnap_cpu_temperature_celsius")
+    sys_temp = _first(m_snmp, "qnap_system_temperature_celsius") or _first(m_api, "qnap_system_temperature_celsius")
     if cpu_temp is not None:
         temps["cpu"] = cpu_temp
     if sys_temp is not None:
         temps["system"] = sys_temp
-    # Per-disk temps
-    for labels, val in m.get("qnap_disk_temperature_celsius", []):
+    # Per-disk temps (merge both sources)
+    for labels, val in m_snmp.get("qnap_disk_temperature_celsius", []) + m_api.get("qnap_disk_temperature_celsius", []):
         disk = labels.get("disk", labels.get("slot", "unknown"))
-        temps[f"disk_{disk}"] = val
+        if f"disk_{disk}" not in temps:
+            temps[f"disk_{disk}"] = val
 
-    # --- Volumes ---
+    # --- Fan speeds (SNMP only) ---
+    fans = {}
+    for labels, val in m_snmp.get("qnap_fan_speed_rpm", []):
+        fan = labels.get("fan", "unknown")
+        fans[fan] = int(val)
+
+    # --- Volumes (REST API) ---
     volumes = {}
-    for labels, val in m.get("qnap_volume_capacity_bytes", []):
+    for labels, val in m_api.get("qnap_volume_capacity_bytes", []):
         vol = labels.get("volume", "unknown")
         pool = labels.get("pool", "")
         key = f"{vol} ({pool})" if pool and pool != "unknown" else vol
         volumes.setdefault(key, {})["total_gb"] = _gb(val)
-    for labels, val in m.get("qnap_volume_used_bytes", []):
+    for labels, val in m_api.get("qnap_volume_used_bytes", []):
         vol = labels.get("volume", "unknown")
         pool = labels.get("pool", "")
         key = f"{vol} ({pool})" if pool and pool != "unknown" else vol
         volumes.setdefault(key, {})["used_gb"] = _gb(val)
-    for labels, val in m.get("qnap_volume_free_bytes", []):
+    for labels, val in m_api.get("qnap_volume_free_bytes", []):
         vol = labels.get("volume", "unknown")
         pool = labels.get("pool", "")
         key = f"{vol} ({pool})" if pool and pool != "unknown" else vol
         volumes.setdefault(key, {})["free_gb"] = _gb(val)
-
     for vol, info in volumes.items():
         info["used_pct"] = _pct(info.get("used_gb"), info.get("total_gb"))
 
-    # --- Disks ---
+    # --- ZFS/filesystem usage (SNMP hrStorageTable) ---
+    # ZFS19_DATA is the QVRPro NVR circular recording volume — always near 100%, expected.
+    nvr_mounts = {"/share/ZFS19_DATA"}
+    filesystems = {}
+    for labels, val in m_snmp.get("qnap_filesystem_used_percent", []):
+        mount = labels.get("mount", "unknown")
+        filesystems[mount] = {"used_pct": round(val, 1)}
+    for labels, val in m_snmp.get("qnap_filesystem_size_bytes", []):
+        mount = labels.get("mount", "unknown")
+        filesystems.setdefault(mount, {})["total_gb"] = _gb(val)
+    for labels, val in m_snmp.get("qnap_filesystem_used_bytes", []):
+        mount = labels.get("mount", "unknown")
+        filesystems.setdefault(mount, {})["used_gb"] = _gb(val)
+
+    # --- Disks (merge SNMP + API) ---
     disks = {}
-    for labels, val in m.get("qnap_disk_smart_status", []):
+    for labels, val in m_snmp.get("qnap_disk_smart_status", []) + m_api.get("qnap_disk_smart_status", []):
         disk = labels.get("disk", labels.get("slot", "unknown"))
-        disks[disk] = {"smart": "ok" if val == 1 else "warn"}
-    for labels, val in m.get("qnap_disk_temperature_celsius", []):
+        if disk not in disks:
+            disks[disk] = {"smart": "ok" if val == 1 else "warn"}
+    for labels, val in m_snmp.get("qnap_disk_temperature_celsius", []) + m_api.get("qnap_disk_temperature_celsius", []):
         disk = labels.get("disk", labels.get("slot", "unknown"))
         disks.setdefault(disk, {})["temp_c"] = val
+    for labels, val in m_snmp.get("qnap_disk_model", []):
+        disk = labels.get("disk", "unknown")
+        model = labels.get("model", "")
+        if model:
+            disks.setdefault(disk, {})["model"] = model
 
     # --- Alerts ---
     alerts = []
@@ -147,14 +196,22 @@ def query_qnap_health() -> str:
     for vol, info in volumes.items():
         if info.get("used_pct") and info["used_pct"] > 85:
             alerts.append(f"Volume '{vol}' usage: {info['used_pct']}%")
+    for mount, info in filesystems.items():
+        if mount in nvr_mounts:
+            continue  # ZFS19_DATA is NVR circular recording — always full, expected
+        if info.get("used_pct") and info["used_pct"] > 85:
+            alerts.append(f"Filesystem '{mount}' usage: {info['used_pct']}%")
     for temp_name, temp_val in temps.items():
         if temp_val > 65:
             alerts.append(f"High temperature {temp_name}: {temp_val}°C")
+    for fan, rpm in fans.items():
+        if rpm == 0:
+            alerts.append(f"Fan {fan} stopped (0 RPM)")
     for disk, info in disks.items():
         if isinstance(info, dict) and info.get("smart") == "warn":
             alerts.append(f"Disk {disk} SMART warning")
 
-    return json.dumps({
+    result: dict = {
         "system": {
             "cpu_pct": cpu,
             "memory_used_gb": _gb(mem_used),
@@ -168,7 +225,18 @@ def query_qnap_health() -> str:
         "disks": disks,
         "alerts": alerts,
         "healthy": len(alerts) == 0,
-    }, indent=2)
+    }
+    if fans:
+        result["fans_rpm"] = fans
+    if filesystems:
+        result["filesystems"] = filesystems
+        result["filesystems_note"] = "/share/ZFS19_DATA is the NVR circular recording volume — near-full usage is expected and normal"
+    if api_error:
+        result["api_exporter_error"] = api_error
+    if snmp_error:
+        result["snmp_exporter_error"] = snmp_error
+
+    return json.dumps(result, indent=2)
 
 
 def _qnap_get_sid() -> Optional[str]:

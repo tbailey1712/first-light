@@ -357,6 +357,8 @@ Step 4 — QNAP NAS:
   Check: all volumes healthy, no degraded RAID, SMART status per disk, temperatures.
   Flag: any volume not "Ready", any disk with SMART warnings, temp > 55°C.
   Note: QVRProSpace_Vault1 is the NVR recording volume — it is designed to run near-full (circular overwrite). Do NOT flag high usage on this volume as critical. Only flag it if the volume status is not "Ready" or if recordings are actually failing.
+  Note: /share/ZFS19_DATA is the same NVR recording dataset at the ZFS layer (QVRPro continuous recording). It will always show ~100% usage. Do NOT alert on it. Only flag if the filesystem reports an error or if QVRPro recordings fail.
+  Also check: fan speeds (fans_rpm) — a fan at 0 RPM is a hardware alert. Filesystem usage in filesystems dict for any mount > 85% (excluding /share/ZFS19_DATA).
 
   Call query_qnap_events(hours={hours})
   Check: Security Center alerts, login failures, admin access events.
