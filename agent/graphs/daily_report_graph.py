@@ -74,6 +74,9 @@ _REDIS_PREFIX = "fl:baseline:"
 # IP address regex — matches private and public IPs in summary text
 _IP_RE = re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b')
 
+# Delimiter domain agents append before their structured JSON block
+_JSON_DELIMITER = "---JSON-OUTPUT---"
+
 # IPs to never correlate — infrastructure, broadcast, etc.
 _SKIP_IPS = {
     "0.0.0.0", "127.0.0.1", "255.255.255.255",
@@ -89,10 +92,20 @@ _SKIP_IPS = {
 
 # ── State ──────────────────────────────────────────────────────────────────────
 
+class DomainFinding(TypedDict):
+    severity: str       # "critical" | "warning" | "info" | "ok"
+    title: str          # short label, e.g. "Brute force from 1.2.3.4"
+    detail: str         # 1-2 sentence explanation
+    affected: list[str] # IPs, hostnames, or component names
+
+
 class DomainResult(TypedDict):
     domain: str
-    summary: str
-    flagged_ips: list[str]      # IPs extracted from summary for correlation pass
+    summary: str                    # clean narrative markdown (JSON block stripped)
+    flagged_ips: list[str]          # IPs extracted from summary for correlation pass
+    overall_severity: str           # worst finding: "critical"|"warning"|"info"|"ok"
+    findings: list[DomainFinding]   # structured findings list
+    metrics: dict[str, Any]         # key numbers for baseline tracking
 
 
 class SuspiciousItem(TypedDict):
@@ -115,6 +128,29 @@ class DailyReportState(TypedDict):
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _parse_domain_output(raw: str) -> tuple[str, dict[str, Any]]:
+    """Split a domain agent response into (narrative_markdown, structured_dict).
+
+    Domain agents are instructed to append ---JSON-OUTPUT--- followed by a JSON
+    object at the end of their response. If the delimiter is absent or the JSON
+    is malformed, returns the full raw text as narrative and an empty dict so
+    the rest of the pipeline degrades gracefully.
+    """
+    if _JSON_DELIMITER not in raw:
+        return raw.strip(), {}
+
+    parts = raw.split(_JSON_DELIMITER, 1)
+    narrative = parts[0].strip()
+    json_str = parts[1].strip()
+    try:
+        structured = json.loads(json_str)
+        if isinstance(structured, dict):
+            return narrative, structured
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return narrative, {}
+
 
 def _extract_ips(text: str) -> list[str]:
     """Extract unique IP addresses from a text summary, excluding infrastructure IPs."""
@@ -221,15 +257,33 @@ def run_domains_parallel(state: DailyReportState) -> dict:
         fn = DOMAIN_AGENTS[domain_name]
         logger.info("Starting domain agent: %s", domain_name)
         try:
-            summary = fn(hours, prompt_override=prompt_override, session_id=session_id)
+            raw = fn(hours, prompt_override=prompt_override, session_id=session_id)
         except Exception as e:
             logger.error(f"Domain '{domain_name}' failed: {e}", exc_info=True)
-            summary = f"**{domain_name}**: Agent failed — {e}"
+            raw = f"**{domain_name}**: Agent failed — {e}"
+
+        summary, structured = _parse_domain_output(raw)
+        overall_severity = structured.get("overall_severity", "ok")
+        findings = structured.get("findings", [])
+        metrics = structured.get("metrics", {})
+
+        if structured:
+            logger.info(f"{domain_name}: structured output parsed — severity={overall_severity}, {len(findings)} findings, {len(metrics)} metrics")
+        else:
+            logger.info(f"{domain_name}: no structured output block found — falling back to free-text")
 
         flagged_ips = _extract_ips(summary)
         if flagged_ips:
             logger.info(f"{domain_name}: extracted {len(flagged_ips)} IPs for correlation")
-        return {"domain": domain_name, "summary": summary, "flagged_ips": flagged_ips}
+
+        return {
+            "domain": domain_name,
+            "summary": summary,
+            "flagged_ips": flagged_ips,
+            "overall_severity": overall_severity,
+            "findings": findings,
+            "metrics": metrics,
+        }
 
     results = []
     with ThreadPoolExecutor(max_workers=len(DOMAIN_AGENTS)) as executor:
@@ -340,47 +394,66 @@ def synthesize(state: DailyReportState) -> dict:
     """
     domain_summaries = {r["domain"]: r["summary"] for r in state["domain_results"]}
 
-    # ── Phase A: extract suspicious items for investigation ────────────────────
+    # ── Phase A: build suspicious items from structured domain findings ─────────
+    # Primary: read findings[] directly from domain structured output.
+    # Fallback: LLM re-extraction from free text (for domains without structured output).
     suspicious_items: list[SuspiciousItem] = []
-    try:
-        all_summaries = "\n\n---\n\n".join(
-            f"## {k.upper()}\n{v}" for k, v in domain_summaries.items()
-        )
-        if state.get("correlation_findings"):
-            all_summaries += f"\n\n---\n\n## CORRELATION\n{state['correlation_findings']}"
 
-        extraction_prompt = (
-            "You are a security triage assistant. Review the domain summaries below and "
-            "identify items that warrant deeper automated investigation. Return ONLY a JSON "
-            "array (no markdown, no explanation) of objects with keys: "
-            "type (ip/mac/event), value, reason, source_domain. "
-            "Include only genuine anomalies: external IPs with threat scores > 60, "
-            "internal IPs making unexpected cross-VLAN or external connections, "
-            "devices with unusual behaviour, events explicitly flagged as suspicious. "
-            "Return [] if nothing warrants investigation. Maximum 10 items.\n\n"
-            f"{all_summaries}"
+    structured_domains = [r for r in state["domain_results"] if r.get("findings")]
+    unstructured_domains = [r for r in state["domain_results"] if not r.get("findings")]
+
+    # Primary path — O(n) dict access, no LLM call
+    for result in structured_domains:
+        for finding in result.get("findings", []):
+            if finding.get("severity") not in ("critical", "warning"):
+                continue
+            affected_list = finding.get("affected") or [""]
+            for affected in affected_list[:3]:  # cap per-finding
+                item_type = "ip" if (affected and _IP_RE.match(affected)) else "event"
+                suspicious_items.append({
+                    "type": item_type,
+                    "value": affected or finding.get("title", "unknown"),
+                    "reason": finding.get("detail", finding.get("title", "")),
+                    "source_domain": result["domain"],
+                })
+
+    # Fallback path — LLM extraction for any domain without structured output
+    if unstructured_domains:
+        fallback_summaries = "\n\n---\n\n".join(
+            f"## {r['domain'].upper()}\n{r['summary']}" for r in unstructured_domains
         )
-        extract_response = chat(
-            [{"role": "user", "content": extraction_prompt}],
-            "synthesis",
-            session_id=state["session_id"],
-            agent_name="synthesize/extract",
-        )
-        raw = (extract_response.choices[0].message.content or "").strip()
-        # Strip markdown fences if present
-        raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw, flags=re.MULTILINE).strip()
-        parsed = json.loads(raw)
-        if isinstance(parsed, list):
-            suspicious_items = parsed[:10]
-            logger.info(
-                "Synthesis Phase A: extracted %d suspicious items for investigation (threshold: threat_score > 60 or cross-VLAN anomaly)",
-                len(suspicious_items),
+        try:
+            extraction_prompt = (
+                "You are a security triage assistant. Review these domain summaries and "
+                "identify items warranting deeper investigation. Return ONLY a JSON array "
+                "(no markdown) of objects with keys: type (ip/mac/event), value, reason, source_domain. "
+                "Include: external IPs with threat score > 60, internal IPs with unexpected cross-VLAN "
+                "or external connections, devices with unusual behaviour. "
+                "Return [] if nothing warrants investigation. Maximum 10 items.\n\n"
+                f"{fallback_summaries}"
             )
-            if suspicious_items:
-                for item in suspicious_items:
-                    logger.debug("  → [%s] %s: %s (from %s)", item.get("type"), item.get("value"), item.get("reason", "")[:80], item.get("source_domain"))
-    except Exception as e:
-        logger.warning("Synthesis Phase A (suspicious item extraction) failed: %s — continuing", e)
+            extract_response = chat(
+                [{"role": "user", "content": extraction_prompt}],
+                "synthesis",
+                session_id=state["session_id"],
+                agent_name="synthesize/extract_fallback",
+            )
+            raw = (extract_response.choices[0].message.content or "").strip()
+            raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw, flags=re.MULTILINE).strip()
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                suspicious_items.extend(parsed[:10 - len(suspicious_items)])
+        except Exception as e:
+            logger.warning("Synthesis Phase A fallback LLM extraction failed: %s", e)
+
+    suspicious_items = suspicious_items[:10]
+    logger.info(
+        "Synthesis Phase A: %d suspicious items (%d from structured, %d unstructured domains)",
+        len(suspicious_items), len(structured_domains), len(unstructured_domains),
+    )
+    if suspicious_items:
+        for item in suspicious_items:
+            logger.debug("  → [%s] %s: %s (from %s)", item.get("type"), item.get("value"), item.get("reason", "")[:80], item.get("source_domain"))
 
     # ── Phase B: narrative synthesis ───────────────────────────────────────────
     synthesis_system = state["prompts"]["synthesis"]
@@ -426,7 +499,7 @@ def synthesize(state: DailyReportState) -> dict:
     final_report = response.choices[0].message.content or ""
     logger.info("Synthesis complete.")
 
-    new_baseline = _extract_baseline_metrics(domain_summaries)
+    new_baseline = _extract_baseline_metrics(state["domain_results"])
     if new_baseline:
         _save_baseline(new_baseline)
 
@@ -512,56 +585,88 @@ def append_investigation(state: DailyReportState) -> dict:
     return {"final_report": report}
 
 
-def _extract_baseline_metrics(domain_summaries: dict[str, str]) -> dict[str, Any]:
-    """
-    Best-effort extraction of key metrics from domain summaries for Redis baseline storage.
-    Uses simple regex patterns against the markdown text.
+def _extract_baseline_metrics(domain_results: list[DomainResult]) -> dict[str, Any]:
+    """Extract key metrics from domain results for Redis baseline storage.
+
+    Primary: reads from the structured metrics dict populated by each domain agent.
+    Fallback: regex scraping against the narrative summary (for domains without
+    structured output or missing specific keys).
     """
     metrics: dict[str, Any] = {}
+    summaries: dict[str, str] = {r["domain"]: r["summary"] for r in domain_results}
 
-    dns = domain_summaries.get("dns_security", "")
-    # Match "65,432 queries" or "65432 queries"
-    m = re.search(r'([\d,]+)\s+(?:total\s+)?queries', dns)
-    if m:
-        try:
-            metrics["dns_queries"] = float(m.group(1).replace(",", ""))
-        except ValueError:
-            pass
-    # Match "8.2% block rate" or "block rate: 8.2%"
-    m = re.search(r'(\d+\.?\d*)\s*%\s*block', dns, re.IGNORECASE)
-    if m:
-        try:
-            metrics["dns_block_rate_pct"] = float(m.group(1))
-        except ValueError:
-            pass
+    # ── Primary: structured metrics ───────────────────────────────────────────
+    for result in domain_results:
+        m = result.get("metrics", {})
+        domain = result["domain"]
 
-    fw = domain_summaries.get("firewall_threat", "")
-    m = re.search(r'([\d,]+)\s+(?:total\s+)?(?:firewall\s+)?blocks?', fw)
-    if m:
-        try:
-            metrics["firewall_blocks"] = float(m.group(1).replace(",", ""))
-        except ValueError:
-            pass
+        if domain == "dns_security":
+            if "total_queries" in m:
+                metrics["dns_queries"] = float(m["total_queries"])
+            if "block_rate_pct" in m:
+                metrics["dns_block_rate_pct"] = float(m["block_rate_pct"])
+            if "active_dhcp_count" in m:
+                metrics["active_dhcp_count"] = float(m["active_dhcp_count"])
+        elif domain == "firewall_threat":
+            if "firewall_blocks" in m:
+                metrics["firewall_blocks"] = float(m["firewall_blocks"])
+        elif domain == "validator":
+            if "validator_balance_eth" in m:
+                metrics["validator_balance_eth"] = float(m["validator_balance_eth"])
+        elif domain == "infrastructure":
+            if "qnap_vol_used_pct" in m:
+                metrics["qnap_vol1_used_pct"] = float(m["qnap_vol_used_pct"])
+            if "active_dhcp_count" in m and "active_dhcp_count" not in metrics:
+                metrics["active_dhcp_count"] = float(m["active_dhcp_count"])
 
-    val = domain_summaries.get("validator", "")
-    m = re.search(r'(\d+\.\d+)\s*ETH', val)
-    if m:
-        try:
-            metrics["validator_balance_eth"] = float(m.group(1))
-        except ValueError:
-            pass
+    # ── Fallback: regex scraping for any keys still missing ───────────────────
+    if "dns_queries" not in metrics:
+        dns = summaries.get("dns_security", "")
+        m_re = re.search(r'([\d,]+)\s+(?:total\s+)?queries', dns)
+        if m_re:
+            try:
+                metrics["dns_queries"] = float(m_re.group(1).replace(",", ""))
+            except ValueError:
+                pass
 
-    infra = domain_summaries.get("infrastructure", "")
-    # Anchor to a QNAP-specific context line before extracting percentage
-    qnap_match = re.search(
-        r'(?:QNAP|NAS|QVR)[^\n]*\n(?:[^\n]*\n){0,3}[^\n]*?(\d+\.?\d*)\s*%\s*(?:used|full|capacity)',
-        infra, re.IGNORECASE
-    )
-    if qnap_match:
-        try:
-            metrics["qnap_vol1_used_pct"] = float(qnap_match.group(1))
-        except ValueError:
-            pass
+    if "dns_block_rate_pct" not in metrics:
+        dns = summaries.get("dns_security", "")
+        m_re = re.search(r'(\d+\.?\d*)\s*%\s*block', dns, re.IGNORECASE)
+        if m_re:
+            try:
+                metrics["dns_block_rate_pct"] = float(m_re.group(1))
+            except ValueError:
+                pass
+
+    if "firewall_blocks" not in metrics:
+        fw = summaries.get("firewall_threat", "")
+        m_re = re.search(r'([\d,]+)\s+(?:total\s+)?(?:firewall\s+)?blocks?', fw)
+        if m_re:
+            try:
+                metrics["firewall_blocks"] = float(m_re.group(1).replace(",", ""))
+            except ValueError:
+                pass
+
+    if "validator_balance_eth" not in metrics:
+        val = summaries.get("validator", "")
+        m_re = re.search(r'(\d+\.\d+)\s*ETH', val)
+        if m_re:
+            try:
+                metrics["validator_balance_eth"] = float(m_re.group(1))
+            except ValueError:
+                pass
+
+    if "qnap_vol1_used_pct" not in metrics:
+        infra = summaries.get("infrastructure", "")
+        qnap_match = re.search(
+            r'(?:QNAP|NAS|QVR)[^\n]*\n(?:[^\n]*\n){0,3}[^\n]*?(\d+\.?\d*)\s*%\s*(?:used|full|capacity)',
+            infra, re.IGNORECASE,
+        )
+        if qnap_match:
+            try:
+                metrics["qnap_vol1_used_pct"] = float(qnap_match.group(1))
+            except ValueError:
+                pass
 
     return metrics
 

@@ -70,7 +70,24 @@ Return a focused markdown section. Include:
 - Outbound block findings — any internal host anomalies (flag with VLAN)
 - SSH summary: attempts, unique attackers, any successful non-LAN logins
 - CrowdSec active bans
-- Skip IPs with score < 25 unless they appear in 3+ data sources"""
+- Skip IPs with score < 25 unless they appear in 3+ data sources
+
+After your narrative, output this exact line by itself:
+---JSON-OUTPUT---
+Then output a single JSON object (no markdown fences) with these keys:
+{{
+  "overall_severity": "ok" | "info" | "warning" | "critical",
+  "findings": [
+    {{"severity": "critical"|"warning"|"info", "title": "short label", "detail": "1-2 sentences", "affected": ["ip or hostname"]}}
+  ],
+  "metrics": {{
+    "firewall_blocks": <int>,
+    "unique_attackers": <int>,
+    "crowdsec_bans": <int>
+  }}
+}}
+findings: include only genuine anomalies (severity warning or critical). ok/info findings may be omitted.
+overall_severity: worst severity across all findings, or "ok" if nothing flagged."""
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DNS SECURITY
@@ -249,7 +266,25 @@ Suppression rules (do NOT report these):
 - TXT ratios < 0.3 on IoT devices
 - New domain counts < 50 on personal devices
 
-Be specific in everything that IS reported: include client IPs, exact domain names, scores, counts."""
+Be specific in everything that IS reported: include client IPs, exact domain names, scores, counts.
+
+After your narrative, output this exact line by itself:
+---JSON-OUTPUT---
+Then output a single JSON object (no markdown fences) with these keys:
+{{
+  "overall_severity": "ok" | "info" | "warning" | "critical",
+  "findings": [
+    {{"severity": "critical"|"warning"|"info", "title": "short label", "detail": "1-2 sentences", "affected": ["ip"]}}
+  ],
+  "metrics": {{
+    "total_queries": <int>,
+    "block_rate_pct": <float>,
+    "new_devices_count": <int>,
+    "high_risk_clients_count": <int>
+  }}
+}}
+findings: include only genuine anomalies (severity warning or critical). ok/info findings may be omitted.
+overall_severity: worst severity across all findings, or "ok" if nothing flagged."""
 
 # ─────────────────────────────────────────────────────────────────────────────
 # NETWORK FLOW (ntopng)
@@ -310,14 +345,30 @@ Step 8 — WAN utilization:
 Step 9 — active flows (only if anomaly found above):
   Call query_ntopng_active_flows() only if steps 1-7 surfaced something unusual to investigate.
 
-Return a focused markdown section. Include:
+Return a focused markdown section. Report:
 - VLAN traffic summary — any isolated VLAN anomalies (CRITICAL if present)
 - ntopng security alert summary
 - Top talkers by bandwidth (only if unexpected)
 - ARP/device inventory anomalies — new or unrecognised MACs
 - Switch port health
 - Geographic distribution if unusual
-- Skip normal RTSP and Ethereum P2P traffic"""
+- Skip normal RTSP and Ethereum P2P traffic
+
+After your narrative, output this exact line by itself:
+---JSON-OUTPUT---
+Then output a single JSON object (no markdown fences) with these keys:
+{{
+  "overall_severity": "ok" | "info" | "warning" | "critical",
+  "findings": [
+    {{"severity": "critical"|"warning"|"info", "title": "short label", "detail": "1-2 sentences", "affected": ["ip or vlan"]}}
+  ],
+  "metrics": {{
+    "cross_vlan_violations": <int>,
+    "unknown_macs_count": <int>
+  }}
+}}
+findings: include only genuine anomalies (severity warning or critical).
+overall_severity: worst severity across all findings, or "ok" if nothing flagged."""
 
 # ─────────────────────────────────────────────────────────────────────────────
 # INFRASTRUCTURE HEALTH
@@ -389,12 +440,30 @@ Return a focused markdown section. Include:
 - Overall health: healthy / degraded / critical
 - Uptime Kuma: any services down or degraded (most important)
 - Proxmox: node health, any stopped/failed VMs or CTs
-- QNAP: volume/disk status, any SMART or temp warnings, security events
+- QNAP: volume/disk status, fan speeds, any SMART or temp warnings, security events
 - PBS: stale or failed backups (name them)
 - Proxmox storage pools: all pools with used_pct (flag > 85%)
 - Proxmox containers: all CTs with disk_pct (flag > 80%)
 - Frigate: camera health, storage used_pct, event counts by camera and object type
-- Skip healthy items unless providing useful baseline context"""
+- Skip healthy items unless providing useful baseline context
+
+After your narrative, output this exact line by itself:
+---JSON-OUTPUT---
+Then output a single JSON object (no markdown fences) with these keys:
+{{
+  "overall_severity": "ok" | "info" | "warning" | "critical",
+  "findings": [
+    {{"severity": "critical"|"warning"|"info", "title": "short label", "detail": "1-2 sentences", "affected": ["service or host"]}}
+  ],
+  "metrics": {{
+    "services_down": <int>,
+    "qnap_vol_used_pct": <float or null>,
+    "backup_stale_count": <int>,
+    "frigate_storage_pct": <float or null>
+  }}
+}}
+findings: include only genuine anomalies (severity warning or critical).
+overall_severity: worst severity across all findings, or "ok" if nothing flagged."""
 
 # ─────────────────────────────────────────────────────────────────────────────
 # WIRELESS HEALTH
@@ -431,7 +500,23 @@ Return a focused markdown section. Include:
 - Auth failures (sta_unauthorized): count, AP, unique clients — always include even if low
 - Deauth events: count and whether concentrated on one AP/client
 - Notable events from the notable_events list if present
-- If results are empty: "No wireless events detected in syslog" — do not pad"""
+- If results are empty: "No wireless events detected in syslog" — do not pad
+
+After your narrative, output this exact line by itself:
+---JSON-OUTPUT---
+Then output a single JSON object (no markdown fences) with these keys:
+{{
+  "overall_severity": "ok" | "info" | "warning" | "critical",
+  "findings": [
+    {{"severity": "critical"|"warning"|"info", "title": "short label", "detail": "1-2 sentences", "affected": ["mac or ap"]}}
+  ],
+  "metrics": {{
+    "auth_failures": <int>,
+    "deauth_events": <int>
+  }}
+}}
+findings: include only genuine anomalies (severity warning or critical).
+overall_severity: worst severity across all findings, or "ok" if nothing flagged."""
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ETHEREUM VALIDATOR
@@ -477,7 +562,24 @@ Return a focused markdown section. Include:
 - Attestation performance: source/head/target effectiveness, inclusion distance
 - Block proposals: seen and included (if data available)
 - Alerts: slashing, peer count issues, missed attestations
-- Note if everything is nominal — this section should be brief when healthy"""
+- Note if everything is nominal — this section should be brief when healthy
+
+After your narrative, output this exact line by itself:
+---JSON-OUTPUT---
+Then output a single JSON object (no markdown fences) with these keys:
+{{
+  "overall_severity": "ok" | "info" | "warning" | "critical",
+  "findings": [
+    {{"severity": "critical"|"warning"|"info", "title": "short label", "detail": "1-2 sentences", "affected": ["validator or client"]}}
+  ],
+  "metrics": {{
+    "validator_balance_eth": <float or null>,
+    "attestation_effectiveness_pct": <float or null>,
+    "peer_count": <int or null>
+  }}
+}}
+findings: include only genuine anomalies (severity warning or critical).
+overall_severity: worst severity across all findings, or "ok" if nothing flagged."""
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SYNTHESIS
@@ -630,7 +732,24 @@ Return a focused markdown section. Include:
 - Gateway DNS: any non-"Block Bad Countries" blocks (those are notable), any C2-like domains
 - Zone traffic: error rate and geographic anomalies only if unusual (> 20% errors or unexpected top country)
 - Flag any service without CF Access protection that is being actively probed
-- Skip generic PHP scanner noise unless volume is unusually high (> 100 events) or targeting a specific service repeatedly"""
+- Skip generic PHP scanner noise unless volume is unusually high (> 100 events) or targeting a specific service repeatedly
+
+After your narrative, output this exact line by itself:
+---JSON-OUTPUT---
+Then output a single JSON object (no markdown fences) with these keys:
+{{
+  "overall_severity": "ok" | "info" | "warning" | "critical",
+  "findings": [
+    {{"severity": "critical"|"warning"|"info", "title": "short label", "detail": "1-2 sentences", "affected": ["service or subdomain"]}}
+  ],
+  "metrics": {{
+    "waf_blocks": <int>,
+    "error_rate_pct": <float>,
+    "recon_indicators": <int>
+  }}
+}}
+findings: include only genuine anomalies (severity warning or critical).
+overall_severity: worst severity across all findings, or "ok" if nothing flagged."""
 
 # ─────────────────────────────────────────────────────────────────────────────
 # WEEKLY TREND SUMMARY
