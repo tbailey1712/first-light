@@ -74,8 +74,7 @@ Stale finding from Mar 7 audit. Parser is live in the OTel pipeline at `otel-col
 **AA-2: Episodic memory across reports** (deferred post-V1)
 Synthesis agent reads/writes facts to Redis across daily runs — repeat IPs, recurring failures, baselines beyond the 5 current metrics. ~3-5 story points.
 
-**AA-3: Structured domain outputs**
-Domain agents return free-text markdown. Synthesis has to re-parse it. If domains returned JSON schema (severity, findings list, metrics dict), synthesis quality and investigation triggering would improve.
+**~~AA-3: Structured domain outputs~~** ✅ DONE — All 7 domain agents append `---JSON-OUTPUT---` + JSON block (overall_severity, findings list, metrics dict). Graph parses into `DomainResult.findings/metrics/overall_severity`. Phase A suspicious-item extraction now reads structured findings directly instead of LLM re-parse. `_extract_baseline_metrics` reads from metrics dicts with regex fallback. Commit: `433a947`.
 
 **~~AA-4: Investigation agent threshold tuning~~** ✅ DONE — `agent/graphs/daily_report_graph.py` now always logs investigation item count (Phase A extraction) regardless of whether items were found. Commit: `5ad5cd9`.
 
