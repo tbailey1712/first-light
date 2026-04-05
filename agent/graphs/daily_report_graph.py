@@ -294,7 +294,7 @@ def run_domains_parallel(state: DailyReportState) -> dict:
             except Exception as e:
                 name = futures[future]
                 logger.error(f"Domain thread '{name}' raised: {e}", exc_info=True)
-                results.append({"domain": name, "summary": f"**{name}**: Agent failed — {e}", "flagged_ips": []})
+                results.append({"domain": name, "summary": f"**{name}**: Agent failed — {e}", "flagged_ips": [], "overall_severity": "ok", "findings": [], "metrics": {}})
 
     return {"domain_results": results}
 
