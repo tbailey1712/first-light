@@ -169,20 +169,45 @@ def query_wireless_health(hours: int = 6) -> str:
     FORMAT JSONEachRow
     """
 
+    # STA_ASSOC_TRACKER auth failures — JSON-in-syslog that the OTel parser
+    # doesn't extract attributes from. Parse mac directly from body.
+    # Groups by MAC to identify persistent offenders (stale PSK, wrong password).
+    auth_fail_query = f"""
+    SELECT
+        extract(body, '"mac":"([^"]+)"') as mac,
+        COUNT(*) as total_failures,
+        COUNT(DISTINCT resources_string['host.name']) as ap_count,
+        groupUniqArray(resources_string['host.name']) as aps_seen,
+        min(timestamp) as first_seen,
+        max(timestamp) as last_seen
+    FROM signoz_logs.logs_v2
+    WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
+      AND body LIKE '%STA_ASSOC_TRACKER%'
+      AND body LIKE '%"event_type":"failure"%'
+    GROUP BY mac
+    HAVING total_failures > 5 AND mac != ''
+    ORDER BY total_failures DESC
+    LIMIT 20
+    FORMAT JSONEachRow
+    """
+
     try:
         events_raw = _execute_clickhouse_query(event_query)
         notable_raw = _execute_clickhouse_query(notable_query)
+        auth_fail_raw = _execute_clickhouse_query(auth_fail_query)
 
         events = [json.loads(line) for line in events_raw.split('\n') if line.strip()]
         notables = [json.loads(line) for line in notable_raw.split('\n') if line.strip()]
+        auth_fails = [json.loads(line) for line in auth_fail_raw.split('\n') if line.strip()]
 
-        if not events and not notables:
+        if not events and not notables and not auth_fails:
             return json.dumps({
                 "time_range": f"last {hours}h",
                 "status": "no_data",
                 "note": "No UniFi AP event data found. APs may not be forwarding syslog to the collector (TCP 5140), or no notable wireless events occurred.",
                 "wireless_events": [],
                 "notable_events": [],
+                "auth_failures": [],
             }, indent=2)
 
         # Summarise by event type across APs
@@ -198,11 +223,30 @@ def query_wireless_health(hours: int = 6) -> str:
                 "unique_clients": int(e['unique_clients']),
             })
 
+        # Annotate auth failures: ap_count > 1 means device is roaming while
+        # failing — strong indicator of stale/wrong PSK rather than a scanner.
+        annotated_fails = []
+        for f in auth_fails:
+            annotated_fails.append({
+                "mac": f["mac"],
+                "total_failures": int(f["total_failures"]),
+                "ap_count": int(f["ap_count"]),
+                "aps_seen": f["aps_seen"],
+                "first_seen": _format_timestamp(f["first_seen"]),
+                "last_seen": _format_timestamp(f["last_seen"]),
+                "likely_cause": (
+                    "stale/wrong PSK — device is roaming while failing auth"
+                    if int(f["ap_count"]) > 1
+                    else "persistent auth failure on single AP"
+                ),
+            })
+
         return json.dumps({
             "time_range": f"last {hours}h",
             "status": "ok",
             "event_summary": sorted(by_type.values(), key=lambda x: x["total"], reverse=True),
             "notable_events": notables,
+            "auth_failures": annotated_fails,
         }, indent=2, default=str)
 
     except Exception as e:
