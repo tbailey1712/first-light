@@ -61,8 +61,7 @@ Stale finding from Mar 7 audit. Parser is live in the OTel pipeline at `otel-col
 
 **DG-2: Per-client blocked domains tool** ⏳ PENDING — Spec written and handed off to AdGuard analytics agent. Requires adding `export_per_client_blocked_domains()` to `/home/tbailey/adgh/adguard_metrics_exporter_v2.py` on the AdGuard LXC. Once deployed, add `query_adguard_per_client_blocked_domains` to `agent/tools/metrics.py`.
 
-**DG-3: Validator block proposals and attestation delay** (was DATA-3)
-`query_validator_health` returns balance and peer count but not attestation inclusion delay or block proposal history. Add beacon API calls for these.
+**DG-3: Validator block proposals and attestation delay** — Deferred. Requires `VALIDATOR_PUBKEYS` configured in `.env`.
 
 **DG-4: AdGuard NXDomain rate per client** (was DATA-5)
 NXDomain spikes per client are a reliable DGA/C2 signal. Current tools don't surface this.
