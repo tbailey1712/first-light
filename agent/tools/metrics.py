@@ -467,6 +467,94 @@ def query_adguard_blocklist_attribution(hours: int = 24) -> str:
 
 
 # ─────────────────────────────────────────────────────
+# DG-2: Per-client blocked domain detail
+# ─────────────────────────────────────────────────────
+
+@tool
+def query_adguard_per_client_blocked_domains(
+    hours: int = 24,
+    min_blocks: int = 5,
+    limit: int = 50,
+) -> str:
+    """Get the top blocked domain per client — shows exactly what each device is being blocked from.
+
+    Unlike query_adguard_blocked_domains (which shows total block counts per client),
+    this reveals the specific domains each client is hitting. Use this to:
+    - Identify IoT devices repeatedly hitting the same blocked domain (C2 persistence)
+    - See which personal devices are generating the most ad/tracker block volume
+    - Spot unexpected domains being blocked on constrained IoT devices
+
+    Args:
+        hours: Lookback period in hours (default: 24)
+        min_blocks: Minimum block count to include (default: 5)
+        limit: Maximum rows returned (default: 50)
+
+    Returns:
+        Tab-separated table: client_ip, client_name, blocked_domain, blocks_24h
+        sorted by block count descending.
+    """
+    query = f"""
+        SELECT
+            simpleJSONExtractString(ts.labels, 'client_ip') as client_ip,
+            simpleJSONExtractString(ts.labels, 'client_name') as client_name,
+            simpleJSONExtractString(ts.labels, 'blocked_domain') as blocked_domain,
+            round(avg(s.value), 0) as blocks_24h
+        FROM signoz_metrics.samples_v4 s
+        JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+        WHERE s.metric_name = 'adguard_client_top_blocked_domain_queries_24h'
+          AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
+          AND s.value >= {min_blocks}
+        GROUP BY client_ip, client_name, blocked_domain
+        ORDER BY blocks_24h DESC
+        LIMIT {limit}
+    """
+    return _execute_clickhouse_query(query)
+
+
+# ─────────────────────────────────────────────────────
+# DG-4: Per-client new domain rate (DGA / NXDomain proxy)
+# ─────────────────────────────────────────────────────
+
+@tool
+def query_adguard_client_new_domains(
+    hours: int = 24,
+    min_new_domains: int = 10,
+) -> str:
+    """Get per-client count of newly-seen domains — a reliable DGA and C2 detection signal.
+
+    A device querying many domains it has never queried before is a hallmark of:
+    - DGA (domain generation algorithm) malware — generates pseudo-random domains
+    - C2 beaconing to rotating infrastructure
+    - Data exfiltration via DNS to many subdomains
+
+    Normal IoT devices query 2-10 fixed domains and should have near-zero new domains.
+    Personal devices (phones, laptops) see 5-30 new domains/day from browsing.
+    Anything above 50 new domains/day on an IoT device warrants investigation.
+
+    Args:
+        hours: Lookback period in hours (default: 24)
+        min_new_domains: Minimum new domain count to include (default: 10)
+
+    Returns:
+        Tab-separated table: client_ip, client_name, new_domains_24h — sorted descending.
+    """
+    query = f"""
+        SELECT
+            simpleJSONExtractString(ts.labels, 'client_ip') as client_ip,
+            simpleJSONExtractString(ts.labels, 'client_name') as client_name,
+            round(avg(s.value), 0) as new_domains_24h
+        FROM signoz_metrics.samples_v4 s
+        JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+        WHERE s.metric_name = 'adguard_client_new_domains_24h'
+          AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
+          AND s.value >= {min_new_domains}
+        GROUP BY client_ip, client_name
+        ORDER BY new_domains_24h DESC
+    """
+    return _execute_clickhouse_query(query)
+
+
+# ─────────────────────────────────────────────────────
 # Internal helper
 # ─────────────────────────────────────────────────────
 

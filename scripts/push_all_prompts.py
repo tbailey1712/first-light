@@ -192,33 +192,43 @@ Step 4 — high-risk clients:
   is the highest confidence finding. Flag as CROSS-HIT and report first in the output.
 
 Step 5 — block analysis:
-  Call query_adguard_blocked_domains(hours={hours})
+  Call query_adguard_per_client_blocked_domains(hours={hours}, min_blocks=5)
   Call query_adguard_block_rates(hours={hours}, min_block_rate=20)
   Call query_adguard_blocklist_attribution(hours={hours})
 
-  From blocked_domains: top blocked domains and which clients are hitting them.
-  - IoT device repeatedly hitting the same blocked domain = blocked_persistence pattern (flag it)
+  From per_client_blocked_domains (which specific domains each device is being blocked from):
+  - IoT device (192.168.2.x) hitting the same blocked domain repeatedly = blocked_persistence (flag it)
+  - Cross-reference with threat signals: if a domain from blocked_persistence also appears in beaconing_signals, CROSS-HIT
+  - Personal devices blocked from ad/tracking domains: suppress (normal)
 
   From block_rates (per-client block rate %):
-  - IoT device (192.168.2.x) with block_rate > 30%: suspicious — constrained devices don't browse widely
-  - Personal device (192.168.1.x) with block_rate > 70%: very high — may be legitimate, note it
-  - Any device with block_rate > 80%: investigate — nearly everything is being blocked
+  - IoT device with block_rate > 30%: suspicious — constrained devices don't browse widely
+  - Personal device with block_rate > 70%: very high — note it, likely legitimate but worth checking
+  - Any device with block_rate > 80%: investigate — nearly everything it tries is blocked
 
   From blocklist_attribution:
   - HaGeZi Multi Pro, OISD, security/malware-specific lists → real threat traffic, not ad blocking
   - AdGuard DNS Filter, 1Hosts, EasyList, uBlock → normal ad/tracker blocking (lower priority)
   - Flag if security-focused lists account for > 20% of total blocks
 
-Step 6 — new devices:
+Step 6 — new domain rate (DGA/C2 signal):
+  Call query_adguard_client_new_domains(hours={hours}, min_new_domains=10)
+  Newly-seen domains per client is the primary DGA and C2 rotation signal.
+  - IoT device (192.168.2.x) with > 20 new domains: HIGH — constrained IoT queries fixed domains
+  - IoT device with > 50 new domains: CRITICAL — strongly suggestive of DGA
+  - Personal device (192.168.1.x) with > 100 new domains: note but lower urgency (normal browsing)
+  Cross-reference with per_client_anomaly_counts from Step 2 — high_entropy_domain anomalies + high new domain count = confirmed DGA signal
+
+Step 7 — new devices:
   Call query_adguard_new_devices(hours={hours})
   Priority:
-  - New device on 192.168.2.x (IoT): medium — note and attempt fingerprint from Step 3 data
+  - New device on 192.168.2.x (IoT): medium — attempt fingerprint from Step 3 data
   - New device on 192.168.4.x (DMZ): high — should not appear without a planned deployment
-  - New device on 192.168.1.x: low if hostname is recognisable, medium if completely unknown
+  - New device on 192.168.1.x: low if hostname recognisable, medium if completely unknown
 
-Step 7 — query volume (conditional):
-  Call query_adguard_top_clients(hours={hours}) only if a specific client was flagged in earlier
-  steps and you need to quantify its query volume relative to other clients. Skip otherwise.
+Step 8 — query volume (conditional):
+  Call query_adguard_top_clients(hours={hours}) only if a specific client was flagged and you
+  need to quantify its query volume relative to other clients. Skip otherwise.
 
 Return a focused markdown section. Structure:
 
@@ -226,16 +236,18 @@ Return a focused markdown section. Structure:
 **CROSS-HITs:** any IP appearing in threat signals AND high-risk list — report first
 **Threat signals:** beaconing findings (with benign/suspicious call), TXT ratio findings, per-client anomaly breakdown
 **High-risk clients:** score >= 7 with VLAN, device type, reason
-**Block analysis:** per-client block rates only if elevated; blocklist split only if security lists are catching significant traffic
+**Block analysis:** per-client top blocked domains for IoT; block rates if elevated; blocklist split if security lists dominant
+**DGA signals:** clients with elevated new domain counts, especially IoT; combine with high_entropy_domain anomalies
 **DHCP device inventory:** every DHCP pool IP with top domains + device type guess; flag unidentified devices
 **New devices:** if any, with fingerprint attempt
 
 Suppression rules (do NOT report these):
-- Ad blocking on 192.168.1.x personal devices
+- Ad blocking on 192.168.1.x personal devices (unless block_rate > 80%)
 - Beaconing < 0.3 on any device
-- Beaconing on known benign IoT (QNAP→myqnapcloud.io, Docker→cgr.dev, LG TV→lgeapi.com)
+- Beaconing on known benign IoT (QNAP→myqnapcloud.io, Docker→cgr.dev)
 - bookstack.mcducklabs.com DNS blocks (internal service, low volume is expected)
 - TXT ratios < 0.3 on IoT devices
+- New domain counts < 50 on personal devices
 
 Be specific in everything that IS reported: include client IPs, exact domain names, scores, counts."""
 

@@ -85,6 +85,8 @@ def run_dns_agent(
         query_adguard_threat_signals,
         query_adguard_new_devices,
         query_adguard_blocklist_attribution,
+        query_adguard_per_client_blocked_domains,
+        query_adguard_client_new_domains,
     )
     from agent.tools.dns_tools import reverse_lookup_ip
 
@@ -99,6 +101,8 @@ def run_dns_agent(
         query_adguard_blocklist_attribution,
         query_adguard_new_devices,
         query_adguard_top_clients,
+        query_adguard_per_client_blocked_domains,
+        query_adguard_client_new_domains,
         reverse_lookup_ip,
     ]
     if not prompt_override:

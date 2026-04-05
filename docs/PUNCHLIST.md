@@ -59,12 +59,11 @@ Stale finding from Mar 7 audit. Parser is live in the OTel pipeline at `otel-col
 
 **~~DG-1: UniFi Controller API tools~~** ✅ DONE — `query_unifi_clients`, `query_unifi_ap_stats`, `lookup_unifi_client_by_mac` in `agent/tools/unifi_tools.py`. Commit: `53c94f9`. Also fixed `query_wireless_health` to extract MACs from `STA_ASSOC_TRACKER` syslog events (commit `243b7a1`) — identified `d8:d5:b9:00:bb:9f` (Rainforest Automation smartmeter) as the source of 219 daily auth failures.
 
-**DG-2: Per-client blocked domains tool** ⏳ PENDING — Spec written and handed off to AdGuard analytics agent. Requires adding `export_per_client_blocked_domains()` to `/home/tbailey/adgh/adguard_metrics_exporter_v2.py` on the AdGuard LXC. Once deployed, add `query_adguard_per_client_blocked_domains` to `agent/tools/metrics.py`.
+**~~DG-2: Per-client blocked domains tool~~** ✅ DONE — `query_adguard_per_client_blocked_domains` in `agent/tools/metrics.py`. Queries `adguard_client_top_blocked_domain_queries_24h` from ClickHouse. Wired into DNS domain agent and INTERACTIVE_TOOLS.
 
 **DG-3: Validator block proposals and attestation delay** — Deferred. Requires `VALIDATOR_PUBKEYS` configured in `.env`.
 
-**DG-4: AdGuard NXDomain rate per client** (was DATA-5)
-NXDomain spikes per client are a reliable DGA/C2 signal. Current tools don't surface this.
+**~~DG-4: AdGuard NXDomain rate per client~~** ✅ DONE — `query_adguard_client_new_domains` in `agent/tools/metrics.py`. Queries `adguard_client_new_domains_24h` (newly-seen domains per client — the available proxy for DGA/C2 rotation; exporter does not expose per-client NXDomain separately). Wired into DNS domain agent and INTERACTIVE_TOOLS.
 
 **~~DG-5: QNAP directory sizes~~** ✅ DONE — `query_qnap_directory_sizes` implemented in `agent/tools/qnap_tools.py`.
 
