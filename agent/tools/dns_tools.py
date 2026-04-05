@@ -51,6 +51,27 @@ def resolve_hostname(
 
 
 @tool
+def reverse_lookup_ip(ip: str) -> str:
+    """Reverse-lookup an IP address to its hostname (PTR record) via system DNS.
+
+    Use this to identify an unknown IP seen in logs, flows, or DNS anomalies.
+    The system resolver is AdGuard, so internal hosts with PTR records will
+    resolve to their local FQDN (e.g. 192.168.2.52 → ha.mcducklabs.com).
+
+    Args:
+        ip: IPv4 or IPv6 address to look up (e.g. "192.168.2.52")
+
+    Returns:
+        JSON with ip, hostname (if resolved), and whether resolution succeeded.
+    """
+    try:
+        hostname, _, _ = socket.gethostbyaddr(ip)
+        return json.dumps({"ip": ip, "resolved": True, "hostname": hostname})
+    except socket.herror as e:
+        return json.dumps({"ip": ip, "resolved": False, "error": str(e)})
+
+
+@tool
 def resolve_multiple_hostnames(hostnames: list[str]) -> str:
     """Resolve multiple hostnames in one call.
 

@@ -86,18 +86,20 @@ def run_dns_agent(
         query_adguard_new_devices,
         query_adguard_blocklist_attribution,
     )
+    from agent.tools.dns_tools import reverse_lookup_ip
 
     tools = [
         query_adguard_network_summary,
+        query_adguard_traffic_by_type,
+        query_adguard_threat_signals,
+        query_adguard_dhcp_fingerprints,
         query_adguard_high_risk_clients,
         query_adguard_blocked_domains,
-        query_adguard_dhcp_fingerprints,
-        query_adguard_threat_signals,
-        query_adguard_new_devices,
-        query_adguard_blocklist_attribution,
-        query_adguard_top_clients,
-        query_adguard_traffic_by_type,
         query_adguard_block_rates,
+        query_adguard_blocklist_attribution,
+        query_adguard_new_devices,
+        query_adguard_top_clients,
+        reverse_lookup_ip,
     ]
     if not prompt_override:
         raise ValueError("dns agent requires a prompt — ensure Langfuse prompt 'first-light-dns' exists with label=production")

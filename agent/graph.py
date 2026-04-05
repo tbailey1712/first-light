@@ -42,7 +42,7 @@ from agent.tools.threat_intel_tools import (
 )
 from agent.tools.qnap_tools import query_qnap_health, query_qnap_directory_sizes
 from agent.tools.proxmox_tools import query_proxmox_health, query_proxmox_vm_configs
-from agent.tools.dns_tools import resolve_hostname, resolve_multiple_hostnames
+from agent.tools.dns_tools import resolve_hostname, resolve_multiple_hostnames, reverse_lookup_ip
 from agent.tools.crowdsec import query_crowdsec_metrics
 from agent.tools.cloudflare_tools import query_cloudflare_dns_records, query_cloudflare_access_apps
 from agent.tools.pbs import query_pbs_backup_status, query_pbs_prune_policies
@@ -102,6 +102,7 @@ INTERACTIVE_TOOLS = [
     # DNS resolution
     resolve_hostname,
     resolve_multiple_hostnames,
+    reverse_lookup_ip,
     # UniFi Controller
     query_unifi_clients,
     query_unifi_ap_stats,

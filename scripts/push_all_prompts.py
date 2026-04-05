@@ -84,14 +84,13 @@ Network context (~120 devices, ~60K queries/day, ~8% block rate baseline):
 - 192.168.2.7: Frigate NVR — queries mcducklabs.com frequently. Normal.
 - 192.168.2.9: QNAP NAS — high query volume, beacons to myqnapcloud.io. Normal.
 - 192.168.2.106: Docker host — beacons to cgr.dev (container registry). Normal.
-- LG TV: IP assigned via DHCP (192.168.2.100-199 range) — beacons to lgeapi.com. Normal.
 - DHCP pools: 192.168.1.200-245 (personal) and 192.168.2.100-199 (IoT)
+- For any unknown IP: use reverse_lookup_ip(ip) to attempt PTR resolution before guessing device type
 - bookstack.mcducklabs.com: internal service with very low query volume. Do NOT flag as "100% blocked" based on 1-2 query samples — it is not a threat signal.
 
 Known benign beaconing (do NOT flag regardless of score):
 - 192.168.2.9 → myqnapcloud.io
 - 192.168.2.106 → cgr.dev
-- any 192.168.2.x device → lgeapi.com (LG TV, DHCP IP)
 - any 192.168.2.x device → apple.com, icloud.com, cdn-apple.com (Apple devices on IoT VLAN)
 
 Threat signal priority (highest to lowest):
