@@ -1,23 +1,36 @@
-# NetOps AI — Self-Bootstrapping Network Observability Stack
+# First Light — AI-Powered Network Security Platform
 
 ## Project Identity
 
-You are building **NetOps AI**, a unified network observability platform with AI-powered analysis. This project collects logs, metrics, and flow data from a home/prosumer network infrastructure, stores it in a modern observability stack, and uses an AI agent to analyze everything and communicate findings via Telegram.
+**First Light** is a production AI-powered network security and infrastructure observability platform for a home/prosumer network. It collects logs, metrics, and flow data from the full network stack, runs concurrent hierarchical AI domain agents to analyze everything daily, and delivers structured findings via Slack with interactive investigation support.
 
-## Current Status (March 2026)
+The project name is **First Light** (not NetOps AI). The Slack bot is the primary interface (not Telegram).
+
+## Current Status (April 2026)
 
 **Infrastructure:** ✅ Deployed and operational
 - SigNoz (ClickHouse backend) collecting 850k logs/day, 500k metrics/day
-- OTel Collector with comprehensive log parsing (pfSense, UniFi, ntopng, Proxmox, HA, Docker)
-- AdGuard DNS metrics export (hourly)
-- SNMP metrics (switch, NAS, pfSense, Proxmox)
+- OTel Collector with comprehensive log parsing (pfSense filterlog, SSH/sudo, ntopng, Proxmox, HA, Docker)
+- AdGuard DNS analytics exporter with beaconing detection, TXT ratio analysis, client risk scoring
+- SNMP metrics: switch, QNAP (fans/temps/disks/filesystems), Proxmox
+- Threat intel enrichment via AbuseIPDB (throttled to <1000 req/day)
 
-**AI Agent:** 🚧 In development
-- AdGuard metrics tools built
-- Threat assessment plan designed (see `/docs/THREAT_ASSESSMENT_PLAN.md`)
-- Daily/weekly security reports planned
+**AI Agent:** ✅ Production — running nightly
+- 7 concurrent domain agents (dns, firewall, infrastructure, security, network, validator, cloud)
+- Structured JSON output (`---JSON-OUTPUT---` blocks) from all domain agents
+- LangGraph graph: Phase A (suspicious item extraction) → Phase B (investigation) → Phase C (synthesis)
+- ~20 tools across all data sources
+- Baseline metrics tracked in Redis across daily runs
 
-**Next Phase:** Implement automated threat assessment reports
+**Slack Bot:** ✅ Deployed
+- `/firstlight <question>` slash command
+- `@firstlight` mention with threaded replies
+- Reports to `#firstlight-reports`, alerts to `#firstlight-alerts`
+- Conversation history via Redis (thread_ts keyed, TTL 24h)
+
+**MCP Server:** ✅ Deployed (port 8082) — Claude Desktop integration
+
+**Active branch:** `feature/langgraph-redesign`
 
 ## Deployment Workflow
 
@@ -59,7 +72,7 @@ cd /Users/tbailey/Dev/first-light
 # Make code changes
 git add .
 git commit -m "description"
-git push origin <branch>
+git push origin feature/langgraph-redesign
 ```
 
 **Step 2: REMOTE - Pull and deploy**
@@ -72,10 +85,10 @@ git status
 git branch
 
 # Pull updates
-git pull origin <branch>   # or git checkout <branch> && git pull
+git pull origin feature/langgraph-redesign
 
-# Deploy
-docker-compose up -d --build <service>
+# Deploy (use docker compose v2, not docker-compose v1)
+docker compose up -d --build <service>
 
 # Check logs
 docker-compose logs -f <service>
@@ -94,41 +107,58 @@ ssh tbailey@192.168.2.106 "docker ps --filter 'name=fl-'"
 
 - **NEVER run docker-compose on LOCAL** - it should only run on REMOTE
 - **ALWAYS push from LOCAL, pull on REMOTE**
-- **Use signoz-remote docker context** when running docker commands from local that target remote
+- **Use `docker compose` (v2), not `docker-compose` (v1)** — v1 has a ContainerConfig bug with newer Docker
 - **SSH access:** You have passwordless SSH to tbailey@192.168.2.106
 - **Remote path is always /opt/first-light** - not ~/first-light or anywhere else
+- **Langfuse prompts:** Run `python3 scripts/push_all_prompts.py` locally, not via docker exec
 
 ### Quick Reference Commands
 
 ```bash
 # Check what's running on remote
-docker ps
+ssh tbailey@192.168.2.106 "docker ps --filter 'name=fl-'"
 
 # View remote logs
-docker logs -f <container-name>
+ssh tbailey@192.168.2.106 "docker logs -f fl-agent"
 
-# Rebuild a service on remote
-ssh tbailey@192.168.2.106 "cd /opt/first-light && docker-compose up -d --build <service>"
+# Restart agent + bot after code changes
+ssh tbailey@192.168.2.106 "cd /opt/first-light && git pull && docker compose restart fl-agent fl-slack-bot"
 
-# Check remote git status
-ssh tbailey@192.168.2.106 "cd /opt/first-light && git status"
+# Rebuild with new dependencies
+ssh tbailey@192.168.2.106 "cd /opt/first-light && git pull && docker compose up -d --build fl-agent fl-slack-bot"
+
+# Check OTel collector config loaded cleanly
+ssh tbailey@192.168.2.106 "docker logs signoz-otel-collector 2>&1 | grep -E 'ready|error|fatal' | tail -5"
 ```
+
+### OTel Collector OTTL Constraints (v0.142.0)
+
+The SigNoz OTel collector build has constraints that differ from upstream:
+
+- Use `log.body` and `log.attributes["x"]` — not the deprecated `body` / `attributes["x"]`
+- **`IsPresent()` is NOT available** in this build — use `IsMatch(log.body, "pattern")` guards instead
+- **`attributes["x"] == nil` throws** a `StandardPMapGetter` type error when the key doesn't exist — always use `IsMatch` body guards or restructure to avoid nil checks
+- Keep `error_mode: ignore` on transform processors — errors are silent but the processor keeps running
+- The OpAMP server pushes config to `/var/tmp/collector-config.yaml` on startup — config parse errors cause rollback to the previous working config
 
 ## Architecture Overview
 
-**Current (Deployed):**
 ```
-Data Sources → OTel Collector → SigNoz (ClickHouse + UI)
-                              → Parsed logs with security attributes
-                              → Metrics aggregation
-```
-
-**Target (In Progress):**
-```
-Data Sources → OTel Collector → SigNoz (storage + visualization)
-                              → LangGraph Agent (AI analysis)
-                              → Automated Reports (daily/weekly)
-                              → Telegram Bot (interaction)
+Network Infrastructure (pfSense · AdGuard · UniFi · QNAP · Proxmox · ntopng · Validators)
+       │ syslog TCP/UDP 5140
+       ▼
+OTel Collector → SigNoz/ClickHouse (logs + metrics)
+                        │
+                        ▼
+           LangGraph Daily Report Agent
+           7 concurrent domain agents → structured JSON
+           Phase A: suspicious item extraction
+           Phase B: investigation (tool calls)
+           Phase C: synthesis → final report
+                        │
+                        ▼
+           Slack Bot (#firstlight-reports, #firstlight-alerts)
+           MCP Server → Claude Desktop
 ```
 
 ## Bootstrap Sequence

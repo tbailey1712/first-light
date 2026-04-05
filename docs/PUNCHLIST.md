@@ -1,7 +1,7 @@
 # First Light — Master Punchlist
 
-**Last Updated:** 2026-04-04 (post-sprint update — all sections through Enhancements complete)
-**Sources:** Code review (Apr 4), SYSTEM_AUDIT_MEGA_SECURE (Mar 4), LOG_PARSING_AUDIT (Mar 7), AGENT_IMPROVEMENT_PLAN (Apr 3), EPIC_FL_001 (Mar 28), daily report review (Apr 4)
+**Last Updated:** 2026-04-05
+**Sources:** Code review (Apr 4), SYSTEM_AUDIT_MEGA_SECURE (Mar 4), LOG_PARSING_AUDIT (Mar 7), AGENT_IMPROVEMENT_PLAN (Apr 3), EPIC_FL_001 (Mar 28), daily report review (Apr 4), session review (Apr 5)
 
 ---
 
@@ -38,12 +38,8 @@
 ### ~~AG-1: `query_ntopng_flows_by_host` — verify endpoint works~~ ✅ FIXED
 **Commit:** `555d64c` — Community Edition doesn't support `host=` filter server-side. Fixed to fetch all flows and filter client-side by client.ip/server.ip.
 
-### AG-2: CrowdSec pfSense bouncer — needs pfSense package install
-CrowdSec is ingesting pfSense logs and generating alerts (confirmed working). Bouncer key regenerated: `8VQkmEinsPzYR4eezow/51iF7wYg8Vxm4pxLQCNPbc8`
-**Action needed (manual — pfSense UI):**
-1. pfSense → System → Package Manager → install `crowdsec`
-2. Services → CrowdSec → LAPI URL: `http://192.168.2.106:8080`, API Key: above
-3. Save — pfSense will start enforcing CrowdSec bans at firewall level
+### ~~AG-2: CrowdSec pfSense bouncer~~ ⛔ SKIPPED
+CrowdSec is not an official pfSense package. Dropped.
 
 ### ~~AG-3: SSH/sudo log parser disabled~~ ✅ ALREADY ACTIVE
 Stale finding from Mar 7 audit. Parser is live in the OTel pipeline at `otel-collector-config.yaml:601`.
@@ -102,15 +98,15 @@ Synthesis agent reads/writes facts to Redis across daily runs — repeat IPs, re
 
 **TOOL-2: pfSense DNS resolver host overrides** — Dropped. Same auth constraint as TOOL-1.
 
-**TOOL-5: AdGuard custom rules / allowlist reader** — Open. No direct API needed currently; data available via ClickHouse exporter.
+**~~TOOL-5: AdGuard custom rules / allowlist reader~~** — Dropped. Data covered by existing ClickHouse exporter tools.
 
-**TOOL-6: AdGuard per-client query detail** — Open (overlaps DG-2).
+**~~TOOL-6: AdGuard per-client query detail~~** — Dropped. Covered by DG-2 (`query_adguard_per_client_blocked_domains`) and DG-4 (`query_adguard_client_new_domains`).
 
 **TOOL-10: UniFi Controller client list + AP stats** — Open (overlaps DG-1).
 
 **TOOL-11: UniFi Controller site config reader** — Open (overlaps DG-1).
 
-**TOOL-15: ntopng host details by IP** — Open.
+**~~TOOL-15: ntopng host details by IP~~** — Dropped. `query_ntopng_host_details` and `query_ntopng_host_l7_stats` already exist in `ntopng.py`.
 
 ### Slack Interactive Bot
 
@@ -124,17 +120,17 @@ Synthesis agent reads/writes facts to Redis across daily runs — repeat IPs, re
 
 ### Infrastructure / Security Actions (manual — from daily report findings)
 
-**INF-1:** Remove public DNS records for `pve`, `portainer`, `pbs` — actively enumerated
-**INF-2:** Add Cloudflare Access to `ha.mcducklabs.com`
-**INF-3:** Audit and delete `openmwebui.mcducklabs.com` CF DNS record (typo, stale)
-**INF-4:** Add CF Access to `ntfy.mcducklabs.com`
-**INF-5:** Verify `blxrbdn.com` (bloXroute BDN) is intentionally configured on validator
-**INF-6:** Investigate why Nimbus restarted ~2h before today's report
-**INF-7:** Check vm/115 — backup stale 23 days, re-enable or decommission
-**INF-8:** Verify CrowdSec is ingesting current logs (`cscli metrics`)
-**INF-9:** Add DNS name for camera at `192.168.3.15`
-**INF-10:** Identify and fix rejected Wi-Fi client on UnifiBasement (156 auth failures)
-**INF-11:** Enforce key-only SSH on `adguard` and `openclaw`
+**~~INF-1:~~** ✅ Removed public DNS records for `pve`, `portainer`, `pbs`
+**~~INF-2:~~** ✅ Added Cloudflare Access to `ha.mcducklabs.com`
+**~~INF-3:~~** ✅ Deleted `openmwebui.mcducklabs.com` CF DNS record (typo, stale)
+**INF-4:** Add CF Access to `ntfy.mcducklabs.com` — **OPEN, needs review**
+**~~INF-5:~~** ✅ Verified `blxrbdn.com` — confirmed bloXroute BDN MEV relay discovery, legitimate
+**~~INF-6:~~** ✅ Nimbus restart investigated and resolved
+**INF-7:** Check vm/115 — backup stale 23 days, re-enable or decommission — **OPEN**
+**INF-8:** Verify CrowdSec is ingesting current logs (`cscli metrics`) — **OPEN**
+**~~INF-9:~~** ✅ Added DNS name for camera at `192.168.3.15`
+**~~INF-10:~~** ✅ Identified and fixed rejected Wi-Fi client on UnifiBasement
+**INF-11:** Enforce key-only SSH on `adguard` and `openclaw` — **OPEN, needs review**
 
 ---
 

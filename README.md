@@ -1,283 +1,184 @@
-# First Light — AI-Powered Network Security Platform
+# First Light
 
-**Production-Ready Network Observability with Hierarchical AI Agents**
+AI-powered network security and infrastructure observability for a home/prosumer network. Collects logs, metrics, and flow data from the full network stack, runs hierarchical AI domain agents to analyze everything daily, and delivers findings via Slack with interactive investigation support.
 
-First Light is an AI-powered network security platform that provides real-time threat analysis, DNS security monitoring, and infrastructure observability through a unified interface. The system uses hierarchical AI agents to analyze network data and exposes security tools via Model Context Protocol (MCP) for natural language interaction through Claude Desktop.
+## Status
 
-## 🎯 Current Status
+**Production — operational** on `docker.mcducklabs.com` (192.168.2.106)
 
-**✅ DNS Security MVP - COMPLETE**
+| Component | Status |
+|-----------|--------|
+| Log ingestion (SigNoz/ClickHouse) | ✅ ~850k logs/day |
+| Metrics ingestion | ✅ ~500k metrics/day |
+| Daily report agent | ✅ Running nightly |
+| Slack bot (interactive queries) | ✅ Deployed |
+| MCP server (Claude Desktop) | ✅ Deployed |
+| Threat intel enrichment | ✅ AbuseIPDB throttled to <1000/day |
 
-- 10 DNS security tools exposed via MCP
-- Hierarchical agent system with supervisor + 5 micro-agents
-- Integrated with Claude Desktop for natural language queries
-- Real-time analysis of network traffic, threats, and anomalies
-- Production deployment on docker.mcducklabs.com
-
-[→ DNS Security MVP Documentation](docs/DNS_SECURITY_MVP.md)
-
-## 🏗️ Architecture
+## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                     Claude Desktop                           │
-│                    (Natural Language UI)                     │
-└────────────────────────┬─────────────────────────────────────┘
-                         │ MCP Protocol (HTTP/SSE)
-┌────────────────────────▼─────────────────────────────────────┐
-│                  MCP Server (Port 8082)                      │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │          10 DNS Security Tools                         │ │
-│  │  Metrics: top_clients, block_rates, high_risk, etc.   │ │
-│  │  Logs: security_summary, anomalies, wireless_health   │ │
-│  └────────────────────────────────────────────────────────┘ │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │     Hierarchical Agent System (LangGraph)              │ │
-│  │  Supervisor + 5 Specialized Micro-Agents              │ │
-│  └────────────────────────────────────────────────────────┘ │
-└────────────────────────┬─────────────────────────────────────┘
-                         │ ClickHouse HTTP API
-┌────────────────────────▼─────────────────────────────────────┐
-│                 SigNoz / ClickHouse                          │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │  Metrics (VictoriaMetrics) + Logs (Loki)              │ │
-│  │  AdGuard DNS, pfSense, UniFi, Infrastructure           │ │
-│  └────────────────────────────────────────────────────────┘ │
-└────────────────────────┬─────────────────────────────────────┘
-                         │ Syslog (UDP 514)
-┌────────────────────────▼─────────────────────────────────────┐
-│              Network Infrastructure                          │
-│  pfSense • AdGuard • UniFi • QNAP • Proxmox • Validators   │
-└──────────────────────────────────────────────────────────────┘
+Network Infrastructure
+  pfSense · AdGuard · UniFi · QNAP · Proxmox · ntopng · Validators
+       │
+       ▼ syslog (TCP/UDP 5140) + Prometheus scrape
+  OTel Collector (signoz-otel-collector)
+  - Parses: pfSense filterlog, SSH/sudo, ntopng alerts, Proxmox, HA, Docker
+  - Enriches: security attributes, VLAN tags, threat intel
+       │
+       ▼
+  SigNoz / ClickHouse          Redis
+  signoz_logs.logs_v2          fl:* keys (baseline metrics,
+  signoz_metrics.*             conversation history, cache)
+       │                            │
+       ▼                            │
+  LangGraph Daily Report Agent ◄────┘
+  ┌─────────────────────────────────────────┐
+  │  7 Domain Agents (concurrent)           │
+  │  dns · firewall · infrastructure ·      │
+  │  security · network · validator · cloud │
+  │         ↓ structured JSON output        │
+  │  Phase A: Suspicious item extraction    │
+  │  Phase B: Investigation agent (tools)   │
+  │  Phase C: Synthesis + final report      │
+  └─────────────────────────────────────────┘
+       │
+       ▼
+  Slack (#firstlight-reports · #firstlight-alerts)
+  Slack Bot (interactive queries, threaded replies)
+  MCP Server → Claude Desktop (natural language)
 ```
 
-## ✨ Features
+## Domain Agents
 
-### 🤖 AI-Powered Analysis
-- **Hierarchical Agents:** Supervisor coordinates 5 specialized micro-agents
-- **Natural Language Interface:** Query network security via Claude Desktop
-- **Real-time Analysis:** Live threat detection and anomaly identification
-- **Contextual Understanding:** Agents maintain conversation state and history
+Each domain agent queries its data sources, produces a narrative + structured JSON (`---JSON-OUTPUT---` block with `overall_severity`, `findings[]`, `metrics{}`), then the graph merges findings and runs targeted investigation.
 
-### 🛡️ DNS Security Tools
-1. **Top DNS Clients** - Identify highest volume clients
-2. **Block Rate Analysis** - Monitor DNS blocking effectiveness
-3. **High Risk Detection** - Flag suspicious client behavior
-4. **Blocked Domains** - Track frequently blocked domains
-5. **Traffic Patterns** - Analyze query types and trends
-6. **Security Summary** - Aggregate threat intelligence
-7. **Anomaly Detection** - Identify unusual DNS patterns
-8. **Wireless Health** - Monitor WiFi network status
-9. **Infrastructure Events** - Track system alerts
-10. **IP Search** - Investigate specific addresses
+| Domain | Data Sources |
+|--------|-------------|
+| **dns** | AdGuard metrics (beaconing scores, TXT ratios, blocked domains, client risk) |
+| **firewall** | pfSense filterlog, CrowdSec alerts |
+| **infrastructure** | Proxmox, PBS backups, QNAP (SNMP + REST), Uptime Kuma, switch ports |
+| **security** | SSH/sudo events (ClickHouse), threat intel enrichment, ntopng alerts |
+| **network** | ntopng flows, UniFi APs, wireless health |
+| **validator** | Nimbus/Nethermind metrics, attestation, beacon API |
+| **cloud** | Cloudflare analytics, zone requests, Access policies |
 
-### 📊 Observability Platform
-- **Unified Logs:** SigNoz/Loki for all network logs
-- **Metrics:** VictoriaMetrics for time-series data
-- **Dashboards:** Pre-built Grafana dashboards
-- **Tracing:** Langfuse integration for agent observability
-- **Alerting:** CrowdSec for threat detection
+## Tools
 
-## 🚀 Quick Start
+Tools are `@tool`-decorated functions available to domain and investigation agents.
 
-### Prerequisites
-- Docker & Docker Compose
-- Network devices configured to send syslog
-- Claude Desktop (for natural language interface)
+| File | Tools |
+|------|-------|
+| `metrics.py` | AdGuard: top clients, block rates, high risk, threat signals, beaconing, TXT ratios, per-client blocked domains, new domains |
+| `logs.py` | ClickHouse log search: security events, SSH brute force, sudo, hostname search, raw query |
+| `ntopng.py` | Interfaces, active hosts, flows by host, alerts, L7 protocols, ARP, VLAN traffic, top countries, host details |
+| `proxmox_tools.py` | Node stats, VM/CT list, backup status, VM configs |
+| `pbs.py` | PBS datastore status, prune policies |
+| `qnap_tools.py` | Health (SNMP fans/temps/disks + REST RAID), directory sizes |
+| `cloudflare_tools.py` | Zone analytics, DNS records, Access apps |
+| `crowdsec.py` | Metrics, hub status, decisions |
+| `dns_tools.py` | Reverse DNS, FQDN lookup, topology resolution |
+| `unifi_tools.py` | Client list, AP stats, MAC lookup |
+| `validator.py` | Nimbus beacon REST, Nethermind metrics, attestation |
+| `uptime_kuma.py` | Monitor definitions and status |
+| `switch_tools.py` | Port status, VLAN membership |
+| `threat_intel_tools.py` | AbuseIPDB enrichment (throttled) |
+| `pfsense_dhcp.py` | DHCP lease lookup |
+| `frigate.py` | Camera/NVR event queries |
+| `investigation.py` | Cross-domain investigation synthesis |
 
-### Deployment
+## Exporters (custom, running on remote host)
 
-1. **Clone repository:**
+| Container | Port | Purpose |
+|-----------|------|---------|
+| `fl-qnap-snmp-exporter` | 9003 | QNAP SNMP: temps, fans, disks, ZFS filesystems |
+| `fl-qnap-api-exporter` | 9004 | QNAP REST API: volumes, RAID status |
+| `fl-proxmox-exporter` | 9005 | Proxmox node/VM/CT/backup metrics |
+| `fl-threat-intel-enricher` | — | AbuseIPDB enrichment sidecar |
+| `fl-rsyslog` | 514 | Syslog ingestion relay |
+
+## Network Topology
+
+| VLAN | ID | Subnet | Purpose |
+|------|----|--------|---------|
+| Trusted LAN | 1 | 192.168.1.0/24 | Primary devices |
+| IoT | 2 | 192.168.2.0/24 | Smart home, servers |
+| CCTV | 3 | 192.168.3.0/24 | Cameras — isolated |
+| DMZ/Validator | 4 | 192.168.4.0/24 | ETH validator nodes |
+| Guest | 10 | 192.168.10.0/24 | Guest WiFi |
+
+## Key Hosts
+
+| Host | IP | Role |
+|------|----|------|
+| `docker.mcducklabs.com` | 192.168.2.106 | Docker host (all containers) |
+| `pve.mcducklabs.com` | 192.168.2.5 | Proxmox hypervisor |
+| `adguard.mcducklabs.com` | 192.168.2.x | AdGuard Home + analytics exporter |
+| `vldtr.mcducklabs.com` | 192.168.4.2 | ETH validator (Nimbus + Nethermind) |
+| `192.168.4.6` | — | Nimbus beacon REST API |
+
+## Deployment
+
+See [DEPLOY.md](DEPLOY.md) for the standard git-pull workflow.
+
+**Local:** `/Users/tbailey/Dev/first-light` — development, git push
+**Remote:** `/opt/first-light` on `docker.mcducklabs.com` — production, git pull + docker compose
+
 ```bash
-git clone <repo-url>
-cd first-light
+# Deploy a change
+git push origin feature/langgraph-redesign
+ssh tbailey@192.168.2.106 "cd /opt/first-light && git pull && docker compose restart fl-agent fl-slack-bot"
 ```
 
-2. **Configure environment:**
-```bash
-cp .env.example .env
-# Edit .env with your credentials
-```
+## Slack Bot
 
-3. **Start the stack:**
-```bash
-docker compose up -d
-```
+- **`/firstlight <question>`** — ad-hoc investigation query
+- **`@firstlight <question>`** — mention in any channel, threaded reply
+- Reports posted to `#firstlight-reports`, alerts to `#firstlight-alerts`
+- Conversation history via Redis (keyed by thread_ts, TTL 24h)
 
-4. **Verify services:**
-```bash
-docker compose ps
-curl http://localhost:8082/health  # MCP server
-```
+## MCP Server
 
-5. **Configure Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+Exposes agent tools to Claude Desktop via HTTP/SSE on port 8082.
+
 ```json
 {
   "mcpServers": {
-    "first-light-dns": {
-      "command": "/path/to/mcp-proxy",
-      "env": {
-        "SSE_URL": "http://docker.mcducklabs.com:8082/sse"
-      }
+    "first-light": {
+      "command": "mcp-proxy",
+      "env": { "SSE_URL": "http://docker.mcducklabs.com:8082/sse" }
     }
   }
 }
 ```
 
-6. **Restart Claude Desktop** and start querying!
+## Configuration
 
-[→ Full DNS Security MVP Documentation](docs/DNS_SECURITY_MVP.md)
-
-## 💬 Example Queries
-
-Ask Claude Desktop:
-- "What are the top DNS clients in the last 24 hours?"
-- "Show me clients with high block rates"
-- "Are there any high-risk clients with suspicious activity?"
-- "What domains are being blocked most frequently?"
-- "Search logs for IP 192.168.1.50"
-- "What's the security summary for the last 6 hours?"
-- "Show me DNS anomalies and unusual patterns"
-
-## 🗂️ Project Structure
-
-```
-first-light/
-├── agent/                      # AI agent system
-│   ├── graphs/                 # LangGraph definitions
-│   │   └── dns_security_graph.py
-│   ├── tools/                  # Security tools
-│   │   ├── metrics.py          # PromQL queries
-│   │   └── logs.py             # LogQL queries
-│   ├── config.py               # Configuration
-│   ├── state.py                # State management
-│   └── agent_factory.py        # Agent creation
-│
-├── mcp_servers/                # MCP server
-│   ├── dns_security.py         # HTTP/SSE server
-│   ├── Dockerfile              # Container build
-│   └── README.md               # MCP documentation
-│
-├── signoz/                     # Observability stack
-│   ├── docker-compose.yaml     # SigNoz services
-│   ├── otel-collector-config.yaml
-│   └── common/                 # Configs & dashboards
-│
-├── scripts/                    # Utilities
-│   ├── test_mcp_minimal.py     # Quick MCP test
-│   └── test_mcp_list_tools.py  # List all tools
-│
-├── tests/                      # Test suite
-│   ├── unit/                   # Unit tests
-│   └── integration/            # Integration tests
-│
-└── docs/                       # Documentation
-    ├── DNS_SECURITY_MVP.md     # DNS Security guide
-    └── ...                     # Other guides
-```
-
-## 📚 Documentation
-
-- **[DNS Security MVP](docs/DNS_SECURITY_MVP.md)** - Complete DNS Security guide
-- **[MCP Server](mcp_servers/README.md)** - MCP server implementation
-- **[Configuration Guide](CONFIGURATION_GUIDE.md)** - Network device setup
-- **[Deployment Guide](DEPLOY.md)** - Production deployment
-
-## 🔧 Configuration
-
-### Environment Variables
-
-Key variables in `.env`:
+All secrets in `.env` on the remote host. Key variables:
 
 ```bash
-# SigNoz / ClickHouse
-SIGNOZ_BASE_URL=http://signoz-query-service:8080
-SIGNOZ_CLICKHOUSE_HOST=clickhouse
-SIGNOZ_CLICKHOUSE_USER=default
-SIGNOZ_CLICKHOUSE_PASSWORD=
-
-# AI Agent
-ANTHROPIC_API_KEY=sk-ant-...
-LITELLM_BASE_URL=https://model-router.mcducklabs.com
-LITELLM_MODEL=claude-sonnet-4-5-20250929
-
-# Notifications (optional)
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_CHAT_ID=
-
-# CrowdSec (optional)
-CROWDSEC_ENROLLMENT_KEY=
+ANTHROPIC_API_KEY=
+LANGFUSE_PUBLIC_KEY=
+LANGFUSE_SECRET_KEY=
+SLACK_BOT_TOKEN=
+SLACK_SIGNING_SECRET=
+ABUSEIPDB_API_KEY=
+CLICKHOUSE_HOST=signoz-clickhouse
+CLICKHOUSE_PASSWORD=
+REDIS_URL=redis://fl-redis:6379
+NIMBUS_HOST=192.168.4.6
+VALIDATOR_HOST=vldtr.mcducklabs.com
 ```
 
-### Network Devices
+## Observability
 
-Configure devices to send syslog to Docker host on port 514:
+- **SigNoz UI:** http://docker.mcducklabs.com:8080
+- **Langfuse traces:** https://langfuse.mcducklabs.com (self-hosted)
+- **Agent logs:** `docker logs -f fl-agent`
+- **Slack bot logs:** `docker logs -f fl-slack-bot`
 
-**pfSense:** Status → System Logs → Settings → Remote Logging
-**UniFi:** Settings → System → Remote Logging
-**QNAP:** Control Panel → System → System Logs → Syslog
-**Proxmox:** Edit `/etc/rsyslog.conf`: `*.* @<docker-host-ip>:514`
+## Open Items
 
-## 🧪 Testing
+See [docs/PUNCHLIST.md](docs/PUNCHLIST.md) for current status.
 
-```bash
-# Test MCP server
-python scripts/test_mcp_minimal.py
-
-# List all tools
-python scripts/test_mcp_list_tools.py
-
-# Run integration tests
-pytest tests/integration/ -v
-```
-
-## 📊 Monitoring
-
-- **SigNoz UI:** http://localhost:3301 (dev) or port 8080 (prod)
-- **MCP Health:** http://localhost:8082/health
-- **Langfuse Traces:** https://cloud.langfuse.com (if configured)
-- **Grafana Dashboards:** http://localhost:3000
-
-## 🛣️ Roadmap
-
-### ✅ Phase 1: DNS Security MVP (Complete)
-- Hierarchical agent system
-- 10 DNS security tools
-- MCP server integration
-- Claude Desktop interface
-- Production deployment
-
-### 🔜 Phase 2: Advanced Analytics
-- Statistical anomaly detection engine
-- Threat intelligence enrichment (AbuseIPDB, VirusTotal)
-- Device inventory and tracking
-- ntopng flow data integration
-- Uptime monitoring integration
-
-### 📋 Phase 3: Automation & Alerts
-- Automated security reports
-- Proactive threat notifications
-- Historical trend analysis
-- Predictive anomaly detection
-- Automated remediation actions
-
-## 🤝 Contributing
-
-This is a personal homelab project, but feedback and suggestions are welcome!
-
-## 📄 License
-
-Private project - All rights reserved
-
-## 🔗 Links
-
-- [Model Context Protocol](https://modelcontextprotocol.io)
-- [LangGraph](https://langchain-ai.github.io/langgraph/)
-- [SigNoz](https://signoz.io)
-- [Claude](https://claude.ai)
-
----
-
-**Status:** ✅ **DNS Security MVP Complete**
-**Deployed:** docker.mcducklabs.com:8082
-**Last Updated:** March 7, 2026
+Remaining open: INF-4 (CF Access on ntfy), INF-7 (vm/115 backup), INF-8 (CrowdSec metrics), INF-11 (SSH key-only on adguard/openclaw).
