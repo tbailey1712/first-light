@@ -107,7 +107,9 @@ def query_qnap_health() -> str:
     if not m_api and not m_snmp:
         return json.dumps({"error": f"Both exporters unreachable. API: {api_error}, SNMP: {snmp_error}"})
 
-    # --- CPU / Memory (SNMP preferred, API fallback) ---
+    # --- CPU / Memory ---
+    # SNMP exporter: qnap_cpu_usage_percent, qnap_memory_total_bytes, qnap_memory_used_bytes
+    # REST API exporter: same names
     cpu = _first(m_snmp, "qnap_cpu_usage_percent") or _first(m_api, "qnap_cpu_usage_percent")
     mem_used = _first(m_snmp, "qnap_memory_used_bytes") or _first(m_api, "qnap_memory_used_bytes")
     mem_total = _first(m_snmp, "qnap_memory_total_bytes") or _first(m_api, "qnap_memory_total_bytes")
@@ -118,43 +120,54 @@ def query_qnap_health() -> str:
     if uptime_s:
         uptime_days = round(uptime_s / 86400, 1)
 
-    # --- Temperatures (SNMP preferred) ---
+    # --- Temperatures ---
+    # SNMP exporter: qnap_system_temp_celsius, qnap_disk_temp_celsius{disk, model}
+    # REST API exporter: qnap_system_temperature_celsius, qnap_disk_temperature_celsius
     temps = {}
-    cpu_temp = _first(m_snmp, "qnap_cpu_temperature_celsius") or _first(m_api, "qnap_cpu_temperature_celsius")
-    sys_temp = _first(m_snmp, "qnap_system_temperature_celsius") or _first(m_api, "qnap_system_temperature_celsius")
-    if cpu_temp is not None:
-        temps["cpu"] = cpu_temp
+    sys_temp = _first(m_snmp, "qnap_system_temp_celsius") or _first(m_api, "qnap_system_temperature_celsius")
+    cpu_temp = _first(m_api, "qnap_cpu_temperature_celsius")  # REST API only
     if sys_temp is not None:
         temps["system"] = sys_temp
-    # Per-disk temps (merge both sources)
-    for labels, val in m_snmp.get("qnap_disk_temperature_celsius", []) + m_api.get("qnap_disk_temperature_celsius", []):
+    if cpu_temp is not None:
+        temps["cpu"] = cpu_temp
+    # Per-disk temps: SNMP uses qnap_disk_temp_celsius, REST API uses qnap_disk_temperature_celsius
+    for labels, val in m_snmp.get("qnap_disk_temp_celsius", []):
+        disk = labels.get("disk", "unknown")
+        if f"disk_{disk}" not in temps:
+            temps[f"disk_{disk}"] = val
+    for labels, val in m_api.get("qnap_disk_temperature_celsius", []):
         disk = labels.get("disk", labels.get("slot", "unknown"))
         if f"disk_{disk}" not in temps:
             temps[f"disk_{disk}"] = val
 
-    # --- Fan speeds (SNMP only) ---
+    # --- Fan speeds (SNMP only: qnap_fan_speed_rpm) ---
     fans = {}
     for labels, val in m_snmp.get("qnap_fan_speed_rpm", []):
         fan = labels.get("fan", "unknown")
         fans[fan] = int(val)
 
-    # --- Volumes (REST API) ---
+    # --- Volumes ---
+    # SNMP: qnap_volume_size_bytes, qnap_volume_used_bytes, qnap_volume_free_bytes
+    # REST API: qnap_volume_capacity_bytes, qnap_volume_used_bytes, qnap_volume_free_bytes
     volumes = {}
+    for labels, val in (m_snmp.get("qnap_volume_size_bytes", []) or m_api.get("qnap_volume_capacity_bytes", [])):
+        vol = labels.get("volume", "unknown")
+        volumes.setdefault(vol, {})["total_gb"] = _gb(val)
+    for labels, val in m_snmp.get("qnap_volume_used_bytes", []) + m_api.get("qnap_volume_used_bytes", []):
+        vol = labels.get("volume", "unknown")
+        if "used_gb" not in volumes.setdefault(vol, {}):
+            volumes[vol]["used_gb"] = _gb(val)
+    for labels, val in m_snmp.get("qnap_volume_free_bytes", []) + m_api.get("qnap_volume_free_bytes", []):
+        vol = labels.get("volume", "unknown")
+        if "free_gb" not in volumes.setdefault(vol, {}):
+            volumes[vol]["free_gb"] = _gb(val)
+    # Also try REST API capacity key
     for labels, val in m_api.get("qnap_volume_capacity_bytes", []):
         vol = labels.get("volume", "unknown")
         pool = labels.get("pool", "")
         key = f"{vol} ({pool})" if pool and pool != "unknown" else vol
-        volumes.setdefault(key, {})["total_gb"] = _gb(val)
-    for labels, val in m_api.get("qnap_volume_used_bytes", []):
-        vol = labels.get("volume", "unknown")
-        pool = labels.get("pool", "")
-        key = f"{vol} ({pool})" if pool and pool != "unknown" else vol
-        volumes.setdefault(key, {})["used_gb"] = _gb(val)
-    for labels, val in m_api.get("qnap_volume_free_bytes", []):
-        vol = labels.get("volume", "unknown")
-        pool = labels.get("pool", "")
-        key = f"{vol} ({pool})" if pool and pool != "unknown" else vol
-        volumes.setdefault(key, {})["free_gb"] = _gb(val)
+        if key not in volumes:
+            volumes.setdefault(key, {})["total_gb"] = _gb(val)
     for vol, info in volumes.items():
         info["used_pct"] = _pct(info.get("used_gb"), info.get("total_gb"))
 
@@ -172,20 +185,27 @@ def query_qnap_health() -> str:
         mount = labels.get("mount", "unknown")
         filesystems.setdefault(mount, {})["used_gb"] = _gb(val)
 
-    # --- Disks (merge SNMP + API) ---
+    # --- Disks ---
+    # SNMP: qnap_disk_status{disk, model} (1=GOOD, 0=FAIL), qnap_disk_temp_celsius{disk, model}
+    # REST API: qnap_disk_smart_status{disk/slot}, qnap_disk_temperature_celsius{disk/slot}
     disks = {}
-    for labels, val in m_snmp.get("qnap_disk_smart_status", []) + m_api.get("qnap_disk_smart_status", []):
+    for labels, val in m_snmp.get("qnap_disk_status", []):
+        disk = labels.get("disk", "unknown")
+        model = labels.get("model", "")
+        disks[disk] = {"smart": "ok" if val == 1 else "warn"}
+        if model:
+            disks[disk]["model"] = model
+    for labels, val in m_api.get("qnap_disk_smart_status", []):
         disk = labels.get("disk", labels.get("slot", "unknown"))
         if disk not in disks:
             disks[disk] = {"smart": "ok" if val == 1 else "warn"}
-    for labels, val in m_snmp.get("qnap_disk_temperature_celsius", []) + m_api.get("qnap_disk_temperature_celsius", []):
-        disk = labels.get("disk", labels.get("slot", "unknown"))
-        disks.setdefault(disk, {})["temp_c"] = val
-    for labels, val in m_snmp.get("qnap_disk_model", []):
+    for labels, val in m_snmp.get("qnap_disk_temp_celsius", []):
         disk = labels.get("disk", "unknown")
-        model = labels.get("model", "")
-        if model:
-            disks.setdefault(disk, {})["model"] = model
+        disks.setdefault(disk, {})["temp_c"] = val
+    for labels, val in m_api.get("qnap_disk_temperature_celsius", []):
+        disk = labels.get("disk", labels.get("slot", "unknown"))
+        if "temp_c" not in disks.setdefault(disk, {}):
+            disks[disk]["temp_c"] = val
 
     # --- Alerts ---
     alerts = []
