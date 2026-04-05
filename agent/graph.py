@@ -22,6 +22,11 @@ from agent.tools.metrics import (
     query_adguard_high_risk_clients,
     query_adguard_blocked_domains,
     query_adguard_traffic_by_type,
+    query_adguard_network_summary,
+    query_adguard_dhcp_fingerprints,
+    query_adguard_threat_signals,
+    query_adguard_new_devices,
+    query_adguard_blocklist_attribution,
 )
 from agent.tools.logs import (
     query_security_summary,
@@ -45,6 +50,14 @@ from agent.tools.switch_tools import query_switch_port_status
 from agent.tools.validator import query_validator_node_config
 from agent.tools.uptime_kuma import query_uptime_kuma_monitors
 from agent.tools.unifi_tools import query_unifi_clients, query_unifi_ap_stats, lookup_unifi_client_by_mac
+from agent.tools.ntopng import (
+    query_ntopng_active_hosts,
+    query_ntopng_alerts,
+    query_ntopng_flows_by_host,
+    query_ntopng_l7_protocols,
+    query_ntopng_top_countries,
+    query_ntopng_host_details,
+)
 
 
 # Full tool set available to the interactive agent
@@ -55,6 +68,11 @@ INTERACTIVE_TOOLS = [
     query_adguard_high_risk_clients,
     query_adguard_blocked_domains,
     query_adguard_traffic_by_type,
+    query_adguard_network_summary,
+    query_adguard_dhcp_fingerprints,
+    query_adguard_threat_signals,
+    query_adguard_new_devices,
+    query_adguard_blocklist_attribution,
     # Logs — security, wireless, infrastructure
     query_security_summary,
     query_wireless_health,
@@ -88,6 +106,13 @@ INTERACTIVE_TOOLS = [
     query_unifi_clients,
     query_unifi_ap_stats,
     lookup_unifi_client_by_mac,
+    # ntopng flow analysis
+    query_ntopng_active_hosts,
+    query_ntopng_alerts,
+    query_ntopng_flows_by_host,
+    query_ntopng_l7_protocols,
+    query_ntopng_top_countries,
+    query_ntopng_host_details,
 ]
 
 
@@ -147,8 +172,9 @@ You monitor and analyze:
 # Available Tools
 
 You have tools to query:
-- **AdGuard DNS**: Query metrics, block rates, high-risk clients, blocked domains, traffic types
+- **AdGuard DNS**: query_adguard_top_clients, query_adguard_block_rates, query_adguard_high_risk_clients, query_adguard_blocked_domains, query_adguard_traffic_by_type, query_adguard_network_summary (full DNS summary), query_adguard_dhcp_fingerprints (per-device top domains for device ID — e.g. ring.com → Ring camera), query_adguard_threat_signals (beaconing scores, TXT tunneling ratios, anomaly counts), query_adguard_new_devices (first-seen clients), query_adguard_blocklist_attribution (which blocklists are hitting)
 - **Security Logs**: pfSense firewall blocks, ntopng security alerts (query_security_summary)
+- **ntopng Flow Analysis**: query_ntopng_active_hosts (top talkers by traffic), query_ntopng_alerts (IDS/flow alerts), query_ntopng_flows_by_host (per-IP flow details), query_ntopng_l7_protocols (application breakdown), query_ntopng_top_countries (geo traffic distribution), query_ntopng_host_details (per-IP reputation and stats)
 - **Wireless Health**: UniFi deauth events, client anomalies, roaming issues (query_wireless_health)
 - **Infrastructure**: Docker health checks, Home Assistant errors, Proxmox operations (query_infrastructure_events)
 - **IP Investigation**: Search all logs for a specific IP address (search_logs_by_ip)
