@@ -67,7 +67,7 @@ def reverse_lookup_ip(ip: str) -> str:
     try:
         hostname, _, _ = socket.gethostbyaddr(ip)
         return json.dumps({"ip": ip, "resolved": True, "hostname": hostname})
-    except socket.herror as e:
+    except (socket.herror, socket.gaierror) as e:
         return json.dumps({"ip": ip, "resolved": False, "error": str(e)})
 
 

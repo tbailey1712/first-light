@@ -503,8 +503,8 @@ def query_adguard_per_client_blocked_domains(
         JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
         WHERE s.metric_name = 'adguard_client_top_blocked_domain_queries_24h'
           AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
-          AND s.value >= {min_blocks}
         GROUP BY client_ip, client_name, blocked_domain
+        HAVING blocks_24h >= {min_blocks}
         ORDER BY blocks_24h DESC
         LIMIT {limit}
     """
@@ -547,8 +547,8 @@ def query_adguard_client_new_domains(
         JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
         WHERE s.metric_name = 'adguard_client_new_domains_24h'
           AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
-          AND s.value >= {min_new_domains}
         GROUP BY client_ip, client_name
+        HAVING new_domains_24h >= {min_new_domains}
         ORDER BY new_domains_24h DESC
     """
     return _execute_clickhouse_query(query)
