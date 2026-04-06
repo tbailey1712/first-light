@@ -203,7 +203,7 @@ def run_infrastructure_agent(
         query_uptime_kuma_incidents,
     )
 
-    from agent.tools.switch_tools import query_switch_port_errors, query_pfsense_interface_traffic
+    from agent.tools.switch_tools import query_switch_port_errors, query_switch_events, query_pfsense_interface_traffic
     tools = [
         query_infrastructure_events,
         query_qnap_health,
@@ -217,6 +217,7 @@ def run_infrastructure_agent(
         query_uptime_kuma_uptime,
         query_uptime_kuma_incidents,
         query_switch_port_errors,
+        query_switch_events,
         query_pfsense_interface_traffic,
     ]
     if not prompt_override:

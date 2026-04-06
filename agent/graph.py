@@ -48,7 +48,7 @@ from agent.tools.dns_tools import resolve_hostname, resolve_multiple_hostnames, 
 from agent.tools.crowdsec import query_crowdsec_metrics
 from agent.tools.cloudflare_tools import query_cloudflare_dns_records, query_cloudflare_access_apps
 from agent.tools.pbs import query_pbs_backup_status, query_pbs_prune_policies
-from agent.tools.switch_tools import query_switch_port_status
+from agent.tools.switch_tools import query_switch_port_status, query_switch_events
 from agent.tools.validator import query_validator_node_config
 from agent.tools.uptime_kuma import query_uptime_kuma_monitors
 from agent.tools.unifi_tools import query_unifi_clients, query_unifi_ap_stats, lookup_unifi_client_by_mac
@@ -101,6 +101,7 @@ INTERACTIVE_TOOLS = [
     query_cloudflare_dns_records,
     query_cloudflare_access_apps,
     query_switch_port_status,
+    query_switch_events,
     query_uptime_kuma_monitors,
     # Validator
     query_validator_node_config,
@@ -186,7 +187,7 @@ You have tools to query:
 - **IP Investigation**: Search all logs for a specific IP address (search_logs_by_ip)
 - **Hardware Health**: query_qnap_health (NAS volumes/disks/temps), query_proxmox_health (VMs/containers/storage), query_proxmox_vm_configs (detailed VM/CT config + backup job coverage), query_proxmox_trends (historical CPU/memory trends for node + all VMs/CTs over hour/day/week/month — use to distinguish sustained load from spikes)
 - **Backup**: query_pbs_backup_status (last backup per VM, stale/failed tasks), query_pbs_prune_policies (retention schedules per datastore)
-- **Network Services**: query_crowdsec_metrics (active decisions, alerts, parser hit rates), query_cloudflare_dns_records (all DNS records for mcducklabs.com), query_cloudflare_access_apps (Zero Trust Access apps), query_switch_port_status (port operational state and traffic), query_uptime_kuma_monitors (monitor status and notification config)
+- **Network Services**: query_crowdsec_metrics (active decisions, alerts, parser hit rates), query_cloudflare_dns_records (all DNS records for mcducklabs.com), query_cloudflare_access_apps (Zero Trust Access apps), query_switch_port_status (port operational state and traffic), query_switch_events (port link-state change history + flapping detection — use when a port is suspected unstable), query_uptime_kuma_monitors (monitor status and notification config)
 - **Validator**: query_validator_node_config (Nimbus sync status, peer count, fee recipient, bloXroute BDN check)
 - **DNS**: resolve_hostname / resolve_multiple_hostnames — verify hostname resolution via system DNS (AdGuard)
 - **Threat Intelligence**: Enriched IP reputation from AbuseIPDB, VirusTotal, AlienVault:

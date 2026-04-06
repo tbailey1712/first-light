@@ -35,6 +35,7 @@ from agent.tools.switch_tools import (
     query_switch_port_traffic,
     query_switch_port_errors,
     query_switch_port_status,
+    query_switch_events,
     query_pfsense_interface_traffic,
 )
 

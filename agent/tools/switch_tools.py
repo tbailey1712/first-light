@@ -332,3 +332,109 @@ def query_pfsense_interface_traffic(hours: int = 24) -> str:
     if not result:
         return json.dumps({"status": "no traffic data", "hours": hours})
     return json.dumps({"device": _PFSENSE_DEVICE, "hours": hours, "interfaces": result}, indent=2)
+
+
+@tool
+def query_switch_events(hours: int = 24) -> str:
+    """Get switch syslog events: port link state changes and flapping detection.
+
+    Queries ClickHouse for port up/down events from the TP-Link TL-SG2424 switch
+    syslog. Detects flapping ports (more than 2 state changes in any 1-hour window),
+    which can indicate bad cables, failing NICs, or STP instability.
+
+    Args:
+        hours: Lookback period in hours (default: 24)
+
+    Returns:
+        JSON with per-port event timeline, state change counts, flapping flags,
+        and an alerts list for any port that changed state more than twice.
+    """
+    import re
+    from collections import defaultdict
+
+    sql = f"""
+        SELECT
+            toDateTime(timestamp / 1000000000) AS ts,
+            body
+        FROM signoz_logs.logs_v2
+        WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
+          AND body LIKE '%192.168.1.2%'
+          AND body LIKE '%changed state to%'
+        ORDER BY ts ASC
+        LIMIT 500
+    """
+    rows = _run_query(sql)
+    if rows and "error" in rows[0]:
+        return json.dumps(rows[0])
+
+    port_events: dict = defaultdict(list)
+    _port_re = re.compile(r'port\s+(\d+),\s+changed state to\s+(\w+)', re.IGNORECASE)
+
+    for row in rows:
+        body = row.get("body", "")
+        ts = row.get("ts", "")
+        m = _port_re.search(body)
+        if m:
+            port_num = m.group(1)
+            state = m.group(2).lower()
+            port_events[port_num].append({"ts": ts, "state": state})
+
+    if not port_events:
+        return json.dumps({
+            "status": "no_events",
+            "message": f"No switch port state change events in the last {hours}h",
+            "hours": hours,
+        })
+
+    # Flapping: >2 state changes in any rolling 60-minute window
+    def _is_flapping(events: list) -> bool:
+        from datetime import datetime, timedelta
+        if len(events) <= 2:
+            return False
+        try:
+            times = [datetime.fromisoformat(e["ts"]) for e in events]
+        except Exception:
+            return len(events) > 4
+        window = timedelta(hours=1)
+        for i, t in enumerate(times):
+            count = sum(1 for t2 in times if abs((t2 - t).total_seconds()) <= 3600)
+            if count > 2:
+                return True
+        return False
+
+    ports_summary = []
+    alerts = []
+
+    for port_num, events in sorted(port_events.items(), key=lambda x: int(x[0])):
+        flapping = _is_flapping(events)
+        changes = len(events)
+        entry = {
+            "port": port_num,
+            "state_changes": changes,
+            "flapping": flapping,
+            "events": events,
+        }
+        # Most recent state
+        if events:
+            entry["current_state"] = events[-1]["state"]
+            entry["last_change"] = events[-1]["ts"]
+        ports_summary.append(entry)
+
+        if flapping:
+            alerts.append(
+                f"Port {port_num} is FLAPPING — {changes} state changes in {hours}h "
+                f"(last: {events[-1]['state']} at {events[-1]['ts']})"
+            )
+        elif changes > 1:
+            alerts.append(
+                f"Port {port_num} changed state {changes} times in {hours}h "
+                f"(last: {events[-1]['state']} at {events[-1]['ts']})"
+            )
+
+    return json.dumps({
+        "switch": _SWITCH_DEVICE,
+        "hours": hours,
+        "ports_with_events": ports_summary,
+        "alerts": alerts,
+        "total_events": sum(len(e) for e in port_events.values()),
+    }, indent=2)

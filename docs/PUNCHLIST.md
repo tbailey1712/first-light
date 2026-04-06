@@ -1,6 +1,6 @@
 # First Light — Master Punchlist
 
-**Last Updated:** 2026-04-05
+**Last Updated:** 2026-04-06
 **Sources:** Code review (Apr 4), SYSTEM_AUDIT_MEGA_SECURE (Mar 4), LOG_PARSING_AUDIT (Mar 7), AGENT_IMPROVEMENT_PLAN (Apr 3), EPIC_FL_001 (Mar 28), daily report review (Apr 4), session review (Apr 5)
 
 ---
@@ -106,6 +106,12 @@ Synthesis agent reads/writes facts to Redis across daily runs — repeat IPs, re
 
 **TOOL-11: UniFi Controller site config reader** — Open (overlaps DG-1).
 
+**DG-6: Switch syslog event tool** — `query_switch_events` in `switch_tools.py`. Query ClickHouse for port state changes, link flaps, error events from switch (192.168.1.2). Port 5 flapped 6+ times on 2026-04-05 — infrastructure agent should surface this. **No user action needed — I implement.**
+
+**DG-7: Home Assistant syslog queries** — `query_ha_events` in new `ha_tools.py`. Query ClickHouse for HA entity state changes, automations triggered, errors. HA syslog already parsed in OTel pipeline (`transform/homeassistant`) with `ha.component`, `entity_id` attributes. Move "Home Assistant integration" out of Deferred. **No user action needed — I implement.**
+
+**DG-8: Home Assistant Prometheus scrape + tool** — Add HA metrics (device_tracker, binary sensors, power, climate) to OTel collector scrape. Requires HA Prometheus integration enabled + long-lived access token. New tool `query_ha_metrics`. **User action required first — see INF-15.**
+
 **~~TOOL-15: ntopng host details by IP~~** — Dropped. `query_ntopng_host_details` and `query_ntopng_host_l7_stats` already exist in `ntopng.py`.
 
 ### Slack Interactive Bot
@@ -132,6 +138,19 @@ Synthesis agent reads/writes facts to Redis across daily runs — repeat IPs, re
 **~~INF-10:~~** ✅ Identified and fixed rejected Wi-Fi client on UnifiBasement
 **INF-11:** Enforce key-only SSH on `adguard` and `openclaw` — **OPEN, needs review**
 
+**INF-12: Disable GUI on krusty (VM 116, 192.168.4.5)** — Running Ubuntu Desktop in DMZ VLAN with high memory. Disable display manager and set multi-user boot target. Commands: `systemctl status display-manager` then `systemctl disable --now <dm> && systemctl set-default multi-user.target && reboot`. **USER action.**
+
+**INF-13: Investigate pulse disk writes** — LXC 102, 1.60 MB/s sustained write observed in Proxmox Pulse. SSH in and run `iotop` or `lsof` to confirm it's normal metric storage, not a runaway process. **USER action.**
+
+**INF-14: vm/115 backup** — Stale 23+ days, re-enable or decommission. Carried from INF-7. **USER action.**
+
+**INF-15: Enable HA Prometheus integration** — Required for DG-8. Steps:
+  1. HA → Settings → Integrations → search "Prometheus" → Install
+  2. HA → Profile → Security → Long-Lived Access Tokens → Create → copy value
+  3. Add to `.env` on remote: `HA_HOST=192.168.2.52` and `HA_TOKEN=<token>`
+  4. Verify: `curl -H "Authorization: Bearer <token>" http://192.168.2.52:8123/api/prometheus`
+  **USER action — then I implement OTel scrape + tool (DG-8).**
+
 ---
 
 ## Deferred (Explicitly Post-V1)
@@ -139,5 +158,5 @@ Synthesis agent reads/writes facts to Redis across daily runs — repeat IPs, re
 - **BookStack auto-documentation** — `scripts/generate_bookstack_docs.py` via BookStack API at bookstack.mcducklabs.com. Needs `BOOKSTACK_TOKEN_ID/SECRET` in `.env`.
 - **MCP servers per data source** — expose tools to external LLMs
 - **Agentic response actions** — block IPs on pfSense, quarantine devices to restricted VLAN
-- **Home Assistant integration** — correlate network events with physical events
+- **Home Assistant integration** — moved to active backlog as DG-7 (syslog) and DG-8 (Prometheus)
 - **Weekly trend reports** — month-over-month comparison
