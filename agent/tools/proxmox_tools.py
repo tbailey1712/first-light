@@ -390,3 +390,118 @@ def query_proxmox_vm_configs() -> str:
         if not client.is_closed:
             client.close()
         return json.dumps({"error": str(e)})
+
+
+@tool
+def query_proxmox_trends(timeframe: str = "day") -> str:
+    """Get historical CPU and memory trend data for the Proxmox node and all VMs/containers.
+
+    Reads PVE RRD (round-robin database) data — the same data source used by the
+    Proxmox web UI graphs. Useful for identifying sustained high resource usage,
+    spotting workload spikes, and understanding whether current metrics are anomalous.
+
+    Args:
+        timeframe: One of "hour" (~1min resolution), "day" (~30min resolution),
+                   "week" (~3.5hr resolution), "month" (~12hr resolution).
+                   Default: "day".
+
+    Returns:
+        JSON with peak and average CPU/memory for the node and each VM/CT over
+        the requested period, plus a list of any resources that exceeded 80% average.
+    """
+    cfg = get_config()
+    client = _proxmox_api_client()
+    if client is None:
+        return json.dumps({
+            "error": "Proxmox API not configured — set PROXMOX_HOST, PROXMOX_TOKEN_ID, PROXMOX_TOKEN_SECRET"
+        })
+
+    valid_timeframes = {"hour", "day", "week", "month"}
+    if timeframe not in valid_timeframes:
+        timeframe = "day"
+
+    node = cfg.proxmox_node or "pve"
+
+    def _summarise_rrd(data: list, name: str, id_key: str, id_val) -> dict:
+        """Compute peak/avg CPU and memory from an RRD data list."""
+        cpu_vals = [p["cpu"] for p in data if p.get("cpu") is not None]
+        mem_vals = [p["mem"] for p in data if p.get("mem") is not None]
+        maxmem_vals = [p["maxmem"] for p in data if p.get("maxmem") is not None]
+
+        mem_pct_vals = []
+        for p in data:
+            if p.get("mem") and p.get("maxmem") and p["maxmem"] > 0:
+                mem_pct_vals.append(p["mem"] / p["maxmem"] * 100)
+
+        result: dict = {id_key: id_val, "name": name}
+
+        if cpu_vals:
+            result["cpu_avg_pct"] = round(sum(cpu_vals) / len(cpu_vals) * 100, 1)
+            result["cpu_peak_pct"] = round(max(cpu_vals) * 100, 1)
+        if mem_pct_vals:
+            result["mem_avg_pct"] = round(sum(mem_pct_vals) / len(mem_pct_vals), 1)
+            result["mem_peak_pct"] = round(max(mem_pct_vals), 1)
+        if mem_vals and maxmem_vals:
+            result["mem_total_gb"] = _gb(maxmem_vals[-1])
+
+        return result
+
+    try:
+        results = {}
+
+        # --- Node trend ---
+        resp = client.get(f"/nodes/{node}/rrddata", params={"timeframe": timeframe, "cf": "AVERAGE"})
+        if resp.status_code == 200:
+            data = resp.json().get("data", [])
+            results["node"] = _summarise_rrd(data, node, "node", node)
+
+        # --- VMs ---
+        vm_trends = []
+        resp = client.get(f"/nodes/{node}/qemu")
+        if resp.status_code == 200:
+            for vm in resp.json().get("data", []):
+                vmid = vm.get("vmid")
+                name = vm.get("name", str(vmid))
+                rrd_resp = client.get(
+                    f"/nodes/{node}/qemu/{vmid}/rrddata",
+                    params={"timeframe": timeframe, "cf": "AVERAGE"},
+                )
+                if rrd_resp.status_code == 200:
+                    vm_trends.append(_summarise_rrd(rrd_resp.json().get("data", []), name, "vmid", vmid))
+        results["vms"] = sorted(vm_trends, key=lambda x: str(x.get("vmid", "")))
+
+        # --- Containers ---
+        ct_trends = []
+        resp = client.get(f"/nodes/{node}/lxc")
+        if resp.status_code == 200:
+            for ct in resp.json().get("data", []):
+                ctid = ct.get("vmid")
+                name = ct.get("name", str(ctid))
+                rrd_resp = client.get(
+                    f"/nodes/{node}/lxc/{ctid}/rrddata",
+                    params={"timeframe": timeframe, "cf": "AVERAGE"},
+                )
+                if rrd_resp.status_code == 200:
+                    ct_trends.append(_summarise_rrd(rrd_resp.json().get("data", []), name, "ctid", ctid))
+        results["containers"] = sorted(ct_trends, key=lambda x: str(x.get("ctid", "")))
+
+        # --- Attention list: anything averaging >80% CPU or memory ---
+        attention = []
+        for item in [results.get("node")] + results["vms"] + results["containers"]:
+            if not item:
+                continue
+            name = item.get("name", "?")
+            if item.get("cpu_avg_pct", 0) > 80:
+                attention.append(f"{name}: avg CPU {item['cpu_avg_pct']}% over {timeframe}")
+            if item.get("mem_avg_pct", 0) > 80:
+                attention.append(f"{name}: avg memory {item['mem_avg_pct']}% over {timeframe}")
+        results["attention"] = attention
+        results["timeframe"] = timeframe
+
+        client.close()
+        return json.dumps(results, indent=2)
+
+    except Exception as e:
+        if not client.is_closed:
+            client.close()
+        return json.dumps({"error": str(e)})

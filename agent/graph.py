@@ -43,7 +43,7 @@ from agent.tools.threat_intel_tools import (
     query_threat_intel_coverage,
 )
 from agent.tools.qnap_tools import query_qnap_health, query_qnap_directory_sizes
-from agent.tools.proxmox_tools import query_proxmox_health, query_proxmox_vm_configs
+from agent.tools.proxmox_tools import query_proxmox_health, query_proxmox_vm_configs, query_proxmox_trends
 from agent.tools.dns_tools import resolve_hostname, resolve_multiple_hostnames, reverse_lookup_ip
 from agent.tools.crowdsec import query_crowdsec_metrics
 from agent.tools.cloudflare_tools import query_cloudflare_dns_records, query_cloudflare_access_apps
@@ -92,6 +92,7 @@ INTERACTIVE_TOOLS = [
     query_qnap_directory_sizes,
     query_proxmox_health,
     query_proxmox_vm_configs,
+    query_proxmox_trends,
     # Backup & storage
     query_pbs_backup_status,
     query_pbs_prune_policies,
@@ -183,7 +184,7 @@ You have tools to query:
 - **Wireless Health**: UniFi deauth events, client anomalies, roaming issues (query_wireless_health)
 - **Infrastructure**: Docker health checks, Home Assistant errors, Proxmox operations (query_infrastructure_events)
 - **IP Investigation**: Search all logs for a specific IP address (search_logs_by_ip)
-- **Hardware Health**: query_qnap_health (NAS volumes/disks/temps), query_proxmox_health (VMs/containers/storage), query_proxmox_vm_configs (detailed VM/CT config + backup job coverage)
+- **Hardware Health**: query_qnap_health (NAS volumes/disks/temps), query_proxmox_health (VMs/containers/storage), query_proxmox_vm_configs (detailed VM/CT config + backup job coverage), query_proxmox_trends (historical CPU/memory trends for node + all VMs/CTs over hour/day/week/month — use to distinguish sustained load from spikes)
 - **Backup**: query_pbs_backup_status (last backup per VM, stale/failed tasks), query_pbs_prune_policies (retention schedules per datastore)
 - **Network Services**: query_crowdsec_metrics (active decisions, alerts, parser hit rates), query_cloudflare_dns_records (all DNS records for mcducklabs.com), query_cloudflare_access_apps (Zero Trust Access apps), query_switch_port_status (port operational state and traffic), query_uptime_kuma_monitors (monitor status and notification config)
 - **Validator**: query_validator_node_config (Nimbus sync status, peer count, fee recipient, bloXroute BDN check)

@@ -1,5 +1,5 @@
 # First Light Network Topology
-# Auto-discovered: 2026-02-16
+# Auto-discovered: 2026-02-16 | Updated: 2026-04-05
 
 network:
   vlans:
@@ -72,6 +72,9 @@ devices:
   network_monitor:
     name: "ntopng"
     hostname: "ntopng.mcducklabs.com"
+    ip: "192.168.1.5"
+    vlan: 1
+    physical_host: "rpi-ntop (Raspberry Pi)"
     port: 443
     protocol: "https"
     type: "flow_analyzer"
@@ -131,6 +134,7 @@ devices:
   validator:
     name: "Ethereum Validator"
     hostname: "vldtr.mcducklabs.com"
+    ip: "192.168.4.2"
     vlan: 4
     type: "blockchain_validator"
     consensus_client:
@@ -146,10 +150,10 @@ devices:
     fee_recipient: "0xf22f398823BAC04290033a88C0d9439929b1085B"
     data_sources:
       prometheus:
-        - "http://vldtr.mcducklabs.com:8008/metrics"
-        - "http://vldtr.mcducklabs.com:6060/metrics"
+        - "http://192.168.4.2:8008/metrics"
+        - "http://192.168.4.2:6060/metrics"
       beacon_api:
-        endpoint: "http://vldtr.mcducklabs.com:5052"
+        endpoint: "http://192.168.4.2:5052"
 
   uptime_monitor:
     name: "Uptime Kuma"
@@ -178,29 +182,39 @@ devices:
       api:
         endpoint: "https://pve.mcducklabs.com:8006/api2/json"
 
-  storage:
-    name: "QNAP NAS / Docker host"
+  nas:
+    name: "QNAP NAS"
     hostname: "nas.mcducklabs.com"
-    alt_hostname: "docker.mcducklabs.com"
-    ip: "192.168.2.106"
+    ip: "192.168.2.9"
     vlan: 2
     trust_override: high
-    trust_reason: "Operator-managed infrastructure (NAS + Docker host) — high traffic to/from VLAN 1 is expected backup/monitoring activity"
+    trust_reason: "Operator-managed NAS — high traffic to/from VLAN 1 is expected backup activity"
     type: "nas"
     vendor: "QNAP"
     capabilities:
-      - "snmp_v3"
+      - "snmp"
       - "storage_monitoring"
       - "syslog"
     data_sources:
       snmp:
-        version: "3"
-        username: "snmp"
-        security_level: "noAuthNoPriv"
-        notes: "Requires pfSense rule: docker host → 192.168.2.106 UDP 161"
+        version: "2c"
+        community: "public"
+        notes: "Metrics scraped via fl-qnap-snmp-exporter (port 9003) and fl-qnap-api-exporter (port 9004)"
       syslog:
         port: 5516
         setup: "Control Panel → System → Syslog Server → docker.mcducklabs.com:5516 UDP"
+
+  docker_host:
+    name: "Docker Host"
+    hostname: "docker.mcducklabs.com"
+    ip: "192.168.2.106"
+    vlan: 2
+    proxmox_vmid: 121
+    proxmox_type: "vm"
+    trust_override: high
+    trust_reason: "Primary infrastructure host — runs all First Light containers"
+    type: "server"
+    notes: "VM 121 on PVE. Separate from the QNAP NAS (192.168.2.9). Hosts all fl-* containers, SigNoz, Redis."
 
   proxmox_backup:
     name: "Proxmox Backup Server"
@@ -248,13 +262,15 @@ devices:
         endpoint: "http://192.168.2.7:5000"
         notes: "No auth required on API port"
 
-  messaging_bot:
-    name: "OpenClaw Bot Server"
+  openclaw:
+    name: "OpenClaw"
     hostname: "openclaw"
-    ip: "unknown"
-    vlan: 2
+    ip: "192.168.4.6"
+    vlan: 4
+    proxmox_vmid: 100
+    proxmox_type: "lxc"
     type: "server"
-    notes: "Linux server running WhatsApp and Slack connector application. Sends syslog to central collector."
+    notes: "LXC on PVE. Messaging/bot connector application. Not the Nimbus host — Nimbus runs on vldtr (192.168.4.2)."
     data_sources:
       syslog:
         service_name: "openclaw"
@@ -262,13 +278,81 @@ devices:
   openwebui_server:
     name: "Open WebUI Server"
     hostname: "openwebui"
-    ip: "unknown"
+    ip: "192.168.2.15"
     vlan: 2
     type: "server"
     notes: "Linux server running Open WebUI (LLM interface) with Caddy reverse proxy and Postfix. Sends syslog."
     data_sources:
       syslog:
         service_name: "caddy"
+
+  home_assistant:
+    name: "Home Assistant"
+    hostname: "ha"
+    ip: "192.168.2.52"
+    vlan: 2
+    proxmox_vmid: 109
+    proxmox_type: "vm"
+    type: "home_automation"
+    notes: "VM 109 on PVE. Home Assistant instance for smart home automation."
+
+  jupyter:
+    name: "Jupyter Server"
+    hostname: "jupyter"
+    ip: "192.168.2.33"
+    vlan: 2
+    type: "server"
+    notes: "Jupyter notebook server (also known as 'python')."
+
+  pulse:
+    name: "Pulse Server"
+    hostname: "pulse"
+    ip: "192.168.2.13"
+    vlan: 2
+    type: "server"
+    notes: "Unknown purpose server on IoT VLAN."
+
+  litellm:
+    name: "LiteLLM"
+    hostname: "litellm"
+    ip: "192.168.4.3"
+    vlan: 4
+    type: "server"
+    notes: "LiteLLM model router in DMZ VLAN."
+
+  minecraft_server:
+    name: "Minecraft Server"
+    hostname: "minecraft"
+    ip: "192.168.4.4"
+    vlan: 4
+    type: "server"
+    notes: "Minecraft game server in DMZ VLAN."
+
+  krusty:
+    name: "Krusty"
+    hostname: "krusty"
+    ip: "192.168.4.5"
+    vlan: 4
+    proxmox_vmid: 116
+    proxmox_type: "vm"
+    type: "server"
+    notes: "VM 116 on PVE. Unknown purpose, in DMZ VLAN."
+
+  jumpbox:
+    name: "Jumpbox"
+    hostname: "jumpbox"
+    ip: "192.168.4.7"
+    vlan: 4
+    type: "server"
+    notes: "SSH jump host in DMZ VLAN."
+
+  bookstack:
+    name: "BookStack"
+    hostname: "bookstack"
+    ip: "192.168.1.110"
+    vlan: 1
+    type: "server"
+    notes: "BookStack documentation server. API at bookstack.mcducklabs.com."
 
 monitoring_focus:
   security:

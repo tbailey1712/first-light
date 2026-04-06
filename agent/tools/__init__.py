@@ -29,7 +29,7 @@ from agent.tools.threat_intel_tools import (
 )
 
 from agent.tools.qnap_tools import query_qnap_health, query_qnap_directory_sizes
-from agent.tools.proxmox_tools import query_proxmox_health
+from agent.tools.proxmox_tools import query_proxmox_health, query_proxmox_trends
 
 from agent.tools.switch_tools import (
     query_switch_port_traffic,

@@ -194,7 +194,7 @@ def run_infrastructure_agent(
     """Run the infrastructure health domain agent."""
     from agent.tools.logs import query_infrastructure_events
     from agent.tools.qnap_tools import query_qnap_health, query_qnap_events
-    from agent.tools.proxmox_tools import query_proxmox_health
+    from agent.tools.proxmox_tools import query_proxmox_health, query_proxmox_trends
     from agent.tools.frigate import query_frigate_health, query_frigate_events
     from agent.tools.pbs import query_pbs_backup_status
     from agent.tools.uptime_kuma import (
@@ -209,6 +209,7 @@ def run_infrastructure_agent(
         query_qnap_health,
         query_qnap_events,
         query_proxmox_health,
+        query_proxmox_trends,
         query_frigate_health,
         query_frigate_events,
         query_pbs_backup_status,
