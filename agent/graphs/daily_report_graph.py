@@ -510,9 +510,17 @@ def synthesize(state: DailyReportState) -> dict:
     return {"final_report": final_report, "suspicious_items": suspicious_items}
 
 
+_INVESTIGATION_BUCKET_SIZE = 3  # items per parallel investigator
+
+
 @observe(as_type="span", capture_input=False, capture_output=False)
 def investigate(state: DailyReportState) -> dict:
-    """Deep-dive ReAct agent for suspicious items flagged during synthesis."""
+    """Deep-dive ReAct agents for suspicious items — runs in parallel buckets.
+
+    Items are split into buckets of _INVESTIGATION_BUCKET_SIZE and each bucket
+    is investigated concurrently by its own ReAct loop. Results are merged in
+    order and appended to the final report.
+    """
     from agent.tools.logs import search_logs_by_ip, query_outbound_blocks
     from agent.tools.threat_intel_tools import lookup_ip_threat_intel
     from agent.tools.ntopng import query_ntopng_flows_by_host, query_ntopng_active_hosts
@@ -539,20 +547,6 @@ def investigate(state: DailyReportState) -> dict:
         query_clickhouse_raw,
     ]
 
-    item_lines = "\n".join(
-        f"  [{i+1}] type={item['type']} value={item['value']} "
-        f"source={item['source_domain']} reason={item['reason']}"
-        for i, item in enumerate(items)
-    )
-    user_msg = (
-        f"Investigate the following {len(items)} suspicious item(s) flagged during today's report:\n\n"
-        f"{item_lines}\n\n"
-        "For each item: gather evidence, assess severity (low/medium/high/critical), "
-        "identify the affected host, and recommend a specific action. "
-        "Use all available tools. Cross-reference across sources. "
-        "Produce a concise incident report grouped by item."
-    )
-
     investigation_prompt = state["prompts"].get("investigation", "")
     if not investigation_prompt:
         investigation_prompt = (
@@ -561,21 +555,60 @@ def investigate(state: DailyReportState) -> dict:
             "Produce structured findings: severity, evidence, affected hosts, recommended actions."
         )
 
-    logger.info("Running investigation node for %d item(s)...", len(items))
-    try:
-        findings = run_react_loop(
-            investigation_prompt,
-            user_msg,
-            tools,
-            "investigate",
-            agent_type="supervisor",
-            session_id=state["session_id"],
-            max_iterations=20,
-        )
-    except Exception as e:
-        logger.error("Investigation node failed: %s", e, exc_info=True)
-        findings = f"Investigation failed: {e}"
+    # Split into buckets
+    buckets = [
+        items[i : i + _INVESTIGATION_BUCKET_SIZE]
+        for i in range(0, len(items), _INVESTIGATION_BUCKET_SIZE)
+    ]
+    logger.info(
+        "Running investigation node: %d item(s) across %d parallel bucket(s)",
+        len(items), len(buckets),
+    )
 
+    def _investigate_bucket(bucket: list, bucket_idx: int) -> str:
+        item_lines = "\n".join(
+            f"  [{bucket_idx * _INVESTIGATION_BUCKET_SIZE + i + 1}] "
+            f"type={item['type']} value={item['value']} "
+            f"source={item['source_domain']} reason={item['reason']}"
+            for i, item in enumerate(bucket)
+        )
+        user_msg = (
+            f"Investigate the following {len(bucket)} suspicious item(s) flagged during today's report:\n\n"
+            f"{item_lines}\n\n"
+            "For each item: gather evidence, assess severity (low/medium/high/critical), "
+            "identify the affected host, and recommend a specific action. "
+            "Use all available tools. Cross-reference across sources. "
+            "Produce a concise incident report grouped by item."
+        )
+        try:
+            return run_react_loop(
+                investigation_prompt,
+                user_msg,
+                tools,
+                f"investigate/bucket{bucket_idx}",
+                agent_type="supervisor",
+                session_id=state["session_id"],
+                max_iterations=10,
+            )
+        except Exception as e:
+            logger.error("Investigation bucket %d failed: %s", bucket_idx, e, exc_info=True)
+            return f"Investigation bucket {bucket_idx} failed: {e}"
+
+    bucket_results = [""] * len(buckets)
+    with ThreadPoolExecutor(max_workers=len(buckets)) as executor:
+        futures = {
+            executor.submit(_investigate_bucket, bucket, idx): idx
+            for idx, bucket in enumerate(buckets)
+        }
+        for future in as_completed(futures):
+            idx = futures[future]
+            try:
+                bucket_results[idx] = future.result()
+            except Exception as e:
+                logger.error("Investigation bucket %d raised: %s", idx, e)
+                bucket_results[idx] = f"Bucket {idx} failed: {e}"
+
+    findings = "\n\n---\n\n".join(r for r in bucket_results if r)
     lf.update_current_span(output=findings[:500])
     return {"investigation_findings": findings}
 
