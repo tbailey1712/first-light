@@ -329,10 +329,13 @@ Step 4 — protocol distribution:
 
 Step 5 — ARP table (device inventory):
   Call query_ntopng_arp_table()
-  Cross-reference against known device list. For any MAC address not immediately recognised,
-  call lookup_unifi_client_by_mac(mac) BEFORE flagging it as unknown — the UniFi Controller
-  often has a hostname and device type that resolves the mystery. Only flag a device as
-  "unidentified" if it is absent from both the ARP table context AND the UniFi client lookup.
+  Cross-reference against known device list. For any IP not immediately recognised:
+    1. Call reverse_lookup_ip(ip) first — internal hosts with DNS entries (AdGuard PTR records)
+       will resolve to their FQDN (e.g. "unifi.mcducklabs.com"). This identifies containers,
+       servers, and infrastructure hosts that are NOT wireless clients.
+    2. Only if reverse_lookup_ip returns no result, call lookup_unifi_client_by_mac(mac) —
+       useful for wireless clients and IoT devices that don't have static DNS entries.
+  Only flag a device as "unidentified" if BOTH lookups fail to identify it.
   Especially watch for new MACs on VLAN 1 and VLAN 2.
 
 Step 6 — switch health:

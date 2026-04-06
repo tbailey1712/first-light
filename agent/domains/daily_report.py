@@ -154,6 +154,7 @@ def run_network_flow_agent(
         lookup_unifi_client_by_mac,
         query_unifi_clients,
     )
+    from agent.tools.dns_tools import reverse_lookup_ip
 
     tools = [
         query_ntopng_alerts,
@@ -171,6 +172,7 @@ def run_network_flow_agent(
         query_switch_events,
         query_pfsense_interface_traffic,
         query_active_device_inventory,
+        reverse_lookup_ip,
         lookup_unifi_client_by_mac,
         query_unifi_clients,
     ]
