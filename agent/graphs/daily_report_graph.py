@@ -36,6 +36,7 @@ from agent.domains.daily_report import (
     run_wireless_agent,
     run_validator_agent,
     run_cloudflare_agent,
+    run_home_automation_agent,
 )
 from langfuse import observe
 from agent.langfuse_integration import get_prompt_manager
@@ -46,26 +47,28 @@ logger = logging.getLogger(__name__)
 # ── Domain agent registry ──────────────────────────────────────────────────────
 
 DOMAIN_AGENTS = {
-    "firewall_threat": run_firewall_threat_agent,
-    "dns_security":    run_dns_agent,
-    "network_flow":    run_network_flow_agent,
-    "infrastructure":  run_infrastructure_agent,
-    "wireless":        run_wireless_agent,
-    "validator":       run_validator_agent,
-    "cloudflare":      run_cloudflare_agent,
+    "firewall_threat":  run_firewall_threat_agent,
+    "dns_security":     run_dns_agent,
+    "network_flow":     run_network_flow_agent,
+    "infrastructure":   run_infrastructure_agent,
+    "wireless":         run_wireless_agent,
+    "validator":        run_validator_agent,
+    "cloudflare":       run_cloudflare_agent,
+    "home_automation":  run_home_automation_agent,
 }
 
 LANGFUSE_PROMPT_NAMES = {
-    "firewall_threat": "first-light-firewall-threat",
-    "dns_security":    "first-light-dns",
-    "network_flow":    "first-light-network-flow",
-    "infrastructure":  "first-light-infrastructure",
-    "wireless":        "first-light-wireless",
-    "validator":       "first-light-validator",
-    "cloudflare":      "first-light-cloudflare",
-    "synthesis":       "first-light-synthesis",
-    "correlation":     "first-light-correlation",
-    "investigation":   "first-light-investigation",
+    "firewall_threat":  "first-light-firewall-threat",
+    "dns_security":     "first-light-dns",
+    "network_flow":     "first-light-network-flow",
+    "infrastructure":   "first-light-infrastructure",
+    "wireless":         "first-light-wireless",
+    "validator":        "first-light-validator",
+    "cloudflare":       "first-light-cloudflare",
+    "home_automation":  "first-light-home-automation",
+    "synthesis":        "first-light-synthesis",
+    "correlation":      "first-light-correlation",
+    "investigation":    "first-light-investigation",
 }
 
 # Redis key prefix for baseline storage

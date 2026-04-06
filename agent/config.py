@@ -147,6 +147,11 @@ class FirstLightConfig(BaseSettings):
     signoz_clickhouse_user: str = "default"
     signoz_clickhouse_password: str = ""
 
+    # Home Assistant
+    ha_host: str = "192.168.2.52"
+    ha_port: int = 8123
+    ha_token: Optional[str] = None  # Long-lived access token (INF-15)
+
     # Internal services
     victoria_metrics_port: int = 8428
     loki_port: int = 3100

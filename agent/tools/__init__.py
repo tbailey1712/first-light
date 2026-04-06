@@ -44,6 +44,12 @@ from agent.tools.validator import (
     query_validator_node_config,
 )
 
+from agent.tools.ha_tools import (
+    query_ha_logbook,
+    query_ha_entity_states,
+    query_ha_entity_history,
+)
+
 
 def get_all_tools() -> List[BaseTool]:
     """Get all available tools for the agent."""

@@ -328,3 +328,40 @@ def run_cloudflare_agent(
     except Exception as e:
         logger.error(f"cloudflare_agent failed: {e}", exc_info=True)
         return f"**Cloudflare**: Agent failed — {e}"
+
+
+# ─────────────────────────────────────────────
+# Domain Agent: Home Automation
+# ─────────────────────────────────────────────
+
+HOME_AUTOMATION_USER = "Analyse home automation security and activity for the past {hours} hours."
+
+
+def run_home_automation_agent(
+    hours: int = 24,
+    prompt_override: str = "",
+    session_id=None,
+) -> str:
+    """Run the home automation security domain agent."""
+    from agent.tools.ha_tools import (
+        query_ha_logbook,
+        query_ha_entity_states,
+        query_ha_entity_history,
+    )
+
+    tools = [
+        query_ha_logbook,
+        query_ha_entity_states,
+        query_ha_entity_history,
+    ]
+    if not prompt_override:
+        raise ValueError("home_automation agent requires a prompt — ensure Langfuse prompt 'first-light-home-automation' exists with label=production")
+    system = prompt_override.replace("{hours}", str(hours))
+    user = HOME_AUTOMATION_USER.format(hours=hours)
+
+    logger.info("Running home_automation_agent...")
+    try:
+        return run_react_loop(system, user, tools, "home_automation", session_id=session_id)
+    except Exception as e:
+        logger.error(f"home_automation_agent failed: {e}", exc_info=True)
+        return f"**Home Automation**: Agent failed — {e}"
