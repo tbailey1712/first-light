@@ -260,13 +260,19 @@ class SlackBotChannel:
         blocks = _build_blocks(header, body)
 
         chunk_size = 48  # Slack hard limit: 50 blocks per message
+        success = False
         for i in range(0, len(blocks), chunk_size):
-            await self._post_blocks(
+            ts = await self._post_blocks(
                 self._reports_channel,
                 blocks[i : i + chunk_size],
                 text=header,
             )
-        logger.info("Report sent to Slack channel %s (%d blocks)", self._reports_channel, len(blocks))
+            if ts:
+                success = True
+        if success:
+            logger.info("Report sent to Slack channel %s (%d blocks)", self._reports_channel, len(blocks))
+        else:
+            logger.error("Report delivery to Slack channel %s failed — check bot is invited to channel", self._reports_channel)
 
     async def send_alert(self, message: str) -> None:
         """

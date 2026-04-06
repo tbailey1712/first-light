@@ -66,13 +66,15 @@ class NtfyChannel:
         )
 
     async def _post(self, title: str, message: str, priority: str, tags: list[str]) -> None:
+        # HTTP headers must be ASCII — replace non-ASCII chars (e.g. em dash) with hyphen
+        safe_title = title.encode("ascii", errors="replace").decode("ascii").replace("?", "-")
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.post(
                     self._url,
                     auth=self._auth,
                     headers={
-                        "Title": title,
+                        "Title": safe_title,
                         "Priority": priority,
                         "Tags": ",".join(tags),
                     },
