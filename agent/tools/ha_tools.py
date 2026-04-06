@@ -27,18 +27,19 @@ _INTERESTING_DOMAINS = _SECURITY_DOMAINS | {
 }
 
 
-def _ha_client() -> Optional[httpx.Client]:
+def _ha_base_url() -> Optional[str]:
     cfg = get_config()
     if not cfg.ha_token:
         return None
-    return httpx.Client(
-        base_url=f"http://{cfg.ha_host}:{cfg.ha_port}",
-        headers={
-            "Authorization": f"Bearer {cfg.ha_token}",
-            "Content-Type": "application/json",
-        },
-        timeout=15.0,
-    )
+    return f"http://{cfg.ha_host}:{cfg.ha_port}"
+
+
+def _ha_headers() -> dict:
+    cfg = get_config()
+    return {
+        "Authorization": f"Bearer {cfg.ha_token}",
+        "Content-Type": "application/json",
+    }
 
 
 def _not_configured() -> str:
@@ -65,31 +66,29 @@ def query_ha_logbook(hours: int = 24, domains: str = "") -> str:
         JSON with logbook entries grouped by domain, plus a security_events list
         flagging any lock, alarm, or access events outside normal hours (22:00–07:00).
     """
-    client = _ha_client()
-    if client is None:
+    base_url = _ha_base_url()
+    if base_url is None:
         return _not_configured()
 
     from datetime import datetime, timedelta, timezone
-    start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    start = (now - timedelta(hours=hours)).isoformat()
 
     filter_domains = [d.strip() for d in domains.split(",") if d.strip()] if domains else list(_SECURITY_DOMAINS)
 
     try:
-        resp = client.get(
-            f"/api/logbook/{start}",
-            params={"entity_id": "", "end_time": datetime.now(timezone.utc).isoformat()},
-        )
-        if resp.status_code == 401:
-            return json.dumps({"error": "HA token invalid or expired — regenerate in HA Profile."})
-        if resp.status_code != 200:
-            return json.dumps({"error": f"HA API error {resp.status_code}: {resp.text[:200]}"})
-
-        entries = resp.json()
+        with httpx.Client(base_url=base_url, headers=_ha_headers(), timeout=15.0) as client:
+            resp = client.get(
+                f"/api/logbook/{start}",
+                params={"end_time": now.isoformat()},
+            )
+            if resp.status_code == 401:
+                return json.dumps({"error": "HA token invalid or expired — regenerate in HA Profile."})
+            if resp.status_code != 200:
+                return json.dumps({"error": f"HA API error {resp.status_code}: {resp.text[:200]}"})
+            entries = resp.json()
     except Exception as e:
-        client.close()
         return json.dumps({"error": str(e)})
-
-    client.close()
 
     # Filter and group by domain
     by_domain: dict = {}
@@ -151,22 +150,20 @@ def query_ha_entity_states(domains: str = "") -> str:
         JSON with entity states grouped by domain, highlighting anything
         in an unexpected state (lock unlocked, alarm disarmed, etc.).
     """
-    client = _ha_client()
-    if client is None:
+    base_url = _ha_base_url()
+    if base_url is None:
         return _not_configured()
 
     try:
-        resp = client.get("/api/states")
-        if resp.status_code == 401:
-            return json.dumps({"error": "HA token invalid or expired."})
-        if resp.status_code != 200:
-            return json.dumps({"error": f"HA API error {resp.status_code}"})
-        all_states = resp.json()
+        with httpx.Client(base_url=base_url, headers=_ha_headers(), timeout=15.0) as client:
+            resp = client.get("/api/states")
+            if resp.status_code == 401:
+                return json.dumps({"error": "HA token invalid or expired."})
+            if resp.status_code != 200:
+                return json.dumps({"error": f"HA API error {resp.status_code}"})
+            all_states = resp.json()
     except Exception as e:
-        client.close()
         return json.dumps({"error": str(e)})
-
-    client.close()
 
     filter_domains = [d.strip() for d in domains.split(",") if d.strip()] if domains else list(_SECURITY_DOMAINS)
 
@@ -223,32 +220,35 @@ def query_ha_entity_history(entity_id: str, hours: int = 24) -> str:
     Returns:
         JSON with timestamped state transitions for the entity.
     """
-    client = _ha_client()
-    if client is None:
+    base_url = _ha_base_url()
+    if base_url is None:
         return _not_configured()
 
     from datetime import datetime, timedelta, timezone
-    start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    start = (datetime.now(timezone.utc) - timedelta(hours=hours)).replace(microsecond=0).isoformat()
 
     try:
-        resp = client.get(
-            f"/api/history/period/{start}",
-            params={"filter_entity_id": entity_id, "minimal_response": "true"},
-        )
-        if resp.status_code == 401:
-            return json.dumps({"error": "HA token invalid or expired."})
-        if resp.status_code != 200:
-            return json.dumps({"error": f"HA API error {resp.status_code}"})
-        history = resp.json()
+        with httpx.Client(base_url=base_url, headers=_ha_headers(), timeout=15.0) as client:
+            resp = client.get(
+                f"/api/history/period/{start}",
+                params={"filter_entity_id": entity_id, "minimal_response": "true"},
+            )
+            if resp.status_code == 401:
+                return json.dumps({"error": "HA token invalid or expired."})
+            if resp.status_code != 200:
+                return json.dumps({"error": f"HA API error {resp.status_code}"})
+            history = resp.json()
     except Exception as e:
-        client.close()
         return json.dumps({"error": str(e)})
 
-    client.close()
+    if not isinstance(history, list):
+        return json.dumps({"error": f"Unexpected response format from HA history API: {type(history).__name__}"})
 
     # history is a list of lists (one per entity)
     transitions = []
     for entity_history in history:
+        if not isinstance(entity_history, list):
+            continue
         for state_record in entity_history:
             transitions.append({
                 "state": state_record.get("state"),

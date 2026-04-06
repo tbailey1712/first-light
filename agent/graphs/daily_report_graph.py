@@ -489,6 +489,7 @@ def synthesize(state: DailyReportState) -> dict:
         wireless=domain_summaries.get("wireless", "No data"),
         validator=domain_summaries.get("validator", "No data"),
         cloudflare=domain_summaries.get("cloudflare", "No data"),
+        home_automation=domain_summaries.get("home_automation", "No data"),
         correlation_section=correlation_section,
     )
 
@@ -714,6 +715,11 @@ Analysis period: {date}, past {hours} hours
 
 ## CLOUDFLARE EDGE SECURITY
 {cloudflare}
+
+---
+
+## HOME AUTOMATION
+{home_automation}
 {correlation_section}
 ---
 

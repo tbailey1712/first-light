@@ -340,7 +340,7 @@ HOME_AUTOMATION_USER = "Analyse home automation security and activity for the pa
 def run_home_automation_agent(
     hours: int = 24,
     prompt_override: str = "",
-    session_id=None,
+    session_id: Optional[str] = None,
 ) -> str:
     """Run the home automation security domain agent."""
     from agent.tools.ha_tools import (
