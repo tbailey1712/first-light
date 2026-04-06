@@ -30,6 +30,14 @@ def query_clickhouse_raw(sql: str) -> str:
     Allowed tables: signoz_logs.logs_v2, threat_intel.enrichments
     Maximum 100 rows returned to protect context window.
 
+    IMPORTANT — correct ClickHouse column names for signoz_logs.logs_v2:
+      - body                          log message text
+      - timestamp                     nanosecond unix timestamp
+      - attributes_string['key']      string attributes (ssh.event, hostname, etc.)
+      - attributes_number['key']      numeric attributes
+      - resources_string['key']       resource labels (host.name, service.name, etc.)
+      Do NOT use bare `attributes['key']` — it does not exist and will error.
+
     Args:
         sql: ClickHouse SQL query. Must query an allowed table.
 

@@ -672,15 +672,20 @@ what it's probing, and what Cloudflare is stopping before it reaches your infras
 This is distinct from the internal pfSense perimeter: pfSense guards the LAN, Cloudflare
 guards the public services.
 
-Exposed services (publicly resolvable via Cloudflare DNS):
-- ai.mcducklabs.com: Open WebUI (LLM interface) — protected by CF Access (one-time PIN)
-- ntfy.mcducklabs.com: Self-hosted push notifications — auth enforced via ntfy's own user/password auth
-- adguard.mcducklabs.com: AdGuard Home admin — should have CF Access
-- model-router.mcducklabs.com, langfuse.mcducklabs.com: AI infrastructure
-- ha.mcducklabs.com: Home Assistant
+Exposed services and their protection status — DO NOT flag these as issues:
+- ai.mcducklabs.com: Open WebUI — protected by CF Access (one-time PIN) ✅
+- ha.mcducklabs.com: Home Assistant — protected by CF Access ✅
+- ntfy.mcducklabs.com: Push notifications — ntfy native auth enforced ✅ (CF Access pending, not yet required)
+- adguard.mcducklabs.com: AdGuard Home — CF Access pending (INF-4), acceptable for now
+- model-router.mcducklabs.com, langfuse.mcducklabs.com: AI infrastructure — internal use only
 - bank.mcducklabs.com: Known GCP-hosted app — NORMAL, do not flag
-- pve.mcducklabs.com, portainer.mcducklabs.com, pbs.mcducklabs.com: Proxmox/container admin — should NOT be externally routed; DNS entries to be removed or Access-protected
-- firewall.mcducklabs.com: pfSense — should NOT be publicly accessible; DNS entry to be removed
+
+DNS records already removed — do NOT flag if queried (residual DNS cache only):
+- pve.mcducklabs.com, portainer.mcducklabs.com, pbs.mcducklabs.com: public DNS records removed ✅
+- firewall.mcducklabs.com: public DNS record removed ✅
+
+Flag ONLY: unexpected new subdomains with A records pointing to infrastructure IPs, or services
+with no auth protection that are actively receiving requests.
 
 Known normal patterns:
 - WAF managed rules blocking PHP scanner probes (/wp-config.php, /admin/*.php, /.env) = normal background noise
@@ -707,8 +712,8 @@ Step 2 — External DNS reconnaissance:
   - nxdomain_queries: probes for non-existent subdomains = enumeration
   - Any admin/infrastructure subdomains with high resolution counts
   - Note: ALL subdomains here are publicly resolvable — this is the external view of your attack surface
-  Flag: firewall.mcducklabs.com, pve.mcducklabs.com, portainer.mcducklabs.com being queried
-  (these are admin interfaces that should have CF Access policies or not be public at all)
+  Flag ONLY: unexpected new subdomains with infrastructure IPs, or subdomains not in the known-good list above.
+  Do NOT flag pve/portainer/pbs/firewall.mcducklabs.com — those DNS records have been removed; any queries are residual cache.
 
 Step 3 — Gateway DNS blocks (outbound filtering):
   Call query_cloudflare_gateway_dns(hours={hours})

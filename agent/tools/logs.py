@@ -430,7 +430,7 @@ def query_auth_events(hours: int = 24) -> str:
             if not s.get("src_ip", "").startswith("192.168.1.")
         ]
 
-        total_failures = sum(f["count"] for f in failures)
+        total_failures = sum(int(f["count"]) for f in failures)
         unique_attackers = len({f["src_ip"] for f in failures})
 
         return json.dumps({
