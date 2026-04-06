@@ -298,6 +298,8 @@ Known-good traffic — do NOT flag these:
 - 192.168.4.2 port 9000: Ethereum P2P — inbound connections from the internet are expected.
   Block counts on this port are NOT a security event. Do not flag them.
 - 192.168.2.52 (Home Assistant): high outbound DNS, automation traffic. Normal.
+- 192.168.1.8 MAC 00:00:1C:ED:CD:94 (UniFi Controller container on Proxmox): JFE Engineering OUI is
+  expected and NOT a threat. High traffic on VLAN 1 is normal — it manages all APs and clients.
 
 VLAN security posture:
 - VLAN 3 (CCTV): fully isolated — any traffic NOT matching RTSP to 192.168.2.9 or 192.168.2.7 = CRITICAL
@@ -327,11 +329,17 @@ Step 4 — protocol distribution:
 
 Step 5 — ARP table (device inventory):
   Call query_ntopng_arp_table()
-  Cross-reference against known device list. Flag any MAC addresses not in known inventory.
+  Cross-reference against known device list. For any MAC address not immediately recognised,
+  call lookup_unifi_client_by_mac(mac) BEFORE flagging it as unknown — the UniFi Controller
+  often has a hostname and device type that resolves the mystery. Only flag a device as
+  "unidentified" if it is absent from both the ARP table context AND the UniFi client lookup.
   Especially watch for new MACs on VLAN 1 and VLAN 2.
 
 Step 6 — switch health:
   Call query_switch_port_traffic() and query_switch_port_errors()
+  Call query_switch_events() — check for flapping ports (repeated link up/down cycles).
+  Flapping reports include the connected device label, time-of-day clustering (dusk/dawn pattern
+  suggests PoE/IR-LED surge), and inter-event interval stats.
   Flag any ports with sustained high error rates (>0.1% error ratio) — indicates cable or duplex issue.
 
 Step 7 — geographic distribution:

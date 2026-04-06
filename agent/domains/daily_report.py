@@ -146,9 +146,14 @@ def run_network_flow_agent(
     from agent.tools.switch_tools import (
         query_switch_port_traffic,
         query_switch_port_errors,
+        query_switch_events,
         query_pfsense_interface_traffic,
     )
     from agent.tools.pfsense_dhcp import query_active_device_inventory
+    from agent.tools.unifi_tools import (
+        lookup_unifi_client_by_mac,
+        query_unifi_clients,
+    )
 
     tools = [
         query_ntopng_alerts,
@@ -163,8 +168,11 @@ def run_network_flow_agent(
         query_ntopng_arp_table,
         query_switch_port_traffic,
         query_switch_port_errors,
+        query_switch_events,
         query_pfsense_interface_traffic,
         query_active_device_inventory,
+        lookup_unifi_client_by_mac,
+        query_unifi_clients,
     ]
     if not prompt_override:
         raise ValueError("network_flow agent requires a prompt — ensure Langfuse prompt 'first-light-network-flow' exists with label=production")

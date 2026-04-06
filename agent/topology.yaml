@@ -120,6 +120,9 @@ devices:
   wireless:
     name: "UniFi Controller"
     hostname: "unifi.mcducklabs.com"
+    ip: "192.168.1.8"
+    mac: "00:00:1C:ED:CD:94"
+    note: "Container on Proxmox — JFE Engineering OUI is expected, not a threat"
     port: 8443
     type: "wireless_controller"
     vendor: "Ubiquiti"

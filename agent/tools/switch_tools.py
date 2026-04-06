@@ -25,6 +25,34 @@ _PFSENSE_DEVICE = "pfsense.mcducklabs.com"
 # Skip virtual/management interfaces that are never interesting
 _SKIP_PORTS = {"AUX", "Loopback", "lo", "lo0"}
 
+# Authoritative port map — updated 2026-04-06
+_PORT_LABELS: dict[str, str] = {
+    "1":  "AP-2F-Back (unifi-2f-back) — TRUNK V1/V2/V3",
+    "2":  "Floor1-Desk (Intel NUC fam-desk)",
+    "3":  "MBR-Cabinet (Hue3 / LiftMaster / Airthings) — IoT V2",
+    "4":  "Ellie-Bedroom (empty)",
+    "5":  "Backyard-Camera 08:CC:81 via PoE-injector → Ethernet-over-COAX → 192.168.3.15 — CCTV V3",
+    "6":  "Bsmt-Cabinet (empty) — IoT V2",
+    "7":  "Office-Switch (printer + office devices)",
+    "8":  "(available) — IoT V2",
+    "9":  "QNAP-NAS TS-462 + containers — IoT V2",
+    "10": "AP-1F-Front (unifi-1f-front) — TRUNK V1/V2/V3",
+    "11": "Alex-Bedroom (empty)",
+    "12": "(available) — IoT V2",
+    "13": "vldtr ETH validator — DMZ V4",
+    "14": "Smart-Meter Rainforest d8:d5:b9:00:bb:9f — IoT V2",
+    "15": "Camera-Front Hikvision — CCTV V3",
+    "16": "Heatpump-GW Resideo — IoT V2",
+    "17": "Proxmox-V2-NIC Supermicro eth2 — IoT V2",
+    "18": "Supermicro-IPMI BMC — trusted V1",
+    "19": "Proxmox-V1-NIC Supermicro eth1 — trusted V1",
+    "20": "Garage-Switch + 3 downstream cameras — TRUNK V1/V3",
+    "21": "AP-Basement (unifi-basement) — TRUNK V1/V2/V3",
+    "22": "Proxmox-V4-NIC Supermicro eth0 SFP — DMZ V4",
+    "23": "Firewall pfSense 3100 SFP — TRUNK V1/V2/V3/V4",
+    "24": "rpi-ntop Raspberry Pi 4 ntopng — trusted V1",
+}
+
 
 def _clickhouse_url() -> str:
     cfg = get_config()
@@ -342,15 +370,23 @@ def query_switch_events(hours: int = 24) -> str:
     syslog. Detects flapping ports (more than 2 state changes in any 1-hour window),
     which can indicate bad cables, failing NICs, or STP instability.
 
+    Each flapping port includes:
+    - Human-readable label (device connected to that port)
+    - Time-of-day bucketing (counts per hour) — helps diagnose dusk/dawn PoE issues
+    - Interval stats (min/mean/max minutes between state changes)
+    - Whether events cluster at dusk (17-21h) or dawn (5-8h)
+
     Args:
         hours: Lookback period in hours (default: 24)
 
     Returns:
         JSON with per-port event timeline, state change counts, flapping flags,
-        and an alerts list for any port that changed state more than twice.
+        time-of-day analysis, interval stats, and an alerts list.
     """
     import re
+    import statistics
     from collections import defaultdict
+    from datetime import datetime, timedelta
 
     sql = f"""
         SELECT
@@ -386,48 +422,87 @@ def query_switch_events(hours: int = 24) -> str:
             "hours": hours,
         })
 
-    # Flapping: >2 state changes in any rolling 60-minute window
-    def _is_flapping(events: list) -> bool:
-        from datetime import datetime, timedelta
-        if len(events) <= 2:
+    def _is_flapping(times: list[datetime]) -> bool:
+        if len(times) <= 2:
             return False
-        try:
-            times = [datetime.fromisoformat(e["ts"]) for e in events]
-        except Exception:
-            return len(events) > 4
-        window = timedelta(hours=1)
-        for i, t in enumerate(times):
+        for t in times:
             count = sum(1 for t2 in times if abs((t2 - t).total_seconds()) <= 3600)
             if count > 2:
                 return True
         return False
 
+    def _parse_times(events: list) -> list[datetime]:
+        out = []
+        for e in events:
+            try:
+                out.append(datetime.fromisoformat(e["ts"]))
+            except Exception:
+                pass
+        return out
+
+    def _interval_stats(times: list[datetime]) -> dict | None:
+        if len(times) < 2:
+            return None
+        gaps = [(times[i+1] - times[i]).total_seconds() / 60 for i in range(len(times) - 1)]
+        return {
+            "min_minutes": round(min(gaps), 1),
+            "mean_minutes": round(statistics.mean(gaps), 1),
+            "max_minutes": round(max(gaps), 1),
+        }
+
+    def _tod_analysis(times: list[datetime]) -> dict:
+        """Bucket events by hour of day and flag dusk/dawn clustering."""
+        buckets: dict[int, int] = defaultdict(int)
+        for t in times:
+            buckets[t.hour] += 1
+        total = len(times)
+        dusk_count = sum(buckets[h] for h in range(17, 22))   # 17:00–21:59
+        dawn_count = sum(buckets[h] for h in range(5, 9))     # 05:00–08:59
+        result: dict = {
+            "by_hour": {str(h): buckets[h] for h in sorted(buckets)},
+        }
+        if dusk_count / total >= 0.5:
+            result["pattern"] = f"dusk-clustered ({dusk_count}/{total} events between 17:00-22:00) — possible IR-LED PoE surge"
+        elif dawn_count / total >= 0.5:
+            result["pattern"] = f"dawn-clustered ({dawn_count}/{total} events between 05:00-09:00) — possible IR-LED PoE surge"
+        else:
+            result["pattern"] = "no clear time-of-day clustering"
+        return result
+
     ports_summary = []
     alerts = []
 
     for port_num, events in sorted(port_events.items(), key=lambda x: int(x[0])):
-        flapping = _is_flapping(events)
+        times = _parse_times(events)
+        flapping = _is_flapping(times) if times else len(events) > 4
         changes = len(events)
-        entry = {
+
+        entry: dict = {
             "port": port_num,
+            "label": _PORT_LABELS.get(port_num, f"Port {port_num}"),
             "state_changes": changes,
             "flapping": flapping,
+            "current_state": events[-1]["state"] if events else "unknown",
+            "last_change": events[-1]["ts"] if events else None,
             "events": events,
         }
-        # Most recent state
-        if events:
-            entry["current_state"] = events[-1]["state"]
-            entry["last_change"] = events[-1]["ts"]
+
+        if times:
+            entry["interval_stats"] = _interval_stats(times)
+            if changes >= 3:
+                entry["time_of_day_analysis"] = _tod_analysis(times)
+
         ports_summary.append(entry)
 
+        label = _PORT_LABELS.get(port_num, f"Port {port_num}")
         if flapping:
             alerts.append(
-                f"Port {port_num} is FLAPPING — {changes} state changes in {hours}h "
+                f"Port {port_num} ({label}) FLAPPING — {changes} state changes in {hours}h "
                 f"(last: {events[-1]['state']} at {events[-1]['ts']})"
             )
         elif changes > 1:
             alerts.append(
-                f"Port {port_num} changed state {changes} times in {hours}h "
+                f"Port {port_num} ({label}) changed state {changes}x in {hours}h "
                 f"(last: {events[-1]['state']} at {events[-1]['ts']})"
             )
 
