@@ -106,11 +106,11 @@ Synthesis agent reads/writes facts to Redis across daily runs — repeat IPs, re
 
 **TOOL-11: UniFi Controller site config reader** — Open (overlaps DG-1).
 
-**DG-6: Switch syslog event tool** — `query_switch_events` in `switch_tools.py`. Query ClickHouse for port state changes, link flaps, error events from switch (192.168.1.2). Port 5 flapped 6+ times on 2026-04-05 — infrastructure agent should surface this. **No user action needed — I implement.**
+**~~DG-6: Switch syslog event tool~~** ✅ DONE — `query_switch_events` in `switch_tools.py`. Queries ClickHouse for port state changes, detects flapping (>2 changes/60min). Port 5 flapped 6+ times on 2026-04-05. Wired into infrastructure domain agent and INTERACTIVE_TOOLS.
 
-**DG-7: Home Assistant syslog queries** — `query_ha_events` in new `ha_tools.py`. Query ClickHouse for HA entity state changes, automations triggered, errors. HA syslog already parsed in OTel pipeline (`transform/homeassistant`) with `ha.component`, `entity_id` attributes. Move "Home Assistant integration" out of Deferred. **No user action needed — I implement.**
+**~~DG-7: Home Assistant domain agent~~** ✅ DONE — New 8th concurrent domain agent `run_home_automation_agent`. `ha_tools.py` with `query_ha_logbook`, `query_ha_entity_states`, `query_ha_entity_history`. REST API (not syslog — HA syslog is OS noise only). Wired into daily report graph and INTERACTIVE_TOOLS. HTTPS fixed, synthesis template updated.
 
-**DG-8: Home Assistant Prometheus scrape + tool** — Add HA metrics (device_tracker, binary sensors, power, climate) to OTel collector scrape. Requires HA Prometheus integration enabled + long-lived access token. New tool `query_ha_metrics`. **User action required first — see INF-15.**
+**~~DG-8: Home Assistant metrics tool~~** ✅ DONE — `query_ha_metrics` in `ha_tools.py`. Queries `/api/states` REST API filtered to sensor/climate/binary_sensor/device_tracker domains. Returns numeric values (power W/kWh, temp °F/°C, humidity %), anomaly list for unavailable sensors. HA Prometheus integration not required. Wired into home_automation agent and INTERACTIVE_TOOLS.
 
 **~~TOOL-15: ntopng host details by IP~~** — Dropped. `query_ntopng_host_details` and `query_ntopng_host_l7_stats` already exist in `ntopng.py`.
 
@@ -149,7 +149,7 @@ Synthesis agent reads/writes facts to Redis across daily runs — repeat IPs, re
   2. HA → Profile → Security → Long-Lived Access Tokens → Create → copy value
   3. Add to `.env` on remote: `HA_HOST=192.168.2.52` and `HA_TOKEN=<token>`
   4. Verify: `curl -H "Authorization: Bearer <token>" http://192.168.2.52:8123/api/prometheus`
-  **USER action — then I implement OTel scrape + tool (DG-8).**
+  **Partially done: token added, HTTPS fixed. DG-8 implemented via REST API (no Prometheus integration needed).**
 
 ---
 

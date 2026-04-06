@@ -150,7 +150,8 @@ class FirstLightConfig(BaseSettings):
     # Home Assistant
     ha_host: str = "192.168.2.52"
     ha_port: int = 8123
-    ha_token: Optional[str] = None  # Long-lived access token (INF-15)
+    ha_ssl: bool = True           # HA uses HTTPS by default
+    ha_token: Optional[str] = None
 
     # Internal services
     victoria_metrics_port: int = 8428

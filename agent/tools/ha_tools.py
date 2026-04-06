@@ -31,7 +31,8 @@ def _ha_base_url() -> Optional[str]:
     cfg = get_config()
     if not cfg.ha_token:
         return None
-    return f"http://{cfg.ha_host}:{cfg.ha_port}"
+    scheme = "https" if cfg.ha_ssl else "http"
+    return f"{scheme}://{cfg.ha_host}:{cfg.ha_port}"
 
 
 def _ha_headers() -> dict:
@@ -40,6 +41,17 @@ def _ha_headers() -> dict:
         "Authorization": f"Bearer {cfg.ha_token}",
         "Content-Type": "application/json",
     }
+
+
+def _ha_client(base_url: str) -> httpx.Client:
+    """Return an httpx.Client configured for the HA API (SSL verification disabled for self-signed certs)."""
+    cfg = get_config()
+    return httpx.Client(
+        base_url=base_url,
+        headers=_ha_headers(),
+        timeout=15.0,
+        verify=not cfg.ha_ssl,  # self-signed cert — skip verification
+    )
 
 
 def _not_configured() -> str:
@@ -77,7 +89,7 @@ def query_ha_logbook(hours: int = 24, domains: str = "") -> str:
     filter_domains = [d.strip() for d in domains.split(",") if d.strip()] if domains else list(_SECURITY_DOMAINS)
 
     try:
-        with httpx.Client(base_url=base_url, headers=_ha_headers(), timeout=15.0) as client:
+        with _ha_client(base_url) as client:
             resp = client.get(
                 f"/api/logbook/{start}",
                 params={"end_time": now.isoformat()},
@@ -155,7 +167,7 @@ def query_ha_entity_states(domains: str = "") -> str:
         return _not_configured()
 
     try:
-        with httpx.Client(base_url=base_url, headers=_ha_headers(), timeout=15.0) as client:
+        with _ha_client(base_url) as client:
             resp = client.get("/api/states")
             if resp.status_code == 401:
                 return json.dumps({"error": "HA token invalid or expired."})
@@ -228,7 +240,7 @@ def query_ha_entity_history(entity_id: str, hours: int = 24) -> str:
     start = (datetime.now(timezone.utc) - timedelta(hours=hours)).replace(microsecond=0).isoformat()
 
     try:
-        with httpx.Client(base_url=base_url, headers=_ha_headers(), timeout=15.0) as client:
+        with _ha_client(base_url) as client:
             resp = client.get(
                 f"/api/history/period/{start}",
                 params={"filter_entity_id": entity_id, "minimal_response": "true"},
@@ -260,4 +272,103 @@ def query_ha_entity_history(entity_id: str, hours: int = 24) -> str:
         "hours": hours,
         "transitions": transitions,
         "total_changes": len(transitions),
+    }, indent=2)
+
+
+@tool
+def query_ha_metrics(domains: str = "") -> str:
+    """Get current numeric and state metrics from Home Assistant entities.
+
+    Fetches entity states from the HA REST API, filtered to metric-relevant domains:
+    sensor (temperature, humidity, power, energy), climate (setpoints, HVAC mode),
+    binary_sensor (occupancy, door/window, motion), device_tracker (presence).
+
+    Useful for: power consumption, climate conditions, occupancy patterns,
+    and building a picture of home state at a point in time.
+
+    Args:
+        domains: Comma-separated domain filter, e.g. "sensor,climate".
+                 Defaults to sensor, climate, binary_sensor, device_tracker.
+
+    Returns:
+        JSON with entities grouped by domain. Numeric sensor states are
+        parsed to float. Includes an 'anomalies' list for sensors reporting
+        unavailable/unknown state or suspiciously out-of-range values.
+    """
+    base_url = _ha_base_url()
+    if base_url is None:
+        return _not_configured()
+
+    _METRIC_DOMAINS = {"sensor", "climate", "binary_sensor", "device_tracker"}
+    filter_domains = {d.strip() for d in domains.split(",") if d.strip()} if domains else _METRIC_DOMAINS
+
+    try:
+        with _ha_client(base_url) as client:
+            resp = client.get("/api/states")
+            if resp.status_code == 401:
+                return json.dumps({"error": "HA token invalid or expired."})
+            if resp.status_code != 200:
+                return json.dumps({"error": f"HA API error {resp.status_code}"})
+            all_states = resp.json()
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+    by_domain: dict = {}
+    anomalies: list = []
+
+    for entity in all_states:
+        entity_id = entity.get("entity_id", "")
+        domain = entity_id.split(".")[0] if "." in entity_id else ""
+        if domain not in filter_domains:
+            continue
+
+        state = entity.get("state", "unknown")
+        attrs = entity.get("attributes", {})
+        friendly = attrs.get("friendly_name", entity_id)
+        unit = attrs.get("unit_of_measurement", "")
+        last_changed = entity.get("last_changed", "")
+
+        # Try to parse numeric value
+        numeric_value = None
+        try:
+            numeric_value = float(state)
+        except (ValueError, TypeError):
+            pass
+
+        entry = {
+            "entity_id": entity_id,
+            "name": friendly,
+            "state": state,
+            "unit": unit,
+            "last_changed": last_changed,
+        }
+        if numeric_value is not None:
+            entry["value"] = numeric_value
+
+        # Climate extras
+        if domain == "climate":
+            entry["hvac_mode"] = attrs.get("hvac_action", attrs.get("hvac_mode", ""))
+            entry["current_temp"] = attrs.get("current_temperature")
+            entry["target_temp"] = attrs.get("temperature")
+
+        by_domain.setdefault(domain, []).append(entry)
+
+        # Flag unavailable/unknown sensors
+        if state in ("unavailable", "unknown"):
+            anomalies.append({"entity_id": entity_id, "name": friendly, "issue": state})
+
+    # Summarise sensor counts and notable values
+    sensor_summary = {}
+    for e in by_domain.get("sensor", []):
+        if e.get("unit") in ("W", "kWh", "°F", "°C", "%"):
+            sensor_summary.setdefault(e["unit"], []).append({
+                "name": e["name"], "value": e.get("value"), "entity_id": e["entity_id"]
+            })
+
+    return json.dumps({
+        "domains_queried": sorted(filter_domains),
+        "entity_count": sum(len(v) for v in by_domain.values()),
+        "by_domain": by_domain,
+        "sensor_summary": sensor_summary,
+        "anomalies": anomalies,
     }, indent=2)

@@ -347,12 +347,14 @@ def run_home_automation_agent(
         query_ha_logbook,
         query_ha_entity_states,
         query_ha_entity_history,
+        query_ha_metrics,
     )
 
     tools = [
         query_ha_logbook,
         query_ha_entity_states,
         query_ha_entity_history,
+        query_ha_metrics,
     ]
     if not prompt_override:
         raise ValueError("home_automation agent requires a prompt — ensure Langfuse prompt 'first-light-home-automation' exists with label=production")

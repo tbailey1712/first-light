@@ -51,7 +51,7 @@ from agent.tools.pbs import query_pbs_backup_status, query_pbs_prune_policies
 from agent.tools.switch_tools import query_switch_port_status, query_switch_events
 from agent.tools.validator import query_validator_node_config
 from agent.tools.uptime_kuma import query_uptime_kuma_monitors
-from agent.tools.ha_tools import query_ha_logbook, query_ha_entity_states, query_ha_entity_history
+from agent.tools.ha_tools import query_ha_logbook, query_ha_entity_states, query_ha_entity_history, query_ha_metrics
 from agent.tools.unifi_tools import query_unifi_clients, query_unifi_ap_stats, lookup_unifi_client_by_mac
 from agent.tools.ntopng import (
     query_ntopng_active_hosts,
@@ -108,6 +108,7 @@ INTERACTIVE_TOOLS = [
     query_ha_logbook,
     query_ha_entity_states,
     query_ha_entity_history,
+    query_ha_metrics,
     # Validator
     query_validator_node_config,
     # DNS resolution
