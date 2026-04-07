@@ -6,10 +6,11 @@ agent service alive for on-demand queries via the MCP server.
 
 Schedule:
   - Daily report: 08:00 local time
-  - (future) Weekly rollup: Sunday 20:00
+  - Infra health check: every 20 minutes (fires Pushover/Slack on critical)
 """
 
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -78,6 +79,94 @@ async def run_daily_report():
                 pass
 
 
+async def run_infra_health_check():
+    """
+    Proactive infrastructure health check — runs every 20 minutes.
+
+    Fires a Pushover + Slack alert immediately when a collector transitions
+    to critical. Redis is used for dedup: each critical item is silenced for
+    4 hours after the first alert to prevent spam.
+    """
+    # Silencing TTL: re-alert no more than once per 4 hours per item
+    SILENCE_TTL = 4 * 3600
+    REDIS_KEY_PREFIX = "fl:health:alerted:"
+
+    try:
+        from agent.tools.infra_health import query_reporting_infra_health
+        raw = await asyncio.get_event_loop().run_in_executor(None, query_reporting_infra_health)
+        # query_reporting_infra_health returns a JSON string (it's a langchain tool)
+        data = json.loads(raw if isinstance(raw, str) else raw.content)
+    except Exception as e:
+        logger.error("Infra health check failed: %s", e)
+        return
+
+    overall = data.get("overall", "ok")
+    if overall == "ok":
+        logger.debug("Infra health check: all ok")
+        return
+
+    critical_items: list[str] = data.get("critical", [])
+    warning_items: list[str] = data.get("warning", [])
+
+    if not critical_items:
+        logger.debug("Infra health check: warnings only (%s), no alert", warning_items)
+        return
+
+    # Dedup via Redis — only alert for items not already silenced
+    r = await asyncio.get_event_loop().run_in_executor(None, _get_redis_client)
+    new_criticals: list[str] = []
+
+    for item in critical_items:
+        key = f"{REDIS_KEY_PREFIX}{item}"
+        already_alerted = False
+        if r is not None:
+            try:
+                already_alerted = bool(r.get(key))
+            except Exception:
+                pass
+        if not already_alerted:
+            new_criticals.append(item)
+            if r is not None:
+                try:
+                    r.set(key, "1", ex=SILENCE_TTL)
+                except Exception:
+                    pass
+
+    if not new_criticals:
+        logger.debug("Infra health check: critical items all silenced (%s)", critical_items)
+        return
+
+    # Build alert message
+    lines = ["*First Light — Infrastructure Alert*", ""]
+    lines.append(f"*Critical (data collection down):* {', '.join(new_criticals)}")
+    if warning_items:
+        lines.append(f"*Warning:* {', '.join(warning_items)}")
+
+    # Add detail per critical item from full check data
+    detail_sections = (
+        data.get("metric_collectors", [])
+        + data.get("containers", [])
+        + [data.get("log_ingestion", {}), data.get("ntopng", {})]
+    )
+    for section in detail_sections:
+        name = section.get("collector") or section.get("container", "")
+        if section.get("status") == "critical" and name in new_criticals:
+            detail = section.get("detail", "")
+            if detail:
+                lines.append(f"  • {name}: {detail}")
+
+    lines.append("")
+    lines.append("_Domain agents may produce findings based on incomplete data._")
+    message = "\n".join(lines)
+
+    logger.warning("Infra health alert: %s", new_criticals)
+    try:
+        from agent.notifications import broadcast_alert
+        await broadcast_alert(message)
+    except Exception as e:
+        logger.error("Failed to send infra health alert: %s", e)
+
+
 async def _notify_failure(job_name: str, error: str):
     """Send a failure alert to all registered notification channels."""
     try:
@@ -101,6 +190,8 @@ async def _run():
     logger.info(f"First Light scheduler starting (tz={tz})")
     logger.info(f"Daily report scheduled at {report_hour:02d}:{report_minute:02d} {tz}")
 
+    health_interval = int(os.getenv("HEALTH_CHECK_INTERVAL_MINUTES", "20"))
+
     scheduler = AsyncIOScheduler(timezone=tz)
     scheduler.add_job(
         run_daily_report,
@@ -110,8 +201,18 @@ async def _run():
         max_instances=1,
         misfire_grace_time=3600,
     )
+    scheduler.add_job(
+        run_infra_health_check,
+        trigger="interval",
+        minutes=health_interval,
+        id="infra_health_check",
+        name="Infrastructure Health Monitor",
+        max_instances=1,
+        misfire_grace_time=300,
+        next_run_time=datetime.now(),  # Run immediately on startup too
+    )
     scheduler.start()
-    logger.info("Scheduler running.")
+    logger.info("Scheduler running. Health check every %dm.", health_interval)
 
     # Run immediately on startup if requested
     if os.getenv("RUN_ON_STARTUP", "false").lower() == "true":
