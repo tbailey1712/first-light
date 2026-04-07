@@ -38,6 +38,15 @@ def query_clickhouse_raw(sql: str) -> str:
       - resources_string['key']       resource labels (host.name, service.name, etc.)
       Do NOT use bare `attributes['key']` — it does not exist and will error.
 
+    PERFORMANCE — queries run against 18M+ rows. To avoid timeouts:
+      - ALWAYS filter by timestamp: timestamp >= now() - INTERVAL 24 HOUR * 1000000000
+        (timestamp is nanoseconds — multiply seconds by 1000000000)
+        Correct form: timestamp >= toUnixTimestamp(now() - INTERVAL 24 HOUR) * 1000000000
+      - PREFER attributes_string/resources_string filters over body LIKE '%..%'
+        (LIKE '%x%' is a full-table scan — use it only with a tight time filter)
+      - Filter on resources_string['service.name'] first to narrow to one log source
+      - Queries are hard-killed after 15 seconds — keep them focused
+
     Args:
         sql: ClickHouse SQL query. Must query an allowed table.
 
@@ -61,7 +70,11 @@ def query_clickhouse_raw(sql: str) -> str:
 
     try:
         result = _execute_clickhouse_query(
-            sql, ch_settings={"max_result_rows": _MAX_ROWS}
+            sql, ch_settings={
+                "max_result_rows": _MAX_ROWS,
+                "max_execution_time": 15,  # hard-kill on ClickHouse side after 15s
+                "timeout_before_checking_execution_speed": 1,
+            }
         )
         return result
     except Exception as e:

@@ -22,7 +22,8 @@ import json
 import logging
 import operator
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone
 from typing import Annotated, Any, Optional, TypedDict
 
@@ -550,6 +551,8 @@ def synthesize(state: DailyReportState) -> dict:
 
 
 _INVESTIGATION_BUCKET_SIZE = 3  # items per parallel investigator
+_INVESTIGATION_PHASE_TIMEOUT = 240  # seconds — abandon investigation if phase exceeds this
+_INVESTIGATION_BUCKET_TIMEOUT = 180  # seconds — per-bucket hard cap
 
 
 @observe(as_type="span", capture_input=False, capture_output=False)
@@ -633,20 +636,38 @@ def investigate(state: DailyReportState) -> dict:
             logger.error("Investigation bucket %d failed: %s", bucket_idx, e, exc_info=True)
             return f"Investigation bucket {bucket_idx} failed: {e}"
 
+    phase_start = time.monotonic()
     bucket_results = [""] * len(buckets)
     with ThreadPoolExecutor(max_workers=len(buckets)) as executor:
         futures = {
             executor.submit(_investigate_bucket, bucket, idx): idx
             for idx, bucket in enumerate(buckets)
         }
-        for future in as_completed(futures):
-            idx = futures[future]
-            try:
-                bucket_results[idx] = future.result()
-            except Exception as e:
-                logger.error("Investigation bucket %d raised: %s", idx, e)
-                bucket_results[idx] = f"Bucket {idx} failed: {e}"
+        try:
+            for future in as_completed(futures, timeout=_INVESTIGATION_PHASE_TIMEOUT):
+                idx = futures[future]
+                try:
+                    bucket_results[idx] = future.result(timeout=_INVESTIGATION_BUCKET_TIMEOUT)
+                except FuturesTimeoutError:
+                    logger.warning("Investigation bucket %d timed out after %ds — skipping", idx, _INVESTIGATION_BUCKET_TIMEOUT)
+                    bucket_results[idx] = f"Investigation bucket {idx} timed out — skipped"
+                except Exception as e:
+                    logger.error("Investigation bucket %d raised: %s", idx, e)
+                    bucket_results[idx] = f"Bucket {idx} failed: {e}"
+        except FuturesTimeoutError:
+            logger.warning("Investigation phase exceeded %ds — cancelling remaining buckets", _INVESTIGATION_PHASE_TIMEOUT)
 
+        # Cancel any futures that didn't complete within the phase timeout
+        for future in futures:
+            if not future.done():
+                future.cancel()
+                idx = futures[future]
+                logger.warning("Investigation bucket %d cancelled — phase timeout exceeded", idx)
+                if not bucket_results[idx]:
+                    bucket_results[idx] = f"Investigation bucket {idx} cancelled (phase timeout)"
+
+    elapsed_total = time.monotonic() - phase_start
+    logger.info("Investigation phase complete in %.1fs", elapsed_total)
     findings = "\n\n---\n\n".join(r for r in bucket_results if r)
     lf.update_current_span(output=findings[:500])
     return {"investigation_findings": findings}
