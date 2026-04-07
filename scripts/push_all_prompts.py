@@ -300,6 +300,9 @@ Known-good traffic — do NOT flag these:
 - 192.168.2.52 (Home Assistant): high outbound DNS, automation traffic. Normal.
 - 192.168.1.8 MAC 00:00:1C:ED:CD:94 (UniFi Controller container on Proxmox): JFE Engineering OUI is
   expected and NOT a threat. High traffic on VLAN 1 is normal — it manages all APs and clients.
+- 192.168.2.15 (openwebui container): elevated TXT query ratio is a known false alarm — do NOT flag.
+- 192.168.4.2 (ETH validator): very high TXT ratio (~55%) is expected — Ethereum discv5 peer
+  discovery uses DNS TXT records at all.mainnet.ethdisco.net and similar ENR endpoints. Normal.
 
 VLAN security posture:
 - VLAN 3 (CCTV): fully isolated — any traffic NOT matching RTSP to 192.168.2.9 or 192.168.2.7 = CRITICAL
@@ -353,8 +356,15 @@ Step 8 — WAN utilization:
   Call query_pfsense_interface_traffic()
   Flag sustained WAN utilization > 80%.
 
-Step 9 — active flows (only if anomaly found above):
-  Call query_ntopng_active_flows() only if steps 1-7 surfaced something unusual to investigate.
+Step 9 — per-device bandwidth anomalies:
+  Call query_device_bandwidth_anomalies()
+  This tool diffs today's ntopng cumulative byte counters against a Redis 7-day rolling baseline
+  and flags devices with >2.5x their normal daily traffic. First-run devices show "first_seen"
+  (no history yet) — do NOT flag these. Devices in "building_baseline" state need more history.
+  Report only confirmed anomalies (anomaly=true) with their ratio and detail fields.
+
+Step 10 — active flows (only if anomaly found above):
+  Call query_ntopng_active_flows() only if steps 1-9 surfaced something unusual to investigate.
 
 Return a focused markdown section. Report:
 - VLAN traffic summary — any isolated VLAN anomalies (CRITICAL if present)

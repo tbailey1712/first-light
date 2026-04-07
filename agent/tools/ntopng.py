@@ -410,3 +410,194 @@ def query_ntopng_host_l7_stats(host: str, ifid: int = 3) -> str:
     if not config.ntopng_host:
         return "Error: ntopng_host not configured in .env"
     return _get("/lua/rest/v2/get/host/l7/stats.lua", {"host": host, "ifid": ifid})
+
+
+@tool
+def query_device_bandwidth_anomalies(
+    multiplier: float = 2.5,
+    min_delta_mb: float = 100.0,
+    ifid: int = 3,
+) -> str:
+    """Detect per-device bandwidth anomalies by comparing today's traffic against a 7-day rolling baseline.
+
+    Fetches all local hosts from ntopng, computes each device's 24h byte delta by
+    diffing current cumulative counters against the snapshot stored in Redis from the
+    previous run. Stores the new snapshot and appends the delta to a rolling 7-day
+    history in Redis. Flags any device whose delta exceeds multiplier × its average
+    daily baseline and is above min_delta_mb.
+
+    ntopng CE limitation: byte counters are cumulative since last restart. If ntopng
+    restarted since the last snapshot, the delta will be negative — those devices are
+    skipped for anomaly detection this run and their snapshot is refreshed.
+
+    Redis keys used:
+      fl:bw:snap:{ip}        — JSON {sent, rcvd, ts} from last run
+      fl:bw:hist:{ip}        — JSON list of up to 7 daily total-byte deltas (MB)
+
+    Args:
+        multiplier: Flag devices with delta > multiplier × baseline average (default: 2.5)
+        min_delta_mb: Minimum delta in MB before flagging (avoids noise on idle devices)
+        ifid: ntopng interface ID (default: 3)
+
+    Returns:
+        JSON with per-device deltas, baselines, anomalies list, and Redis update status.
+    """
+    import time as _time
+    import statistics
+
+    config = get_config()
+    if not config.ntopng_host:
+        return json.dumps({"error": "ntopng_host not configured"})
+
+    # ── 1. Fetch current host list from ntopng ──────────────────────────────
+    raw = _get("/lua/rest/v2/get/host/active.lua", {"ifid": ifid})
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return json.dumps({"error": "Failed to parse ntopng response"})
+
+    rsp = parsed.get("rsp", {})
+    hosts = rsp if isinstance(rsp, list) else (
+        rsp.get("hosts", rsp.get("data", []))
+    )
+    local_hosts = [h for h in hosts if h.get("is_localhost") or h.get("is_broadcast_domain") is False]
+    # ntopng marks LAN hosts with is_localhost=true or private IPs; filter out broadcast/multicast
+    local_hosts = [
+        h for h in hosts
+        if h.get("is_localhost") and not h.get("is_broadcast") and not h.get("is_multicast")
+    ]
+
+    if not local_hosts:
+        return json.dumps({"status": "no_local_hosts", "note": "No local hosts returned by ntopng"})
+
+    # ── 2. Load Redis snapshots and history ────────────────────────────────
+    try:
+        import redis as _redis
+        r = _redis.from_url(config.redis_url, decode_responses=True)
+    except Exception as e:
+        return json.dumps({"error": f"Redis unavailable: {e}"})
+
+    now_ts = int(_time.time())
+    _BW_SNAP = "fl:bw:snap:"
+    _BW_HIST = "fl:bw:hist:"
+    _HIST_TTL = 86400 * 10      # 10 days
+    _SNAP_TTL = 86400 * 3       # 3 days
+    _MAX_HIST = 7
+
+    _VLAN_NAMES = {1: "LAN", 2: "IoT", 3: "CCTV", 4: "DMZ", 10: "guest"}
+
+    device_results = []
+    anomalies = []
+    skipped_reset = []
+
+    for h in local_hosts:
+        ip = h.get("ip", "")
+        if not ip:
+            continue
+        name = h.get("name", ip)
+        if name == ip:
+            name = ip   # keep IP if no hostname
+        vlan = h.get("vlan", 0)
+        vlan_label = _VLAN_NAMES.get(vlan, f"VLAN{vlan}")
+
+        bdata = h.get("bytes", {})
+        cur_sent = int(bdata.get("sent", 0))
+        cur_rcvd = int(bdata.get("recvd", 0))
+        cur_total = cur_sent + cur_rcvd
+
+        snap_key = f"{_BW_SNAP}{ip}"
+        hist_key = f"{_BW_HIST}{ip}"
+
+        # Load previous snapshot
+        snap_raw = r.get(snap_key)
+        snap = json.loads(snap_raw) if snap_raw else None
+
+        # Compute delta
+        if snap is None:
+            # First time seeing this device — just record, no delta yet
+            delta_sent = delta_rcvd = delta_total = None
+        else:
+            delta_sent = cur_sent - snap.get("sent", cur_sent)
+            delta_rcvd = cur_rcvd - snap.get("rcvd", cur_rcvd)
+            delta_total = delta_sent + delta_rcvd
+
+            if delta_total < 0:
+                # ntopng restarted — counters reset; skip anomaly check, refresh snapshot
+                skipped_reset.append(ip)
+                r.set(snap_key, json.dumps({"sent": cur_sent, "rcvd": cur_rcvd, "ts": now_ts}), ex=_SNAP_TTL)
+                continue
+
+        # Save new snapshot
+        r.set(snap_key, json.dumps({"sent": cur_sent, "rcvd": cur_rcvd, "ts": now_ts}), ex=_SNAP_TTL)
+
+        if delta_total is None:
+            device_results.append({
+                "ip": ip, "name": name, "vlan": vlan_label,
+                "status": "first_seen", "note": "Baseline snapshot recorded, no history yet",
+            })
+            continue
+
+        # Update rolling history
+        hist_raw = r.get(hist_key)
+        history = json.loads(hist_raw) if hist_raw else []
+        delta_mb = round(delta_total / 1_048_576, 2)
+        history.append(delta_mb)
+        if len(history) > _MAX_HIST:
+            history = history[-_MAX_HIST:]
+        r.set(hist_key, json.dumps(history), ex=_HIST_TTL)
+
+        # Compute baseline average (exclude today's value)
+        prev_history = history[:-1]
+        if len(prev_history) < 2:
+            device_results.append({
+                "ip": ip, "name": name, "vlan": vlan_label,
+                "today_mb": delta_mb,
+                "status": "building_baseline",
+                "history_days": len(prev_history),
+            })
+            continue
+
+        avg_mb = statistics.mean(prev_history)
+        ratio = delta_mb / avg_mb if avg_mb > 0 else 0
+
+        entry = {
+            "ip": ip,
+            "name": name,
+            "vlan": vlan_label,
+            "today_mb": delta_mb,
+            "avg_mb_7d": round(avg_mb, 2),
+            "ratio": round(ratio, 2),
+            "sent_mb": round(delta_sent / 1_048_576, 2),
+            "rcvd_mb": round(delta_rcvd / 1_048_576, 2),
+            "history_days": len(prev_history),
+        }
+
+        if delta_mb >= min_delta_mb and ratio >= multiplier:
+            entry["anomaly"] = True
+            entry["severity"] = "critical" if ratio >= multiplier * 2 else "warning"
+            anomalies.append({
+                "ip": ip,
+                "name": name,
+                "vlan": vlan_label,
+                "today_mb": delta_mb,
+                "avg_mb_7d": round(avg_mb, 2),
+                "ratio": round(ratio, 2),
+                "severity": entry["severity"],
+                "detail": (
+                    f"{name} ({vlan_label}) transferred {delta_mb:.0f} MB today "
+                    f"vs {avg_mb:.0f} MB average ({ratio:.1f}x normal)"
+                ),
+            })
+
+        device_results.append(entry)
+
+    return json.dumps({
+        "anomalies": anomalies,
+        "devices": device_results,
+        "skipped_counter_reset": skipped_reset,
+        "threshold": {"multiplier": multiplier, "min_delta_mb": min_delta_mb},
+        "note": (
+            "Bytes are cumulative since last ntopng restart. "
+            "First-run devices show 'first_seen'; baseline needs 2+ days before anomaly detection fires."
+        ),
+    }, indent=2)

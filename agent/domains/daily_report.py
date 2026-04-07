@@ -142,6 +142,7 @@ def run_network_flow_agent(
         query_ntopng_vlan_traffic,
         query_ntopng_top_countries,
         query_ntopng_arp_table,
+        query_device_bandwidth_anomalies,
     )
     from agent.tools.switch_tools import (
         query_switch_port_traffic,
@@ -167,6 +168,7 @@ def run_network_flow_agent(
         query_ntopng_flows_by_host,
         query_ntopng_interfaces,
         query_ntopng_arp_table,
+        query_device_bandwidth_anomalies,
         query_switch_port_traffic,
         query_switch_port_errors,
         query_switch_events,

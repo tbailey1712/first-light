@@ -60,6 +60,7 @@ from agent.tools.ntopng import (
     query_ntopng_l7_protocols,
     query_ntopng_top_countries,
     query_ntopng_host_details,
+    query_device_bandwidth_anomalies,
 )
 
 
@@ -126,6 +127,7 @@ INTERACTIVE_TOOLS = [
     query_ntopng_l7_protocols,
     query_ntopng_top_countries,
     query_ntopng_host_details,
+    query_device_bandwidth_anomalies,
 ]
 
 
