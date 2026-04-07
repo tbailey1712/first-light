@@ -59,6 +59,8 @@ Stale finding from Mar 7 audit. Parser is live in the OTel pipeline at `otel-col
 
 **DG-3: Validator block proposals and attestation delay** — Deferred. Requires `VALIDATOR_PUBKEYS` configured in `.env`.
 
+**~~DG-9: Per-device bandwidth anomaly detection~~** ✅ DONE — `query_device_bandwidth_anomalies` in `agent/tools/ntopng.py`. Diffs ntopng cumulative bytes against Redis 7-day rolling baseline (fl:bw:snap/{ip}, fl:bw:hist/{ip}). Flags devices >2.5× average AND >100 MB. Handles ntopng counter resets. Wired into network_flow agent and INTERACTIVE_TOOLS. First report will record snapshots; anomaly detection fires from run 2 onward.
+
 **~~DG-4: AdGuard NXDomain rate per client~~** ✅ DONE — `query_adguard_client_new_domains` in `agent/tools/metrics.py`. Queries `adguard_client_new_domains_24h` (newly-seen domains per client — the available proxy for DGA/C2 rotation; exporter does not expose per-client NXDomain separately). Wired into DNS domain agent and INTERACTIVE_TOOLS.
 
 **~~DG-5: QNAP directory sizes~~** ✅ DONE — `query_qnap_directory_sizes` implemented in `agent/tools/qnap_tools.py`.
@@ -129,20 +131,20 @@ Synthesis agent reads/writes facts to Redis across daily runs — repeat IPs, re
 **~~INF-1:~~** ✅ Removed public DNS records for `pve`, `portainer`, `pbs`
 **~~INF-2:~~** ✅ Added Cloudflare Access to `ha.mcducklabs.com`
 **~~INF-3:~~** ✅ Deleted `openmwebui.mcducklabs.com` CF DNS record (typo, stale)
-**INF-4:** Add CF Access to `ntfy.mcducklabs.com` — **OPEN, needs review**
+**~~INF-4:~~** ✅ Migrated ntfy → Pushover. `PushoverChannel` in `agent/notifications/pushover.py`. Registry updated. Remote `.env` has `PUSHOVER_TOKEN=` and `PUSHOVER_USER_KEY=` placeholders — fill in from pushover.net dashboard + app token to activate.
 **~~INF-5:~~** ✅ Verified `blxrbdn.com` — confirmed bloXroute BDN MEV relay discovery, legitimate
 **~~INF-6:~~** ✅ Nimbus restart investigated and resolved
-**INF-7:** Check vm/115 — backup stale 23 days, re-enable or decommission — **OPEN**
-**INF-8:** Verify CrowdSec is ingesting current logs (`cscli metrics`) — **OPEN**
+**~~INF-7:~~** ✅ vm/115 decommissioned.
+**~~INF-8:~~** ✅ CrowdSec healthy — acquis.d/first-light.yml correctly watches `/var/log/remote/*/syslog.log`. pfSense blocks perimeter attacks before they reach internal hosts, so no SSH brute force reaches internal syslogs. nginx parser active (89K/92K parsed). No decisions = pfSense is doing its job, not a CrowdSec failure.
 **~~INF-9:~~** ✅ Added DNS name for camera at `192.168.3.15`
 **~~INF-10:~~** ✅ Identified and fixed rejected Wi-Fi client on UnifiBasement
-**INF-11:** Enforce key-only SSH on `adguard` and `openclaw` — **OPEN, needs review**
+**~~INF-11:~~** ✅ Closed — low risk, pfSense blocks external SSH, internal access only.
 
-**INF-12: Disable GUI on krusty (VM 116, 192.168.4.5)** — Running Ubuntu Desktop in DMZ VLAN with high memory. Disable display manager and set multi-user boot target. Commands: `systemctl status display-manager` then `systemctl disable --now <dm> && systemctl set-default multi-user.target && reboot`. **USER action.**
+**~~INF-12:~~** ✅ GDM disabled on krusty, set to multi-user boot target. 3GB returned to PVE host pool.
 
-**INF-13: Investigate pulse disk writes** — LXC 102, 1.60 MB/s sustained write observed in Proxmox Pulse. SSH in and run `iotop` or `lsof` to confirm it's normal metric storage, not a runaway process. **USER action.**
+**~~INF-13:~~** ✅ Pulse service stopped and disabled. Root cause: SQLite metrics.db WAL writes on every polling cycle. First Light covers all Pulse functionality. LXC 102 remains in place but onboot disabled.
 
-**INF-14: vm/115 backup** — Stale 23+ days, re-enable or decommission. Carried from INF-7. **USER action.**
+**~~INF-14:~~** ✅ Closed with INF-7.
 
 **INF-15: Enable HA Prometheus integration** — Required for DG-8. Steps:
   1. HA → Settings → Integrations → search "Prometheus" → Install
