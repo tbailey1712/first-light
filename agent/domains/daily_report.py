@@ -216,7 +216,9 @@ def run_infrastructure_agent(
     )
 
     from agent.tools.switch_tools import query_switch_port_errors, query_switch_events, query_pfsense_interface_traffic
+    from agent.tools.infra_health import query_reporting_infra_health
     tools = [
+        query_reporting_infra_health,
         query_infrastructure_events,
         query_qnap_health,
         query_qnap_events,

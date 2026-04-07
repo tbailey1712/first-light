@@ -49,6 +49,7 @@ from agent.tools.crowdsec import query_crowdsec_metrics
 from agent.tools.cloudflare_tools import query_cloudflare_dns_records, query_cloudflare_access_apps
 from agent.tools.pbs import query_pbs_backup_status, query_pbs_prune_policies
 from agent.tools.switch_tools import query_switch_port_status, query_switch_events
+from agent.tools.infra_health import query_reporting_infra_health
 from agent.tools.validator import query_validator_node_config
 from agent.tools.uptime_kuma import query_uptime_kuma_monitors
 from agent.tools.ha_tools import query_ha_logbook, query_ha_entity_states, query_ha_entity_history, query_ha_metrics
@@ -105,6 +106,7 @@ INTERACTIVE_TOOLS = [
     query_switch_port_status,
     query_switch_events,
     query_uptime_kuma_monitors,
+    query_reporting_infra_health,
     # Home Automation
     query_ha_logbook,
     query_ha_entity_states,

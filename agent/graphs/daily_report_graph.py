@@ -124,6 +124,7 @@ class DailyReportState(TypedDict):
     domain_results: Annotated[list[DomainResult], operator.add]
     prompts: dict[str, str]
     baseline: dict[str, Any]        # yesterday's metrics from Redis
+    infra_health: str               # JSON from query_reporting_infra_health pre-flight check
     correlation_findings: str       # output of correlation pass
     final_report: Optional[str]
     suspicious_items: list[SuspiciousItem]   # populated by synthesize Phase A
@@ -227,7 +228,9 @@ def _format_baseline_context(baseline: dict[str, Any]) -> str:
 # ── Nodes ──────────────────────────────────────────────────────────────────────
 
 def initialize(state: DailyReportState) -> dict:
-    """Fetch Langfuse prompts for all domains and load Redis baseline. Raises if any prompt missing."""
+    """Fetch Langfuse prompts, load Redis baseline, and run infra health pre-flight check."""
+    from agent.tools.infra_health import query_reporting_infra_health
+
     hours = state["hours"]
     manager = get_prompt_manager()
     prompts = {}
@@ -246,7 +249,24 @@ def initialize(state: DailyReportState) -> dict:
     else:
         logger.info("No Redis baseline available — first run or cache expired")
 
-    return {"prompts": prompts, "baseline": baseline}
+    # Pre-flight: check data pipeline health before domains run
+    try:
+        infra_health_raw = query_reporting_infra_health.invoke({})
+        health = json.loads(infra_health_raw)
+        overall = health.get("overall", "unknown")
+        critical = health.get("critical", [])
+        warning = health.get("warning", [])
+        if overall == "critical":
+            logger.error("INFRA HEALTH CRITICAL — stale/missing data sources: %s", critical)
+        elif overall == "warning":
+            logger.warning("Infra health warning — degraded collectors: %s", warning)
+        else:
+            logger.info("Infra health: all collectors OK")
+    except Exception as e:
+        logger.error("Infra health check failed: %s", e)
+        infra_health_raw = json.dumps({"overall": "unknown", "error": str(e)})
+
+    return {"prompts": prompts, "baseline": baseline, "infra_health": infra_health_raw}
 
 
 def run_domains_parallel(state: DailyReportState) -> dict:
@@ -479,9 +499,28 @@ def synthesize(state: DailyReportState) -> dict:
 {state["correlation_findings"]}
 """
 
+    # Format infra health as a readable summary for the synthesis prompt
+    raw_health = state.get("infra_health", "{}")
+    try:
+        health_data = json.loads(raw_health)
+        health_overall = health_data.get("overall", "unknown").upper()
+        critical_items = health_data.get("critical", [])
+        warning_items = health_data.get("warning", [])
+        health_lines = [f"Overall: {health_overall}"]
+        if critical_items:
+            health_lines.append(f"CRITICAL (stale/down): {', '.join(critical_items)}")
+        if warning_items:
+            health_lines.append(f"WARNING: {', '.join(warning_items)}")
+        if health_overall == "OK":
+            health_lines.append("All collectors reporting on schedule.")
+        infra_health_summary = "\n".join(health_lines)
+    except Exception:
+        infra_health_summary = raw_health
+
     user_message = SYNTHESIS_USER.format(
         date=date_str,
         hours=state["hours"],
+        infra_health=infra_health_summary,
         firewall_threat=domain_summaries.get("firewall_threat", "No data"),
         dns_security=domain_summaries.get("dns_security", "No data"),
         network_flow=domain_summaries.get("network_flow", "No data"),
@@ -713,6 +752,15 @@ def _extract_baseline_metrics(domain_results: list[DomainResult]) -> dict[str, A
 SYNTHESIS_USER = """Synthesize the following domain agent reports into the daily First Light report.
 
 Analysis period: {date}, past {hours} hours
+
+---
+
+## ⚠ DATA PIPELINE HEALTH (pre-flight check)
+{infra_health}
+
+IMPORTANT: If any collector above is CRITICAL or WARNING, note the data gap prominently
+at the top of the report before domain findings. Findings from affected domains may be
+incomplete or missing entirely.
 
 ---
 
