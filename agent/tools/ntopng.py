@@ -449,23 +449,50 @@ def query_device_bandwidth_anomalies(
     if not config.ntopng_host:
         return json.dumps({"error": "ntopng_host not configured"})
 
-    # ── 1. Fetch current host list from ntopng ──────────────────────────────
-    raw = _get("/lua/rest/v2/get/host/active.lua", {"ifid": ifid})
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return json.dumps({"error": "Failed to parse ntopng response"})
-
-    rsp = parsed.get("rsp", {})
-    hosts = rsp if isinstance(rsp, list) else (
-        rsp.get("hosts", rsp.get("data", []))
-    )
-    local_hosts = [h for h in hosts if h.get("is_localhost") or h.get("is_broadcast_domain") is False]
-    # ntopng marks LAN hosts with is_localhost=true or private IPs; filter out broadcast/multicast
-    local_hosts = [
-        h for h in hosts
-        if h.get("is_localhost") and not h.get("is_broadcast") and not h.get("is_multicast")
+    # ── 1. Known local device inventory (IP → VLAN) ─────────────────────────
+    # ntopng's active.lua sorts by cumulative bytes and only returns the top 200 hosts,
+    # which are all external IPs. Local hosts must be queried directly with IP+VLAN.
+    # This list covers all dedicated-port wired devices from the switch port map plus
+    # key wireless/DHCP devices worth monitoring.
+    _KNOWN_DEVICES: list[tuple[str, int, str]] = [
+        # (ip, vlan, label)
+        ("192.168.1.1",   1, "pfSense"),
+        ("192.168.1.5",   1, "rpi-ntop"),
+        ("192.168.1.8",   1, "unifi-controller"),
+        ("192.168.2.7",   2, "frigate-nvr"),
+        ("192.168.2.9",   2, "qnap-nas"),
+        ("192.168.2.15",  2, "openwebui"),
+        ("192.168.2.52",  2, "home-assistant"),
+        ("192.168.2.106", 2, "docker-host"),
+        ("192.168.3.15",  3, "cam-backyard"),
+        ("192.168.4.2",   4, "vldtr"),
     ]
+    _VLAN_NAMES = {1: "LAN", 2: "IoT", 3: "CCTV", 4: "DMZ", 10: "guest"}
+
+    def _fetch_host(ip: str, vlan: int) -> tuple[int, int] | None:
+        """Return (bytes_sent, bytes_rcvd) for a known host, or None if not found."""
+        raw = _get("/lua/rest/v2/get/host/data.lua", {"host": ip, "ifid": ifid, "vlan": vlan})
+        try:
+            d = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        if d.get("rc") != 0:
+            return None
+        rsp = d.get("rsp", {})
+        if isinstance(rsp, list):
+            return None
+        return int(rsp.get("bytes.sent", 0)), int(rsp.get("bytes.rcvd", 0))
+
+    local_hosts = []
+    for ip, vlan, label in _KNOWN_DEVICES:
+        result = _fetch_host(ip, vlan)
+        if result is not None:
+            sent, rcvd = result
+            local_hosts.append({
+                "ip": ip, "vlan": vlan,
+                "label": label,
+                "cur_sent": sent, "cur_rcvd": rcvd,
+            })
 
     if not local_hosts:
         return json.dumps({"status": "no_local_hosts", "note": "No local hosts returned by ntopng"})
@@ -491,18 +518,12 @@ def query_device_bandwidth_anomalies(
     skipped_reset = []
 
     for h in local_hosts:
-        ip = h.get("ip", "")
-        if not ip:
-            continue
-        name = h.get("name", ip)
-        if name == ip:
-            name = ip   # keep IP if no hostname
-        vlan = h.get("vlan", 0)
+        ip = h["ip"]
+        name = h["label"]
+        vlan = h["vlan"]
         vlan_label = _VLAN_NAMES.get(vlan, f"VLAN{vlan}")
-
-        bdata = h.get("bytes", {})
-        cur_sent = int(bdata.get("sent", 0))
-        cur_rcvd = int(bdata.get("recvd", 0))
+        cur_sent = h["cur_sent"]
+        cur_rcvd = h["cur_rcvd"]
         cur_total = cur_sent + cur_rcvd
 
         snap_key = f"{_BW_SNAP}{ip}"
