@@ -92,9 +92,10 @@ async def run_infra_health_check():
     REDIS_KEY_PREFIX = "fl:health:alerted:"
 
     try:
-        from agent.tools.infra_health import query_reporting_infra_health
-        raw = await asyncio.get_event_loop().run_in_executor(None, query_reporting_infra_health)
-        # query_reporting_infra_health returns a JSON string (it's a langchain tool)
+        import agent.tools.infra_health as _ih
+        # Call the underlying function directly (not the langchain StructuredTool wrapper)
+        _fn = _ih.query_reporting_infra_health.func if hasattr(_ih.query_reporting_infra_health, "func") else _ih.query_reporting_infra_health
+        raw = await asyncio.get_event_loop().run_in_executor(None, _fn)
         data = json.loads(raw if isinstance(raw, str) else raw.content)
     except Exception as e:
         logger.error("Infra health check failed: %s", e)
