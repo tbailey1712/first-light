@@ -53,7 +53,8 @@ _REQUIRED_CONTAINERS = [
 ]
 
 
-def _clickhouse_query(sql: str) -> list[dict]:
+def _clickhouse_query(sql: str) -> list[dict] | None:
+    """Run a ClickHouse query. Returns row list, empty list if no rows, or None on error/timeout."""
     cfg = get_config()
     url = f"http://{cfg.signoz_clickhouse_host}:8123"
     try:
@@ -63,7 +64,11 @@ def _clickhouse_query(sql: str) -> list[dict]:
                 "password": cfg.signoz_clickhouse_password,
                 "query": sql,
                 "default_format": "JSONEachRow",
+                "max_execution_time": 12,
             })
+        if resp.status_code != 200:
+            logger.error("ClickHouse query failed: HTTP %s", resp.status_code)
+            return None
         rows = []
         for line in resp.text.strip().splitlines():
             if line:
@@ -72,9 +77,12 @@ def _clickhouse_query(sql: str) -> list[dict]:
                 except json.JSONDecodeError:
                     pass
         return rows
+    except httpx.TimeoutException:
+        logger.error("ClickHouse query failed: timed out")
+        return None
     except Exception as e:
         logger.error("ClickHouse query failed: %s", e)
-        return []
+        return None
 
 
 def _check_metric_staleness() -> list[dict]:
@@ -90,6 +98,12 @@ def _check_metric_staleness() -> list[dict]:
         GROUP BY metric_name
     """
     rows = _clickhouse_query(sql)
+    if rows is None:
+        return [{
+            "collector": name, "status": "warning", "metric": metric,
+            "last_seen": None, "minutes_ago": None, "description": desc,
+            "detail": "Metric staleness check timed out — ClickHouse under load",
+        } for name, metric, _, _, desc in _METRIC_COLLECTORS]
     last_by_metric = {r["metric_name"]: int(float(r["last_ts"])) for r in rows}
 
     now = int(time.time())
@@ -138,6 +152,15 @@ def _check_log_ingestion() -> dict:
     """
     rows = _clickhouse_query(sql)
     now = int(time.time())
+
+    if rows is None:
+        # Query failed or timed out — ClickHouse under load, not a syslog outage
+        return {
+            "collector": "syslog-ingestion",
+            "status": "warning",
+            "minutes_ago": None,
+            "detail": "Log ingestion check timed out — ClickHouse under load, syslog status unknown",
+        }
 
     if not rows or rows[0].get("last_ts") is None:
         return {
