@@ -261,8 +261,9 @@ def run_wireless_agent(
 ) -> str:
     """Run the wireless health domain agent."""
     from agent.tools.logs import query_wireless_health
+    from agent.tools.unifi_tools import query_unifi_clients, lookup_unifi_client_by_mac
 
-    tools = [query_wireless_health]
+    tools = [query_wireless_health, query_unifi_clients, lookup_unifi_client_by_mac]
     if not prompt_override:
         raise ValueError("wireless agent requires a prompt — ensure Langfuse prompt 'first-light-wireless' exists with label=production")
     system = prompt_override.replace("{hours}", str(hours))
