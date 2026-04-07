@@ -16,14 +16,14 @@ from typing import Union
 from agent.notifications.base import NotificationChannel
 from agent.notifications.telegram import TelegramChannel, build_telegram_channel
 from agent.notifications.slack import SlackWebhookChannel, SlackBotChannel, build_slack_channel, build_slack_bot_channel
-from agent.notifications.ntfy import NtfyChannel, build_ntfy_channel
+from agent.notifications.pushover import PushoverChannel, build_pushover_channel
 
 logger = logging.getLogger(__name__)
 
-_channels: list[Union[TelegramChannel, SlackWebhookChannel, SlackBotChannel, NtfyChannel]] = []
+_channels: list[Union[TelegramChannel, SlackWebhookChannel, SlackBotChannel, PushoverChannel]] = []
 
 
-def register_channel(channel: Union[TelegramChannel, SlackWebhookChannel, SlackBotChannel, NtfyChannel]) -> None:
+def register_channel(channel: Union[TelegramChannel, SlackWebhookChannel, SlackBotChannel, PushoverChannel]) -> None:
     """Register a channel. Idempotent: won't add the same name twice."""
     for existing in _channels:
         if existing.name == channel.name:
@@ -77,12 +77,12 @@ async def register_defaults() -> None:
             else:
                 logger.debug("Slack not configured (SLACK_BOT_TOKEN and SLACK_WEBHOOK_URL both missing)")
 
-    if _want("ntfy"):
-        ntfy = build_ntfy_channel()
-        if ntfy:
-            register_channel(ntfy)
+    if _want("pushover"):
+        pushover = build_pushover_channel()
+        if pushover:
+            register_channel(pushover)
         else:
-            logger.debug("ntfy not configured (NTFY_SERVER/TOPIC/USERNAME/PASSWORD missing)")
+            logger.debug("Pushover not configured (PUSHOVER_TOKEN / PUSHOVER_USER_KEY missing)")
 
     logger.info("Notification registry ready: %d channel(s) active", len(_channels))
 
