@@ -328,13 +328,17 @@ async def handle_slash(ack, body, say):
 
     if text == "status":
         await say(":hourglass_flowing_sand: Running status check...")
-        answer = await _run_query(
-            "Give me a concise status summary covering: "
-            "(1) QNAP NAS health, (2) Proxmox VMs, (3) recent firewall blocks, "
-            "(4) top threat intel findings. Use bullet points. Be brief.",
-            channel,
-        )
-        await _post_chunks(say, answer)
+
+        async def _run_status():
+            answer = await _run_query(
+                "Give me a concise status summary covering: "
+                "(1) QNAP NAS health, (2) Proxmox VMs, (3) recent firewall blocks, "
+                "(4) top threat intel findings. Use bullet points. Be brief.",
+                channel,
+            )
+            await _post_chunks(say, answer)
+
+        asyncio.ensure_future(_run_status())
         return
 
     if text == "weekly":
@@ -357,7 +361,6 @@ async def handle_slash(ack, body, say):
                 logger.error("Weekly summary failed: %s", e, exc_info=True)
                 await say(f":warning: Weekly summary failed: {e}")
 
-        import asyncio
         asyncio.ensure_future(_run_weekly())
         return
 
@@ -383,7 +386,6 @@ async def handle_slash(ack, body, say):
             finally:
                 _release_report_lock()
 
-        import asyncio
         asyncio.ensure_future(_run_report())
         return
 
@@ -392,8 +394,12 @@ async def handle_slash(ack, body, say):
 
     if question:
         await say(":hourglass_flowing_sand: Querying the network data...")
-        answer = await _run_query(question, channel)
-        await _post_chunks(say, answer)
+
+        async def _run_ask():
+            answer = await _run_query(question, channel)
+            await _post_chunks(say, answer)
+
+        asyncio.ensure_future(_run_ask())
     else:
         await say("Please provide a question. Usage: `/firstlight ask <your question>`")
 
