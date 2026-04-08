@@ -339,21 +339,26 @@ async def handle_slash(ack, body, say):
 
     if text == "weekly":
         await say(":hourglass_flowing_sand: Generating weekly trend summary... this takes about a minute.")
-        try:
-            from agent.reports.weekly_summary import generate_weekly_summary_async
-            from agent.notifications import broadcast_report, register_defaults
-            from agent.notifications.registry import get_channels
-            if not get_channels():
-                await register_defaults()
-            report = await generate_weekly_summary_async()
-            await broadcast_report(report)
-            await say(
-                f":white_check_mark: Weekly summary complete: "
-                f"`{report['date_range']}` ({report['days_analyzed']} days analysed)"
-            )
-        except Exception as e:
-            logger.error("Weekly summary failed: %s", e, exc_info=True)
-            await say(f":warning: Weekly summary failed: {e}")
+
+        async def _run_weekly():
+            try:
+                from agent.reports.weekly_summary import generate_weekly_summary_async
+                from agent.notifications import broadcast_report, register_defaults
+                from agent.notifications.registry import get_channels
+                if not get_channels():
+                    await register_defaults()
+                report = await generate_weekly_summary_async()
+                await broadcast_report(report)
+                await say(
+                    f":white_check_mark: Weekly summary complete: "
+                    f"`{report['date_range']}` ({report['days_analyzed']} days analysed)"
+                )
+            except Exception as e:
+                logger.error("Weekly summary failed: %s", e, exc_info=True)
+                await say(f":warning: Weekly summary failed: {e}")
+
+        import asyncio
+        asyncio.ensure_future(_run_weekly())
         return
 
     if text == "report":
@@ -361,20 +366,25 @@ async def handle_slash(ack, body, say):
             await say(":hourglass_flowing_sand: A report is already running — check back in a few minutes.")
             return
         await say(":hourglass_flowing_sand: Generating report... this may take a minute.")
-        try:
-            from agent.reports.daily_threat_assessment import generate_daily_report
-            from agent.notifications import broadcast_report, register_defaults
-            from agent.notifications.registry import get_channels
-            if not get_channels():
-                await register_defaults()
-            report = await generate_daily_report()
-            await broadcast_report(report)
-            await say(f":white_check_mark: Report generated: `{report['date']}`")
-        except Exception as e:
-            logger.error("On-demand report failed: %s", e, exc_info=True)
-            await say(f":warning: Report failed: {e}")
-        finally:
-            _release_report_lock()
+
+        async def _run_report():
+            try:
+                from agent.reports.daily_threat_assessment import generate_daily_report
+                from agent.notifications import broadcast_report, register_defaults
+                from agent.notifications.registry import get_channels
+                if not get_channels():
+                    await register_defaults()
+                report = await generate_daily_report()
+                await broadcast_report(report)
+                await say(f":white_check_mark: Report generated: `{report['date']}`")
+            except Exception as e:
+                logger.error("On-demand report failed: %s", e, exc_info=True)
+                await say(f":warning: Report failed: {e}")
+            finally:
+                _release_report_lock()
+
+        import asyncio
+        asyncio.ensure_future(_run_report())
         return
 
     # Strip "ask " prefix if present, otherwise treat entire text as question
