@@ -166,12 +166,15 @@ async def _run_query(
 async def handle_mention(event, say):
     """Handle @firstlight <question> mentions — reply in-thread (SLK-2)."""
     text = event.get("text", "")
+    user = event.get("user", "unknown")
+    channel = event.get("channel", "unknown")
     # Remove <@BOTID> prefix
     question = text.split(">", 1)[-1].strip() if ">" in text else text.strip()
     if not question:
         thread_ts = event.get("ts")
         await say("Hi! Ask me anything about your network, or use `/firstlight help`.", thread_ts=thread_ts)
         return
+    logger.info("MENTION: user=%s channel=%s q=%r", user, channel, question[:80])
 
     channel = event.get("channel", "unknown")
     # SLK-2: reply in the same thread as the mention
@@ -192,14 +195,22 @@ async def handle_dm(event, say):
     if not text:
         return
 
+    user = event.get("user", "unknown")
+    channel = event.get("channel", "unknown")
+
     if text.lower().rstrip("!,.?") in _GREETINGS:
         await say("Hey! Ask me anything about your network — threats, infrastructure, validator status, you name it.")
         return
 
-    channel = event.get("channel", "unknown")
+    logger.info("DM: user=%s q=%r", user, text[:80])
     await say(":hourglass_flowing_sand: Querying the network data...")
-    answer = await _run_query(question=text, channel=channel, session_prefix="slack-dm")
-    await _post_chunks(say, answer)
+    try:
+        answer = await _run_query(question=text, channel=channel, session_prefix="slack-dm")
+        await _post_chunks(say, answer)
+        logger.info("DM: complete — user=%s", user)
+    except Exception as e:
+        logger.error("DM: failed — user=%s error=%s", user, e, exc_info=True)
+        await say(f":warning: Query failed: {e}")
 
 
 # ── Interactive button handlers (SLK-2) ──────────────────────────────────────────
@@ -313,6 +324,10 @@ async def handle_slash(ack, body, say):
 
     text = (body.get("text") or "").strip()
     channel = body.get("channel_id", "unknown")
+    user = body.get("user_id", "unknown")
+    cmd = text.split()[0] if text else "help"
+
+    logger.info("SLASH /firstlight %r — user=%s channel=%s", text or "help", user, channel)
 
     if not text or text == "help":
         await say(
@@ -330,13 +345,19 @@ async def handle_slash(ack, body, say):
         await say(":hourglass_flowing_sand: Running status check...")
 
         async def _run_status():
-            answer = await _run_query(
-                "Give me a concise status summary covering: "
-                "(1) QNAP NAS health, (2) Proxmox VMs, (3) recent firewall blocks, "
-                "(4) top threat intel findings. Use bullet points. Be brief.",
-                channel,
-            )
-            await _post_chunks(say, answer)
+            logger.info("CMD status: starting — user=%s", user)
+            try:
+                answer = await _run_query(
+                    "Give me a concise status summary covering: "
+                    "(1) QNAP NAS health, (2) Proxmox VMs, (3) recent firewall blocks, "
+                    "(4) top threat intel findings. Use bullet points. Be brief.",
+                    channel,
+                )
+                await _post_chunks(say, answer)
+                logger.info("CMD status: complete — user=%s", user)
+            except Exception as e:
+                logger.error("CMD status: failed — user=%s error=%s", user, e, exc_info=True)
+                await say(f":warning: Status check failed: {e}")
 
         asyncio.ensure_future(_run_status())
         return
@@ -345,6 +366,7 @@ async def handle_slash(ack, body, say):
         await say(":hourglass_flowing_sand: Generating weekly trend summary... this takes about a minute.")
 
         async def _run_weekly():
+            logger.info("CMD weekly: starting — user=%s", user)
             try:
                 from agent.reports.weekly_summary import generate_weekly_summary_async
                 from agent.notifications import broadcast_report, register_defaults
@@ -357,8 +379,9 @@ async def handle_slash(ack, body, say):
                     f":white_check_mark: Weekly summary complete: "
                     f"`{report['date_range']}` ({report['days_analyzed']} days analysed)"
                 )
+                logger.info("CMD weekly: complete — user=%s date_range=%s", user, report.get("date_range"))
             except Exception as e:
-                logger.error("Weekly summary failed: %s", e, exc_info=True)
+                logger.error("CMD weekly: failed — user=%s error=%s", user, e, exc_info=True)
                 await say(f":warning: Weekly summary failed: {e}")
 
         asyncio.ensure_future(_run_weekly())
@@ -366,11 +389,13 @@ async def handle_slash(ack, body, say):
 
     if text == "report":
         if not _can_acquire_report_lock():
+            logger.info("CMD report: blocked (already running) — user=%s", user)
             await say(":hourglass_flowing_sand: A report is already running — check back in a few minutes.")
             return
         await say(":hourglass_flowing_sand: Generating report... this may take a minute.")
 
         async def _run_report():
+            logger.info("CMD report: starting — user=%s", user)
             try:
                 from agent.reports.daily_threat_assessment import generate_daily_report
                 from agent.notifications import broadcast_report, register_defaults
@@ -380,8 +405,9 @@ async def handle_slash(ack, body, say):
                 report = await generate_daily_report()
                 await broadcast_report(report)
                 await say(f":white_check_mark: Report generated: `{report['date']}`")
+                logger.info("CMD report: complete — user=%s date=%s", user, report.get("date"))
             except Exception as e:
-                logger.error("On-demand report failed: %s", e, exc_info=True)
+                logger.error("CMD report: failed — user=%s error=%s", user, e, exc_info=True)
                 await say(f":warning: Report failed: {e}")
             finally:
                 _release_report_lock()
@@ -396,8 +422,14 @@ async def handle_slash(ack, body, say):
         await say(":hourglass_flowing_sand: Querying the network data...")
 
         async def _run_ask():
-            answer = await _run_query(question, channel)
-            await _post_chunks(say, answer)
+            logger.info("CMD ask: starting — user=%s q=%r", user, question[:80])
+            try:
+                answer = await _run_query(question, channel)
+                await _post_chunks(say, answer)
+                logger.info("CMD ask: complete — user=%s", user)
+            except Exception as e:
+                logger.error("CMD ask: failed — user=%s error=%s", user, e, exc_info=True)
+                await say(f":warning: Query failed: {e}")
 
         asyncio.ensure_future(_run_ask())
     else:
