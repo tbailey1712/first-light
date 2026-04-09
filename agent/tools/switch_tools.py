@@ -365,6 +365,71 @@ def query_pfsense_interface_traffic(hours: int = 24) -> str:
 
 
 @tool
+def query_wan_bandwidth_daily(days: int = 7) -> str:
+    """Get daily WAN internet bandwidth totals (download and upload) from pfSense.
+
+    Uses rate-based delta calculation on pfSense mvneta2 (WAN) SNMP counters from
+    Telegraf, correctly handling counter resets from reboots. Reports actual internet
+    traffic only — not internal LAN traffic.
+
+    Args:
+        days: Number of past days to return (default: 7)
+
+    Returns:
+        JSON list of daily records with wan_download_gb, wan_upload_gb, wan_total_gb.
+    """
+    config = get_config()
+    url = f"{config.signoz_clickhouse_url}/"
+    query = f"""
+        WITH ordered AS (
+            SELECT
+                toDate(toDateTime(unix_milli / 1000)) AS day,
+                unix_milli,
+                value,
+                metric_name,
+                lagInFrame(value) OVER (PARTITION BY metric_name ORDER BY unix_milli) AS prev_value
+            FROM signoz_metrics.samples_v4 s
+            JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+            WHERE ts.metric_name IN ('interface_in_octets', 'interface_out_octets')
+              AND simpleJSONExtractString(ts.labels, 'instance') = '192.168.1.1'
+              AND simpleJSONExtractString(ts.labels, 'name') = 'mvneta2'
+              AND unix_milli >= (toUnixTimestamp(now() - INTERVAL {days} DAY)) * 1000
+        )
+        SELECT
+            day,
+            round(sumIf(value - prev_value,
+                metric_name = 'interface_in_octets'
+                AND value > prev_value AND prev_value > 0) / 1e9, 2) AS wan_download_gb,
+            round(sumIf(value - prev_value,
+                metric_name = 'interface_out_octets'
+                AND value > prev_value AND prev_value > 0) / 1e9, 2) AS wan_upload_gb
+        FROM ordered
+        GROUP BY day
+        ORDER BY day DESC
+        FORMAT JSON
+    """
+    try:
+        resp = httpx.post(url, content=query, timeout=30,
+                          auth=(config.signoz_clickhouse_user, config.signoz_clickhouse_password))
+        resp.raise_for_status()
+        rows = resp.json().get("data", [])
+        result = []
+        for r in rows:
+            down = float(r.get("wan_download_gb", 0))
+            up = float(r.get("wan_upload_gb", 0))
+            result.append({
+                "date": r["day"],
+                "wan_download_gb": round(down, 1),
+                "wan_upload_gb": round(up, 1),
+                "wan_total_gb": round(down + up, 1),
+            })
+        return json.dumps({"wan_bandwidth_daily": result}, indent=2)
+    except Exception as e:
+        logger.error(f"query_wan_bandwidth_daily failed: {e}")
+        return json.dumps({"error": str(e)})
+
+
+@tool
 def query_switch_events(hours: int = 24) -> str:
     """Get switch syslog events: port link state changes and flapping detection.
 

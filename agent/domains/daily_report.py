@@ -149,6 +149,7 @@ def run_network_flow_agent(
         query_switch_port_errors,
         query_switch_events,
         query_pfsense_interface_traffic,
+        query_wan_bandwidth_daily,
     )
     from agent.tools.pfsense_dhcp import query_active_device_inventory
     from agent.tools.unifi_tools import (
@@ -173,6 +174,7 @@ def run_network_flow_agent(
         query_switch_port_errors,
         query_switch_events,
         query_pfsense_interface_traffic,
+        query_wan_bandwidth_daily,
         query_active_device_inventory,
         reverse_lookup_ip,
         lookup_unifi_client_by_mac,
