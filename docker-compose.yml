@@ -154,6 +154,7 @@ services:
     volumes:
       - agent_reports:/data/reports
       - /data/compose/7/uptimekuma_data:/data/uptimekuma:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - signoz-net
     depends_on:
