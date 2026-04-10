@@ -93,7 +93,7 @@ def _check_metric_staleness() -> list[dict]:
         SELECT
             metric_name,
             toUnixTimestamp(toDateTime(max(unix_milli) / 1000)) AS last_ts
-        FROM signoz_metrics.samples_v4
+        FROM signoz_metrics.distributed_samples_v4
         WHERE metric_name IN ({placeholders})
         GROUP BY metric_name
     """
@@ -147,7 +147,7 @@ def _check_log_ingestion() -> dict:
     """Check how recently a syslog entry arrived in signoz_logs."""
     sql = """
         SELECT toUnixTimestamp(toDateTime(max(timestamp) / 1000000000)) AS last_ts
-        FROM signoz_logs.logs_v2
+        FROM signoz_logs.distributed_logs_v2
         WHERE resources_string['host.name'] != ''
     """
     rows = _clickhouse_query(sql)

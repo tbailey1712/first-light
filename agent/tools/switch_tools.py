@@ -102,8 +102,8 @@ def _port_traffic_query(device: str, hours: int) -> str:
              - minIf(s.value, s.metric_name = 'interface_in_octets')) AS bytes_in,
             (maxIf(s.value, s.metric_name = 'interface_out_octets')
              - minIf(s.value, s.metric_name = 'interface_out_octets')) AS bytes_out
-        FROM signoz_metrics.samples_v4 s
-        JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+        FROM signoz_metrics.distributed_samples_v4 s
+        JOIN signoz_metrics.distributed_time_series_v4 ts ON s.fingerprint = ts.fingerprint
         WHERE s.metric_name IN ('interface_in_octets', 'interface_out_octets')
           AND simpleJSONExtractString(ts.labels, 'device') = '{device}'
           AND s.unix_milli > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000
@@ -125,8 +125,8 @@ def _port_errors_query(device: str, hours: int) -> str:
              - minIf(s.value, s.metric_name = 'interface_in_discards')) AS in_discards,
             (maxIf(s.value, s.metric_name = 'interface_out_discards')
              - minIf(s.value, s.metric_name = 'interface_out_discards')) AS out_discards
-        FROM signoz_metrics.samples_v4 s
-        JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+        FROM signoz_metrics.distributed_samples_v4 s
+        JOIN signoz_metrics.distributed_time_series_v4 ts ON s.fingerprint = ts.fingerprint
         WHERE s.metric_name IN (
             'interface_in_errors', 'interface_out_errors',
             'interface_in_discards', 'interface_out_discards'
@@ -233,8 +233,8 @@ def query_switch_port_status() -> str:
         SELECT
             simpleJSONExtractString(ts.labels, 'name') AS port,
             argMax(s.value, s.unix_milli) AS oper_status
-        FROM signoz_metrics.samples_v4 s
-        JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+        FROM signoz_metrics.distributed_samples_v4 s
+        JOIN signoz_metrics.distributed_time_series_v4 ts ON s.fingerprint = ts.fingerprint
         WHERE s.metric_name IN ('interface_operational_status', 'ifOperStatus')
           AND simpleJSONExtractString(ts.labels, 'device') = '{_SWITCH_DEVICE}'
           AND s.unix_milli > toUnixTimestamp(now() - INTERVAL 1 HOUR) * 1000
@@ -246,8 +246,8 @@ def query_switch_port_status() -> str:
         SELECT
             simpleJSONExtractString(ts.labels, 'name') AS port,
             argMax(s.value, s.unix_milli) AS speed_mbps
-        FROM signoz_metrics.samples_v4 s
-        JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+        FROM signoz_metrics.distributed_samples_v4 s
+        JOIN signoz_metrics.distributed_time_series_v4 ts ON s.fingerprint = ts.fingerprint
         WHERE s.metric_name IN ('interface_speed', 'ifHighSpeed', 'ifSpeed')
           AND simpleJSONExtractString(ts.labels, 'device') = '{_SWITCH_DEVICE}'
           AND s.unix_milli > toUnixTimestamp(now() - INTERVAL 1 HOUR) * 1000
@@ -388,8 +388,8 @@ def query_wan_bandwidth_daily(days: int = 7) -> str:
                 value,
                 metric_name,
                 lagInFrame(value) OVER (PARTITION BY metric_name ORDER BY unix_milli) AS prev_value
-            FROM signoz_metrics.samples_v4 s
-            JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+            FROM signoz_metrics.distributed_samples_v4 s
+            JOIN signoz_metrics.distributed_time_series_v4 ts ON s.fingerprint = ts.fingerprint
             WHERE ts.metric_name IN ('interface_in_octets', 'interface_out_octets')
               AND simpleJSONExtractString(ts.labels, 'instance') = '192.168.1.1'
               AND simpleJSONExtractString(ts.labels, 'name') = 'mvneta2'
@@ -459,7 +459,7 @@ def query_switch_events(hours: int = 24) -> str:
         SELECT
             toDateTime(timestamp / 1000000000) AS ts,
             body
-        FROM signoz_logs.logs_v2
+        FROM signoz_logs.distributed_logs_v2
         WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
           AND body LIKE '%192.168.1.2%'
           AND body LIKE '%changed state to%'

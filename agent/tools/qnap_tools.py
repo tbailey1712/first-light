@@ -436,8 +436,8 @@ def query_qnap_events(hours: int = 24) -> str:
         timestamp,
         severity_text,
         body
-    FROM signoz_logs.logs_v2
-    WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
+    FROM signoz_logs.distributed_logs_v2
+    WHERE timestamp > toInt64(toUnixTimestamp(now() - INTERVAL {hours} HOUR)) * 1000000000
       AND attributes_string['hostname'] = 'nas'
       AND (body LIKE '%event log:%' OR body LIKE '%conn log:%')
     ORDER BY timestamp DESC
@@ -478,7 +478,7 @@ def query_qnap_events(hours: int = 24) -> str:
         app_counts[application] = app_counts.get(application, 0) + 1
 
         content = parsed.get("content", parsed.get("action", ""))
-        ts_ns = row.get("timestamp", 0)
+        ts_ns = int(row.get("timestamp") or 0)
         ts = datetime.fromtimestamp(ts_ns / 1e9, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if ts_ns else ""
 
         event = {
