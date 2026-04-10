@@ -165,7 +165,7 @@ def query_switch_port_traffic(hours: int = 24) -> str:
         bytes_out = float(r.get("bytes_out", 0))
         result.append({
             "port": port,
-            "label": _PORT_LABELS.get(port, f"Port {port} (unknown device)"),
+            "label": port,
             "bytes_in": _human_bytes(bytes_in),
             "bytes_out": _human_bytes(bytes_out),
             "total": _human_bytes(bytes_in + bytes_out),
@@ -200,7 +200,7 @@ def query_switch_port_errors(hours: int = 24) -> str:
             continue
         result.append({
             "port": port,
-            "label": _PORT_LABELS.get(port, f"Port {port} (unknown device)"),
+            "label": port,
             "in_errors": int(float(r.get("in_errors", 0))),
             "out_errors": int(float(r.get("out_errors", 0))),
             "in_discards": int(float(r.get("in_discards", 0))),
