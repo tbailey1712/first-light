@@ -38,7 +38,7 @@ def query_security_summary(hours: int = 1) -> str:
         MIN(timestamp) as first_seen,
         MAX(timestamp) as last_seen,
         groupArray(body) as sample_logs
-    FROM signoz_logs.logs_v2
+    FROM signoz_logs.distributed_logs_v2
     WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
       AND resources_string['service.name'] = 'filterlog'
       AND attributes_string['pfsense.action'] = 'block'
@@ -56,7 +56,7 @@ def query_security_summary(hours: int = 1) -> str:
         attributes_string['ntopng.severity'] as severity,
         COUNT(*) as alert_count,
         groupArray(body) as sample_logs
-    FROM signoz_logs.logs_v2
+    FROM signoz_logs.distributed_logs_v2
     WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
       AND resources_string['host.name'] = 'ntopng'
       AND attributes_string['ntopng.alert_type'] IS NOT NULL
@@ -138,7 +138,7 @@ def query_wireless_health(hours: int = 6) -> str:
         COUNT(*) as event_count,
         COUNT(DISTINCT attributes_string['unifi.client_mac']) as unique_clients,
         groupArray(10)(body) as sample_logs
-    FROM signoz_logs.logs_v2
+    FROM signoz_logs.distributed_logs_v2
     WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
       AND resources_string['device.type'] = 'access-point'
       AND attributes_string['unifi.event_type'] IN (
@@ -160,7 +160,7 @@ def query_wireless_health(hours: int = 6) -> str:
         attributes_string['unifi.reason_code'] as reason_code,
         attributes_string['unifi.signal_dbm'] as signal_dbm,
         body
-    FROM signoz_logs.logs_v2
+    FROM signoz_logs.distributed_logs_v2
     WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
       AND resources_string['device.type'] = 'access-point'
       AND attributes_string['unifi.notable'] = 'true'
@@ -180,7 +180,7 @@ def query_wireless_health(hours: int = 6) -> str:
         groupUniqArray(resources_string['host.name']) as aps_seen,
         min(timestamp) as first_seen,
         max(timestamp) as last_seen
-    FROM signoz_logs.logs_v2
+    FROM signoz_logs.distributed_logs_v2
     WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
       AND body LIKE '%STA_ASSOC_TRACKER%'
       AND body LIKE '%"event_type":"failure"%'
@@ -270,7 +270,7 @@ def query_infrastructure_events(hours: int = 24) -> str:
     SELECT
         COUNT(*) as health_check_failures,
         groupArray(body) as sample_logs
-    FROM signoz_logs.logs_v2
+    FROM signoz_logs.distributed_logs_v2
     WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
       AND resources_string['host.name'] = 'docker'
       AND attributes_string['docker.event_type'] = 'health_check_failed'
@@ -283,7 +283,7 @@ def query_infrastructure_events(hours: int = 24) -> str:
         attributes_string['ha.service'] as service,
         COUNT(*) as error_count,
         groupArray(body) as sample_logs
-    FROM signoz_logs.logs_v2
+    FROM signoz_logs.distributed_logs_v2
     WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
       AND resources_string['host.name'] = 'ha'
       AND attributes_string['ha.level'] = 'error'
@@ -299,7 +299,7 @@ def query_infrastructure_events(hours: int = 24) -> str:
         attributes_string['proxmox.task'] as task,
         attributes_string['proxmox.status'] as status,
         COUNT(*) as operation_count
-    FROM signoz_logs.logs_v2
+    FROM signoz_logs.distributed_logs_v2
     WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
       AND resources_string['device.type'] = 'hypervisor'
       AND attributes_string['proxmox.task'] IS NOT NULL
@@ -366,7 +366,7 @@ def query_auth_events(hours: int = 24) -> str:
         attributes_string['ssh.user'] as attempted_user,
         COUNT(*) as count,
         MAX(toDateTime(timestamp / 1000000000)) as last_seen
-    FROM signoz_logs.logs_v2
+    FROM signoz_logs.distributed_logs_v2
     WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
       AND mapContains(attributes_string, 'ssh.event')
       AND attributes_string['ssh.event'] IN ('login_failure', 'invalid_user')
@@ -386,7 +386,7 @@ def query_auth_events(hours: int = 24) -> str:
         attributes_string['ssh.auth_method'] as auth_method,
         COUNT(*) as count,
         MAX(toDateTime(timestamp / 1000000000)) as last_seen
-    FROM signoz_logs.logs_v2
+    FROM signoz_logs.distributed_logs_v2
     WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
       AND mapContains(attributes_string, 'ssh.event')
       AND attributes_string['ssh.event'] = 'login_success'
@@ -406,7 +406,7 @@ def query_auth_events(hours: int = 24) -> str:
         attributes_string['sudo.command'] as command,
         COUNT(*) as count,
         MAX(toDateTime(timestamp / 1000000000)) as last_seen
-    FROM signoz_logs.logs_v2
+    FROM signoz_logs.distributed_logs_v2
     WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
       AND mapContains(attributes_string, 'sudo.event')
     GROUP BY host, user, event, command
@@ -513,7 +513,7 @@ def search_logs_by_ip(
         MIN(timestamp) as first_seen,
         MAX(timestamp) as last_seen,
         groupArray(body) as sample_logs
-    FROM signoz_logs.logs_v2
+    FROM signoz_logs.distributed_logs_v2
     WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
       AND (
         positionCaseInsensitive(body, {{ip:String}}) > 0
@@ -532,11 +532,11 @@ def search_logs_by_ip(
         summary = {
             "ip_address": ip_address,
             "time_range": f"last {hours} hour(s)",
-            "total_mentions": sum(m['mention_count'] for m in mentions),
+            "total_mentions": sum(int(m['mention_count']) for m in mentions),
             "sources": [
                 {
                     "source": m['source'],
-                    "mention_count": m['mention_count'],
+                    "mention_count": int(m['mention_count']),
                     "first_seen": _format_timestamp(m['first_seen']),
                     "last_seen": _format_timestamp(m['last_seen']),
                     "sample_logs": m['sample_logs'][:5]
@@ -582,7 +582,7 @@ def query_outbound_blocks(hours: int = 24) -> str:
         COUNT(*) as block_count,
         MIN(toDateTime(timestamp / 1000000000)) as first_seen,
         MAX(toDateTime(timestamp / 1000000000)) as last_seen
-    FROM signoz_logs.logs_v2
+    FROM signoz_logs.distributed_logs_v2
     WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
       AND resources_string['service.name'] = 'filterlog'
       AND attributes_string['pfsense.action'] = 'block'
@@ -683,7 +683,7 @@ def search_logs_by_hostname(
         severity_text,
         resources_string['host.name'] AS host_name,
         resources_string['service.name'] AS service_name
-    FROM signoz_logs.logs_v2
+    FROM signoz_logs.distributed_logs_v2
     WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
       AND (
         resources_string['host.name'] ILIKE '%{safe_hostname}%'
