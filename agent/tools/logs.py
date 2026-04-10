@@ -764,10 +764,10 @@ def _execute_clickhouse_query(
         raise Exception(f"ClickHouse query error: {str(e)}")
 
 
-def _format_timestamp(ts_nano: int) -> str:
+def _format_timestamp(ts_nano) -> str:
     """Convert nanosecond timestamp to ISO format."""
     try:
-        ts_seconds = ts_nano / 1000000000
+        ts_seconds = int(ts_nano) / 1000000000
         return datetime.fromtimestamp(ts_seconds, tz=timezone.utc).isoformat()
     except Exception:
         return str(ts_nano)
