@@ -586,13 +586,15 @@ def query_outbound_blocks(hours: int = 24) -> str:
     WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
       AND resources_string['service.name'] = 'filterlog'
       AND attributes_string['pfsense.action'] = 'block'
-      AND attributes_string['pfsense.direction'] = 'out'
+      AND attributes_string['pfsense.src_ip'] != ''
       AND (
         attributes_string['pfsense.src_ip'] LIKE '192.168.%'
         OR attributes_string['pfsense.src_ip'] LIKE '10.%'
         OR attributes_string['pfsense.src_ip'] LIKE '172.16.%'
       )
-      AND attributes_string['pfsense.src_ip'] != ''
+      AND attributes_string['pfsense.dst_ip'] NOT LIKE '192.168.%'
+      AND attributes_string['pfsense.dst_ip'] NOT LIKE '10.%'
+      AND attributes_string['pfsense.dst_ip'] NOT LIKE '172.16.%'
     GROUP BY src_ip, dst_ip, dst_port, protocol, interface
     ORDER BY block_count DESC
     LIMIT 25
