@@ -620,13 +620,13 @@ def query_outbound_blocks(hours: int = 24) -> str:
                     "first_seen": row["first_seen"],
                     "last_seen": row["last_seen"],
                 }
-            by_src[src]["total_blocks"] += row["block_count"]
+            by_src[src]["total_blocks"] += int(row["block_count"])
             by_src[src]["destinations"].append({
                 "dst_ip": row["dst_ip"],
                 "dst_port": row["dst_port"],
                 "protocol": row["protocol"],
                 "interface": row["interface"],
-                "count": row["block_count"],
+                "count": int(row["block_count"]),
             })
             # Track widest time window
             if str(row["first_seen"]) < str(by_src[src]["first_seen"]):
