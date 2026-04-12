@@ -79,6 +79,18 @@ async def run_daily_report():
                 pass
 
 
+async def run_eval_agent():
+    """Run the eval lifecycle — replay synthesis, judge, detect regressions."""
+    logger.info("Starting eval agent...")
+    try:
+        from agent.evals.eval_agent import run_eval_agent as _run_eval
+        await asyncio.get_event_loop().run_in_executor(None, lambda: _run_eval(days=7))
+        logger.info("Eval agent complete")
+    except Exception as e:
+        logger.error("Eval agent failed: %s", e, exc_info=True)
+        await _notify_failure("Eval agent", str(e))
+
+
 async def run_infra_health_check():
     """
     Proactive infrastructure health check — runs every 20 minutes.
@@ -212,6 +224,18 @@ async def _run():
         misfire_grace_time=300,
         next_run_time=datetime.now(),  # Run immediately on startup too
     )
+    eval_hour = int(os.getenv("EVAL_HOUR", "10"))
+    eval_minute = int(os.getenv("EVAL_MINUTE", "0"))
+    if os.getenv("EVAL_ENABLED", "true").lower() == "true":
+        scheduler.add_job(
+            run_eval_agent,
+            trigger=CronTrigger(hour=eval_hour, minute=eval_minute, timezone=tz),
+            id="eval_agent",
+            name="Synthesis Eval Lifecycle",
+            max_instances=1,
+            misfire_grace_time=3600,
+        )
+        logger.info(f"Eval agent scheduled at {eval_hour:02d}:{eval_minute:02d} {tz}")
     scheduler.start()
     logger.info("Scheduler running. Health check every %dm.", health_interval)
 
