@@ -24,12 +24,28 @@ EXPERIMENTS: list[ExperimentConfig] = [
         "description": "Baseline: current production model + prompt",
     },
     {
-        "experiment_id": "gemma-4-31b",
-        "model": "openai/gemma-4-31b",
+        "experiment_id": "gpt-5.4",
+        "model": "openai/gpt-5.4",
         "synthesis_prompt_version": None,
         "temperature": 0.3,
-        "run_name_prefix": "gemma-4-31b",
-        "description": "Open-weight candidate: Gemma 4 31B",
+        "run_name_prefix": "gpt-5.4",
+        "description": "OpenAI GPT-5.4: strong reasoning, cheaper than Opus",
+    },
+    {
+        "experiment_id": "gemini-3.1-pro",
+        "model": "openai/gemini/gemini-3.1-pro-preview",
+        "synthesis_prompt_version": None,
+        "temperature": 0.3,
+        "run_name_prefix": "gemini-3.1-pro",
+        "description": "Google Gemini 3.1 Pro: long context, strong analytical",
+    },
+    {
+        "experiment_id": "mistral-large",
+        "model": "openai/mistral-large-2512",
+        "synthesis_prompt_version": None,
+        "temperature": 0.3,
+        "run_name_prefix": "mistral-large",
+        "description": "Mistral Large 25.12: cost-effective technical reasoning",
     },
 ]
 
