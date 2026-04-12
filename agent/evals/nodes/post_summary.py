@@ -89,7 +89,10 @@ def post_summary(state: EvalState) -> dict:
         # Graph nodes run synchronously (LangGraph invoke). When called from
         # the scheduler's run_in_executor, we're on a worker thread with no
         # running event loop, so asyncio.run() is safe.
-        asyncio.run(channel.send_alert(summary))
+        asyncio.run(channel.send_report({
+            "report_text": summary,
+            "date": "Eval Run",
+        }))
 
         logger.info("Eval summary posted to Slack")
         return {"summary_posted": True}

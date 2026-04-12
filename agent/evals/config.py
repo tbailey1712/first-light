@@ -25,7 +25,7 @@ EXPERIMENTS: list[ExperimentConfig] = [
     },
     {
         "experiment_id": "gemma-4-31b",
-        "model": "gemma-4-31b",
+        "model": "openai/gemma-4-31b",
         "synthesis_prompt_version": None,
         "temperature": 0.3,
         "run_name_prefix": "gemma-4-31b",
