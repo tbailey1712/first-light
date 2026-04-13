@@ -43,7 +43,6 @@ _REQUIRED_CONTAINERS = [
     "fl-slack-bot",
     "fl-redis",
     "fl-threat-intel-enricher",
-    "fl-proxmox-exporter",
     "fl-qnap-snmp-exporter",
     "fl-qnap-api-exporter",
     "fl-telegraf-snmp",
