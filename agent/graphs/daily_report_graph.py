@@ -831,26 +831,17 @@ Write the final synthesized report now.
 
 # ── Graph ──────────────────────────────────────────────────────────────────────
 
-def should_investigate(state: DailyReportState) -> str:
-    """Route to investigate if synthesis flagged suspicious items, else END."""
-    return "investigate" if state.get("suspicious_items") else "end"
-
-
 _builder = StateGraph(DailyReportState)
 _builder.add_node("initialize", initialize)
 _builder.add_node("run_domains_parallel", run_domains_parallel)
 _builder.add_node("correlate", correlate)
 _builder.add_node("synthesize", synthesize)
-_builder.add_node("investigate", investigate)
-_builder.add_node("append_investigation", append_investigation)
 
 _builder.add_edge(START, "initialize")
 _builder.add_edge("initialize", "run_domains_parallel")
 _builder.add_edge("run_domains_parallel", "correlate")
 _builder.add_edge("correlate", "synthesize")
-_builder.add_conditional_edges("synthesize", should_investigate, {"investigate": "investigate", "end": END})
-_builder.add_edge("investigate", "append_investigation")
-_builder.add_edge("append_investigation", END)
+_builder.add_edge("synthesize", END)
 
 graph = _builder.compile()
 
