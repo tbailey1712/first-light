@@ -42,7 +42,7 @@ _REQUIRED_CONTAINERS = [
     "fl-agent",
     "fl-slack-bot",
     "fl-redis",
-    # "fl-threat-intel-enricher",  # disabled — needs code fix (threat_intel.py → threat_intel_tools.py rename)
+    "fl-threat-intel-enricher",
     "fl-proxmox-exporter",
     "fl-qnap-snmp-exporter",
     "fl-qnap-api-exporter",
