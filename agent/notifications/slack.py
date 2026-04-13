@@ -206,7 +206,7 @@ class SlackBotChannel:
 
     Required: SLACK_BOT_TOKEN
     Optional: SLACK_REPORTS_CHANNEL (default: #firstlight-reports)
-              SLACK_ALERTS_CHANNEL  (default: #firstlight-alerts)
+              SLACK_ALERTS_CHANNEL  (default: #home-network)
     """
 
     name = "slack-bot"
@@ -215,7 +215,7 @@ class SlackBotChannel:
         self,
         bot_token: str,
         reports_channel: str = "#firstlight-reports",
-        alerts_channel: str = "#firstlight-alerts",
+        alerts_channel: str = "#home-network",
     ):
         self._token = bot_token
         self._reports_channel = reports_channel
@@ -334,5 +334,5 @@ def build_slack_bot_channel() -> Optional["SlackBotChannel"]:
     if not cfg.slack_bot_token:
         return None
     reports_ch = os.getenv("SLACK_REPORTS_CHANNEL", "#firstlight-reports")
-    alerts_ch = os.getenv("SLACK_ALERTS_CHANNEL", "#firstlight-alerts")
+    alerts_ch = os.getenv("SLACK_ALERTS_CHANNEL", "#home-network")
     return SlackBotChannel(cfg.slack_bot_token, reports_ch, alerts_ch)

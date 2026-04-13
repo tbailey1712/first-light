@@ -8,8 +8,8 @@ Batch enrichment service that:
 4. Exposes Prometheus metrics
 """
 
+import json
 import os
-import sys
 import time
 import logging
 from typing import List, Dict, Optional, Set
@@ -22,9 +22,6 @@ from prometheus_client import Counter, Gauge, Histogram, start_http_server
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-# Import threat_intel directly from tools dir to avoid loading agent's __init__.py
-# (which would require langchain_core, not present in this lightweight container)
-sys.path.insert(0, '/app/agent/tools')
 from threat_intel import ThreatIntelligence
 
 logging.basicConfig(
@@ -96,11 +93,7 @@ class ClickHouseClient:
             if not response.text.strip():
                 return []
 
-            return [line for line in (
-                eval('{' + line + '}') if line.strip() and not line.startswith('{')
-                else eval(line) if line.strip() else None
-                for line in response.text.strip().split('\n')
-            ) if line is not None]
+            return [json.loads(line) for line in response.text.strip().split('\n') if line.strip()]
         except Exception as e:
             logger.error(f"ClickHouse query error: {e}")
             return []
