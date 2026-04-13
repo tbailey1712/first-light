@@ -226,7 +226,7 @@ async def _run():
     )
     eval_hour = int(os.getenv("EVAL_HOUR", "10"))
     eval_minute = int(os.getenv("EVAL_MINUTE", "0"))
-    if os.getenv("EVAL_ENABLED", "true").lower() == "true":
+    if os.getenv("EVAL_ENABLED", "false").lower() == "true":
         scheduler.add_job(
             run_eval_agent,
             trigger=CronTrigger(hour=eval_hour, minute=eval_minute, timezone=tz),
