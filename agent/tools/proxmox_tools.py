@@ -1,7 +1,6 @@
 """
-Proxmox VE health tools — queries the fl-proxmox-exporter Prometheus endpoint
-for node/VM/CT/storage metrics, and the Proxmox REST API directly for VM disk
-usage via the QEMU guest agent (get-fsinfo).
+Proxmox VE health tools — queries the Proxmox REST API for node/VM/CT/storage
+metrics, and the QEMU guest agent (get-fsinfo) for real VM disk usage.
 """
 
 import json
@@ -115,164 +114,142 @@ def _get_vm_disk_usage(client: httpx.Client, node: str, vmid: str) -> Optional[d
 def query_proxmox_health() -> str:
     """Get Proxmox VE health summary: node resources, VMs, containers, and storage.
 
+    Queries the Proxmox REST API directly for live node, VM, container, and
+    storage status.
+
     Returns:
         JSON with node CPU/memory, per-VM/container status, storage usage, and alerts.
     """
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.get("http://fl-proxmox-exporter:9002/metrics")
-            resp.raise_for_status()
-    except Exception as e:
-        return json.dumps({"error": f"Could not reach Proxmox exporter: {e}"})
-
-    m = _parse_prometheus(resp.text)
-
-    # --- Node-level metrics ---
-    nodes = {}
-    for labels, val in m.get("pve_node_cpu_usage_ratio", []):
-        node = labels.get("node", "pve")
-        nodes.setdefault(node, {})["cpu_pct"] = round(val * 100, 1)
-    for labels, val in m.get("pve_node_memory_usage_bytes", []):
-        node = labels.get("node", "pve")
-        nodes.setdefault(node, {})["mem_used_gb"] = _gb(val)
-    for labels, val in m.get("pve_node_memory_total_bytes", []):
-        node = labels.get("node", "pve")
-        nodes.setdefault(node, {})["mem_total_gb"] = _gb(val)
-
-    for node, info in nodes.items():
-        info["mem_pct"] = _pct(
-            info.get("mem_used_gb"), info.get("mem_total_gb")
-        )
-
-    # --- VMs ---
-    vms = {}
-    for labels, val in m.get("pve_vm_cpu_usage_ratio", []):
-        key = (labels.get("vmid", "?"), labels.get("name", "unknown"))
-        vms.setdefault(key, {})["cpu_pct"] = round(val * 100, 1)
-    for labels, val in m.get("pve_vm_memory_usage_bytes", []):
-        key = (labels.get("vmid", "?"), labels.get("name", "unknown"))
-        vms.setdefault(key, {})["mem_used_gb"] = _gb(val)
-    for labels, val in m.get("pve_vm_memory_total_bytes", []):
-        key = (labels.get("vmid", "?"), labels.get("name", "unknown"))
-        vms.setdefault(key, {})["mem_total_gb"] = _gb(val)
-    for labels, val in m.get("pve_vm_disk_usage_bytes", []):
-        key = (labels.get("vmid", "?"), labels.get("name", "unknown"))
-        vms.setdefault(key, {})["disk_used_gb"] = _gb(val)
-    for labels, val in m.get("pve_vm_disk_total_bytes", []):
-        key = (labels.get("vmid", "?"), labels.get("name", "unknown"))
-        vms.setdefault(key, {})["disk_total_gb"] = _gb(val)
-    for labels, val in m.get("pve_vm_uptime_seconds", []):
-        key = (labels.get("vmid", "?"), labels.get("name", "unknown"))
-        vms.setdefault(key, {})["uptime_hours"] = round(val / 3600, 1)
-    for labels, val in m.get("pve_vm_status", []):
-        key = (labels.get("vmid", "?"), labels.get("name", "unknown"))
-        vms.setdefault(key, {})["running"] = val == 1.0
-        vms.setdefault(key, {})["status"] = labels.get("status", "unknown")
-
-    # Fetch real VM disk usage via guest agent (requires Proxmox API token + qemu-guest-agent)
     cfg = get_config()
-    pve_node = cfg.proxmox_node or "pve"
-    pve_client = _proxmox_api_client()
+    client = _proxmox_api_client()
+    if client is None:
+        return json.dumps({
+            "error": "Proxmox API not configured — set PROXMOX_HOST, PROXMOX_TOKEN_ID, PROXMOX_TOKEN_SECRET"
+        })
 
-    vm_list = []
-    for (vmid, name), info in vms.items():
-        info["vmid"] = vmid
-        info["name"] = name
-        info["mem_pct"] = _pct(info.get("mem_used_gb"), info.get("mem_total_gb"))
+    node = cfg.proxmox_node or "pve"
 
-        # Try guest agent disk stats for running VMs
-        disk_info = None
-        if pve_client and info.get("running"):
-            disk_info = _get_vm_disk_usage(pve_client, pve_node, vmid)
+    try:
+        # --- Node-level metrics ---
+        nodes = {}
+        resp = client.get(f"/nodes/{node}/status")
+        if resp.status_code == 200:
+            d = resp.json().get("data", {})
+            cpu_val = d.get("cpu")
+            mem_info = d.get("memory", {})
+            nodes[node] = {
+                "cpu_pct": round(cpu_val * 100, 1) if cpu_val is not None else None,
+                "mem_used_gb": _gb(mem_info.get("used")),
+                "mem_total_gb": _gb(mem_info.get("total")),
+                "uptime_hours": round(d.get("uptime", 0) / 3600, 1),
+            }
+            nodes[node]["mem_pct"] = _pct(mem_info.get("used"), mem_info.get("total"))
 
-        if disk_info:
-            info["disk_used_gb"] = disk_info["used_gb"]
-            info["disk_total_gb"] = disk_info["total_gb"]
-            info["disk_pct"] = disk_info["used_pct"]
-            info["disk_source"] = "guest_agent"
-        else:
-            # Proxmox API returns write counters (not actual usage) for VMs without agent
-            info["disk_pct"] = None
-            info["disk_source"] = "unavailable"
+        # --- VMs ---
+        vm_list = []
+        resp = client.get(f"/nodes/{node}/qemu")
+        if resp.status_code == 200:
+            for vm in resp.json().get("data", []):
+                vmid = str(vm.get("vmid", "?"))
+                running = vm.get("status") == "running"
+                info = {
+                    "vmid": vmid,
+                    "name": vm.get("name", "unknown"),
+                    "status": vm.get("status", "unknown"),
+                    "running": running,
+                    "cpu_pct": round(vm.get("cpu", 0) * 100, 1) if running else 0,
+                    "mem_used_gb": _gb(vm.get("mem")),
+                    "mem_total_gb": _gb(vm.get("maxmem")),
+                    "uptime_hours": round(vm.get("uptime", 0) / 3600, 1),
+                }
+                info["mem_pct"] = _pct(vm.get("mem"), vm.get("maxmem"))
 
-        vm_list.append(info)
-    vm_list.sort(key=lambda x: x.get("vmid", ""))
+                # Try guest agent for real disk usage on running VMs
+                disk_info = None
+                if running:
+                    disk_info = _get_vm_disk_usage(client, node, vmid)
 
-    if pve_client:
-        pve_client.close()
+                if disk_info:
+                    info["disk_used_gb"] = disk_info["used_gb"]
+                    info["disk_total_gb"] = disk_info["total_gb"]
+                    info["disk_pct"] = disk_info["used_pct"]
+                    info["disk_source"] = "guest_agent"
+                else:
+                    info["disk_pct"] = None
+                    info["disk_source"] = "unavailable"
 
-    # --- Containers ---
-    cts = {}
-    for labels, val in m.get("pve_ct_cpu_usage_ratio", []):
-        key = (labels.get("ctid", "?"), labels.get("name", "unknown"))
-        cts.setdefault(key, {})["cpu_pct"] = round(val * 100, 1)
-    for labels, val in m.get("pve_ct_memory_usage_bytes", []):
-        key = (labels.get("ctid", "?"), labels.get("name", "unknown"))
-        cts.setdefault(key, {})["mem_used_gb"] = _gb(val)
-    for labels, val in m.get("pve_ct_memory_total_bytes", []):
-        key = (labels.get("ctid", "?"), labels.get("name", "unknown"))
-        cts.setdefault(key, {})["mem_total_gb"] = _gb(val)
-    for labels, val in m.get("pve_ct_disk_usage_bytes", []):
-        key = (labels.get("ctid", "?"), labels.get("name", "unknown"))
-        cts.setdefault(key, {})["disk_used_gb"] = _gb(val)
-    for labels, val in m.get("pve_ct_disk_total_bytes", []):
-        key = (labels.get("ctid", "?"), labels.get("name", "unknown"))
-        cts.setdefault(key, {})["disk_total_gb"] = _gb(val)
-    for labels, val in m.get("pve_ct_uptime_seconds", []):
-        key = (labels.get("ctid", "?"), labels.get("name", "unknown"))
-        cts.setdefault(key, {})["uptime_hours"] = round(val / 3600, 1)
-    for labels, val in m.get("pve_ct_status", []):
-        key = (labels.get("ctid", "?"), labels.get("name", "unknown"))
-        cts.setdefault(key, {})["running"] = val == 1.0
-        cts.setdefault(key, {})["status"] = labels.get("status", "unknown")
+                vm_list.append(info)
+        vm_list.sort(key=lambda x: x.get("vmid", ""))
 
-    ct_list = []
-    for (ctid, name), info in cts.items():
-        info["ctid"] = ctid
-        info["name"] = name
-        info["disk_pct"] = _pct(info.get("disk_used_gb"), info.get("disk_total_gb"))
-        info["mem_pct"] = _pct(info.get("mem_used_gb"), info.get("mem_total_gb"))
-        ct_list.append(info)
-    ct_list.sort(key=lambda x: x.get("ctid", ""))
+        # --- Containers ---
+        ct_list = []
+        resp = client.get(f"/nodes/{node}/lxc")
+        if resp.status_code == 200:
+            for ct in resp.json().get("data", []):
+                ctid = str(ct.get("vmid", "?"))
+                running = ct.get("status") == "running"
+                info = {
+                    "ctid": ctid,
+                    "name": ct.get("name", "unknown"),
+                    "status": ct.get("status", "unknown"),
+                    "running": running,
+                    "cpu_pct": round(ct.get("cpu", 0) * 100, 1) if running else 0,
+                    "mem_used_gb": _gb(ct.get("mem")),
+                    "mem_total_gb": _gb(ct.get("maxmem")),
+                    "disk_used_gb": _gb(ct.get("disk")),
+                    "disk_total_gb": _gb(ct.get("maxdisk")),
+                    "uptime_hours": round(ct.get("uptime", 0) / 3600, 1),
+                }
+                info["mem_pct"] = _pct(ct.get("mem"), ct.get("maxmem"))
+                info["disk_pct"] = _pct(ct.get("disk"), ct.get("maxdisk"))
+                ct_list.append(info)
+        ct_list.sort(key=lambda x: x.get("ctid", ""))
 
-    # --- Storage ---
-    storage = {}
-    for labels, val in m.get("pve_storage_usage_bytes", []):
-        key = labels.get("storage", "unknown")
-        storage.setdefault(key, {})["used_gb"] = _gb(val)
-    for labels, val in m.get("pve_storage_total_bytes", []):
-        key = labels.get("storage", "unknown")
-        storage.setdefault(key, {})["total_gb"] = _gb(val)
-    for key, info in storage.items():
-        info["used_pct"] = _pct(info.get("used_gb"), info.get("total_gb"))
+        # --- Storage ---
+        storage = {}
+        resp = client.get(f"/nodes/{node}/storage", params={"content": "images,rootdir,backup"})
+        if resp.status_code == 200:
+            for s in resp.json().get("data", []):
+                name = s.get("storage", "unknown")
+                if not s.get("active"):
+                    continue
+                storage[name] = {
+                    "used_gb": _gb(s.get("used")),
+                    "total_gb": _gb(s.get("total")),
+                    "used_pct": _pct(s.get("used"), s.get("total")),
+                }
 
-    # --- Alerts ---
-    alerts = []
-    for node, info in nodes.items():
-        if info.get("cpu_pct", 0) > 85:
-            alerts.append(f"Node {node} CPU high: {info['cpu_pct']}%")
-        if info.get("mem_pct", 0) > 90:
-            alerts.append(f"Node {node} memory high: {info['mem_pct']}%")
+        client.close()
 
-    # Stopped VMs are reported in the vm_list data but NOT raised as alerts —
-    # the agent cannot distinguish intentionally-stopped from unexpectedly-stopped.
+        # --- Alerts ---
+        alerts = []
+        for n, info in nodes.items():
+            if (info.get("cpu_pct") or 0) > 85:
+                alerts.append(f"Node {n} CPU high: {info['cpu_pct']}%")
+            if (info.get("mem_pct") or 0) > 90:
+                alerts.append(f"Node {n} memory high: {info['mem_pct']}%")
 
-    for v in vm_list:
-        if v.get("disk_pct") and v["disk_pct"] > 80:
-            alerts.append(f"VM {v['name']} disk usage: {v['disk_pct']}% (guest agent)")
+        for v in vm_list:
+            if v.get("disk_pct") and v["disk_pct"] > 80:
+                alerts.append(f"VM {v['name']} disk usage: {v['disk_pct']}% (guest agent)")
 
-    for s, info in storage.items():
-        if info.get("used_pct", 0) and info["used_pct"] > 85:
-            alerts.append(f"Storage {s} usage: {info['used_pct']}%")
+        for s, info in storage.items():
+            if (info.get("used_pct") or 0) > 85:
+                alerts.append(f"Storage {s} usage: {info['used_pct']}%")
 
-    return json.dumps({
-        "nodes": nodes,
-        "vms": vm_list,
-        "containers": ct_list,
-        "storage": storage,
-        "alerts": alerts,
-        "healthy": len(alerts) == 0,
-    }, indent=2)
+        return json.dumps({
+            "nodes": nodes,
+            "vms": vm_list,
+            "containers": ct_list,
+            "storage": storage,
+            "alerts": alerts,
+            "healthy": len(alerts) == 0,
+        }, indent=2)
+
+    except Exception as e:
+        if not client.is_closed:
+            client.close()
+        return json.dumps({"error": str(e)})
 
 
 @tool

@@ -30,13 +30,6 @@ receivers:
               - localhost:8888
             labels:
               job_name: otel-collector
-        - job_name: proxmox
-          static_configs:
-          - targets:
-              - fl-proxmox-exporter:9002
-            labels:
-              job_name: proxmox
-          scrape_interval: 60s
         - job_name: qnap-nas
           static_configs:
           - targets:
@@ -45,6 +38,16 @@ receivers:
             labels:
               job_name: qnap-nas
           scrape_interval: 60s
+        - job_name: adguard
+          static_configs:
+          - targets:
+              - adguard.mcducklabs.com:3001
+            labels:
+              job_name: adguard
+          scrape_interval: 60s
+          scheme: https
+          tls_config:
+            insecure_skip_verify: true
 processors:
   batch:
     send_batch_size: 10000

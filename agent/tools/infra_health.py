@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 _METRIC_COLLECTORS = [
     ("adguard-exporter",   "adguard_queries_total",        90,  360,  "AdGuard DNS analytics (runs on adguard LXC)"),
     ("telegraf-snmp",      "interface_in_octets",          90,  360,  "Switch + pfSense SNMP via Telegraf"),
-    ("proxmox-exporter",   "pve_node_cpu_usage_ratio",     90,  360,  "Proxmox PVE metrics"),
     ("qnap-exporter",      "qnap_cpu_usage_percent",       90,  360,  "QNAP NAS metrics"),
     ("validator-metrics",  "beacon_active_validators",     90,  360,  "Nimbus beacon node metrics"),
 ]
