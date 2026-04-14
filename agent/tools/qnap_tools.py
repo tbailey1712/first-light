@@ -179,8 +179,17 @@ def query_qnap_health() -> str:
         info["used_pct"] = _pct(info.get("used_gb"), info.get("total_gb"))
 
     # --- ZFS/filesystem usage (SNMP hrStorageTable) ---
-    # ZFS19_DATA is the QVRPro NVR circular recording volume — always near 100%, expected.
-    nvr_mounts = {"/share/ZFS19_DATA"}
+    # NVR volumes are circular recording — always near 100% by design, never alert on them.
+    _NVR_MOUNTS = {"/share/ZFS19_DATA", "/share/ZFS21_DATA", "/share/ZFS530_DATA"}
+    # Friendly names for shares we care about
+    _SHARE_NAMES = {
+        "/share/ZFS22_DATA": "ssd_share",
+        "/share/ZFS19_DATA": "Backups",
+        "/share/ZFS20_DATA": "Shared",
+        "/share/ZFS3_DATA": "Multimedia",
+        "/share/external/DEV3502_1": "external",
+    }
+    nvr_mounts = _NVR_MOUNTS
     filesystems = {}
     for labels, val in m_snmp.get("qnap_filesystem_used_percent", []):
         mount = labels.get("mount", "unknown")
@@ -225,9 +234,12 @@ def query_qnap_health() -> str:
             alerts.append(f"Volume '{vol}' usage: {info['used_pct']}%")
     for mount, info in filesystems.items():
         if mount in nvr_mounts:
-            continue  # ZFS19_DATA is NVR circular recording — always full, expected
+            continue
+        friendly = _SHARE_NAMES.get(mount)
+        if not friendly:
+            continue  # Only report shares we've mapped
         if info.get("used_pct") and info["used_pct"] > 85:
-            alerts.append(f"Filesystem '{mount}' usage: {info['used_pct']}%")
+            alerts.append(f"Share '{friendly}' usage: {info['used_pct']}%")
     for temp_name, temp_val in temps.items():
         if temp_val > 65:
             alerts.append(f"High temperature {temp_name}: {temp_val}°C")
@@ -256,8 +268,16 @@ def query_qnap_health() -> str:
     if fans:
         result["fans_rpm"] = fans
     if filesystems:
-        result["filesystems"] = filesystems
-        result["filesystems_note"] = "/share/ZFS19_DATA is the NVR circular recording volume — near-full usage is expected and normal"
+        # Only include mapped shares with friendly names
+        friendly_fs = {}
+        for mount, info in filesystems.items():
+            if mount in _NVR_MOUNTS:
+                continue
+            name = _SHARE_NAMES.get(mount)
+            if name:
+                friendly_fs[name] = info
+        if friendly_fs:
+            result["filesystems"] = friendly_fs
     if api_error:
         result["api_exporter_error"] = api_error
     if snmp_error:
