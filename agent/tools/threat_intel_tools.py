@@ -57,7 +57,7 @@ def query_threat_intel_summary(hours: int = 24, min_score: int = 0) -> str:
             COUNT(*) as block_count,
             topK(1)(attributes_string['pfsense.dst_port']) as top_dst_port,
             topK(1)(attributes_string['pfsense.protocol']) as top_protocol
-        FROM signoz_logs.logs_v2
+        FROM signoz_logs.distributed_logs_v2
         WHERE toDateTime(timestamp / 1000000000) >= now() - INTERVAL {hours} HOUR
           AND resources_string['service.name'] = 'filterlog'
           AND attributes_string['pfsense.action'] = 'block'
@@ -84,7 +84,7 @@ def query_threat_intel_summary(hours: int = 24, min_score: int = 0) -> str:
             argMax(recommendation, enriched_at) as recommendation,
             max(enriched_at) as latest_enriched_at
         FROM threat_intel.enrichments
-        WHERE toDateTime(enriched_at) >= now() - INTERVAL 48 HOUR
+        WHERE toDateTime(enriched_at) >= now() - INTERVAL 7 DAY
         GROUP BY ip
     ) ti ON fw.src_ip = ti.ip
     WHERE ti.threat_score >= {min_score}
@@ -105,7 +105,7 @@ def query_threat_intel_summary(hours: int = 24, min_score: int = 0) -> str:
                 countIf(ti.ip != '') as enriched_ips
             FROM (
                 SELECT DISTINCT attributes_string['pfsense.src_ip'] as src_ip
-                FROM signoz_logs.logs_v2
+                FROM signoz_logs.distributed_logs_v2
                 WHERE toDateTime(timestamp / 1000000000) >= now() - INTERVAL {hours} HOUR
                   AND resources_string['service.name'] = 'filterlog'
                   AND attributes_string['pfsense.action'] = 'block'
@@ -222,7 +222,7 @@ def lookup_ip_threat_intel(ip_address: str) -> str:
         attributes_string['pfsense.interface'] as interface,
         COUNT(*) as count,
         MAX(toDateTime(timestamp / 1000000000)) as last_seen
-    FROM signoz_logs.logs_v2
+    FROM signoz_logs.distributed_logs_v2
     WHERE toDateTime(timestamp / 1000000000) >= now() - INTERVAL 24 HOUR
       AND resources_string['service.name'] = 'filterlog'
       AND attributes_string['pfsense.src_ip'] = {ip:String}
@@ -320,7 +320,7 @@ def query_threat_intel_coverage() -> str:
         SELECT
             attributes_string['pfsense.src_ip'] as src_ip,
             COUNT(*) as block_count
-        FROM signoz_logs.logs_v2
+        FROM signoz_logs.distributed_logs_v2
         WHERE toDateTime(timestamp / 1000000000) >= now() - INTERVAL 24 HOUR
           AND resources_string['service.name'] = 'filterlog'
           AND attributes_string['pfsense.action'] = 'block'
