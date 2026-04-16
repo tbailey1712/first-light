@@ -87,11 +87,14 @@ def _invoke_tool(tool_fn, args: dict | None = None):
 _SECTION_RE = re.compile(r"^===\s*(.+?)\s*===$")
 
 
-def _parse_tsv(text: str) -> list[dict] | dict:
+def _parse_tsv(text: str) -> list[list] | dict:
     """Parse ClickHouse tab-separated output into structured JSON.
 
+    ClickHouse default TabSeparated format has NO header row — each line is
+    tab-delimited values. We return rows as arrays with auto-typed values.
+
     Handles two formats:
-    1. Single table: header row + data rows (returns list of dicts)
+    1. Single table: rows of tab-separated values (returns list of lists)
     2. Multi-section with === label === separators (returns dict of section -> list)
     """
     if not text or text in ("No results found",):
@@ -122,27 +125,23 @@ def _parse_tsv(text: str) -> list[dict] | dict:
     return _parse_single_tsv(text)
 
 
-def _parse_single_tsv(text: str) -> list[dict]:
-    """Parse a single tab-separated table into a list of dicts."""
-    lines = [l for l in text.strip().split("\n") if l.strip()]
-    if len(lines) < 2:
-        return []
-    headers = lines[0].split("\t")
+def _parse_single_tsv(text: str) -> list[list]:
+    """Parse a single tab-separated table into a list of rows (each row is a list of typed values)."""
     rows = []
-    for line in lines[1:]:
-        values = line.split("\t")
-        row = {}
-        for i, h in enumerate(headers):
-            val = values[i] if i < len(values) else ""
+    for line in text.strip().split("\n"):
+        if not line.strip():
+            continue
+        values = []
+        for val in line.split("\t"):
             # Try numeric conversion
             try:
-                row[h] = int(val)
+                values.append(int(val))
             except ValueError:
                 try:
-                    row[h] = float(val)
+                    values.append(float(val))
                 except ValueError:
-                    row[h] = val
-        rows.append(row)
+                    values.append(val)
+        rows.append(values)
     return rows
 
 
