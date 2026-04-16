@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -39,6 +40,17 @@ _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(title="First Light UI", docs_url=None, redoc_url=None)
+
+# CORS for Dashy dashboard (port 4200)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://192.168.2.106:4200",
+        "http://docker.mcducklabs.com:4200",
+    ],
+    allow_methods=["GET"],
+    allow_headers=["Authorization"],
+)
 
 # Strong references to background tasks so they aren't GC'd mid-execution
 _background_tasks: set = set()
@@ -73,6 +85,13 @@ def _check_auth(request: Request) -> None:
 
     if not (secrets.compare_digest(req_user, username) and secrets.compare_digest(req_pass, password)):
         raise HTTPException(status_code=401, headers={"WWW-Authenticate": "Basic realm=\"First Light\""})
+
+
+# ── REST API v1 — dashboard widget endpoints ────────────────────────────────────
+
+from ui.api_v1 import router as api_v1_router  # noqa: E402
+
+app.include_router(api_v1_router, prefix="/api/v1", dependencies=[Depends(_check_auth)])
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────────

@@ -23,6 +23,7 @@ structlog>=24.0
 
 # Caching and State
 redis>=5.0
+cachetools>=5.3
 
 # Scheduling
 apscheduler>=3.10
