@@ -93,6 +93,7 @@ def _check_metric_staleness() -> list[dict]:
             toUnixTimestamp(toDateTime(max(unix_milli) / 1000)) AS last_ts
         FROM signoz_metrics.distributed_samples_v4
         WHERE metric_name IN ({placeholders})
+          AND unix_milli >= (toUnixTimestamp(now()) - 7200) * 1000
         GROUP BY metric_name
     """
     rows = _clickhouse_query(sql)
@@ -147,6 +148,7 @@ def _check_log_ingestion() -> dict:
         SELECT toUnixTimestamp(toDateTime(max(timestamp) / 1000000000)) AS last_ts
         FROM signoz_logs.distributed_logs_v2
         WHERE resources_string['host.name'] != ''
+          AND timestamp >= (toUnixTimestamp(now()) - 7200) * 1000000000
     """
     rows = _clickhouse_query(sql)
     now = int(time.time())
