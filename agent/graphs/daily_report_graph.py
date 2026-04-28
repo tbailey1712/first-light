@@ -269,16 +269,21 @@ def initialize(state: DailyReportState) -> dict:
         infra_health_raw = json.dumps({"overall": "unknown", "error": str(e)})
 
     # Load shared operational context (KNOWN_ISSUES.md + MONITOR.md) per domain
-    from agent.shared_context import load_shared_context
     shared_ctx = {}
-    baseline_summary = _format_baseline_context(baseline)
-    for domain in DOMAIN_AGENTS:
-        ctx = load_shared_context(domain)
-        if baseline_summary:
-            ctx = f"{ctx}\n\n{baseline_summary}" if ctx else baseline_summary
-        shared_ctx[domain] = ctx
-    shared_ctx["synthesis"] = load_shared_context()  # unfiltered for synthesis
-    logger.info("Shared context loaded for %d domains", len(shared_ctx))
+    try:
+        from agent.shared_context import load_shared_context
+        baseline_summary = _format_baseline_context(baseline)
+        for domain in DOMAIN_AGENTS:
+            ctx = load_shared_context(domain)
+            if baseline_summary:
+                ctx = f"{ctx}\n\n{baseline_summary}" if ctx else baseline_summary
+            shared_ctx[domain] = ctx
+        shared_ctx["synthesis"] = load_shared_context()  # unfiltered for synthesis
+        shared_ctx["correlation"] = load_shared_context()  # unfiltered for correlation
+        logger.info("Shared context loaded for %d domains", len(shared_ctx))
+    except Exception as e:
+        logger.error("Failed to load shared context: %s", e)
+        # Continue without shared context — agents still work, just without suppressions
 
     return {"prompts": prompts, "baseline": baseline, "infra_health": infra_health_raw, "shared_context": shared_ctx}
 
@@ -395,6 +400,12 @@ def correlate(state: DailyReportState) -> dict:
     correlation_prompt = state["prompts"].get("correlation", "")
     if not correlation_prompt:
         raise ValueError("Correlation agent requires Langfuse prompt 'first-light-correlation' with label=production")
+
+    # Prepend shared context (known issues/suppressions) so correlation
+    # doesn't re-flag IPs that are already suppressed at the domain level
+    shared_ctx = state.get("shared_context", {}).get("correlation", "")
+    if shared_ctx:
+        correlation_prompt = correlation_prompt + "\n\n" + shared_ctx
 
     ip_context_lines = "\n".join(
         f"  {ip}: seen in [{', '.join(ip_domain_context.get(ip, []))}]"
