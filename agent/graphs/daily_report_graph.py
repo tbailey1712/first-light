@@ -128,6 +128,7 @@ class DailyReportState(TypedDict):
     infra_health: str               # JSON from query_reporting_infra_health pre-flight check
     correlation_findings: str       # output of correlation pass
     final_report: Optional[str]
+    shared_context: dict[str, str]  # domain_name -> filtered context from KNOWN_ISSUES/MONITOR
     suspicious_items: list[SuspiciousItem]   # populated by synthesize Phase A
     investigation_findings: Optional[str]    # populated by investigate node
 
@@ -267,7 +268,19 @@ def initialize(state: DailyReportState) -> dict:
         logger.error("Infra health check failed: %s", e)
         infra_health_raw = json.dumps({"overall": "unknown", "error": str(e)})
 
-    return {"prompts": prompts, "baseline": baseline, "infra_health": infra_health_raw}
+    # Load shared operational context (KNOWN_ISSUES.md + MONITOR.md) per domain
+    from agent.shared_context import load_shared_context
+    shared_ctx = {}
+    baseline_summary = _format_baseline_context(baseline)
+    for domain in DOMAIN_AGENTS:
+        ctx = load_shared_context(domain)
+        if baseline_summary:
+            ctx = f"{ctx}\n\n{baseline_summary}" if ctx else baseline_summary
+        shared_ctx[domain] = ctx
+    shared_ctx["synthesis"] = load_shared_context()  # unfiltered for synthesis
+    logger.info("Shared context loaded for %d domains", len(shared_ctx))
+
+    return {"prompts": prompts, "baseline": baseline, "infra_health": infra_health_raw, "shared_context": shared_ctx}
 
 
 def run_domains_parallel(state: DailyReportState) -> dict:
@@ -276,12 +289,15 @@ def run_domains_parallel(state: DailyReportState) -> dict:
     session_id = state["session_id"]
     prompts = state["prompts"]
 
+    shared_context = state.get("shared_context", {})
+
     def _run_one(domain_name: str) -> dict:
         prompt_override = prompts.get(domain_name, "")
+        context = shared_context.get(domain_name, "")
         fn = DOMAIN_AGENTS[domain_name]
         logger.info("Starting domain agent: %s", domain_name)
         try:
-            raw = fn(hours, prompt_override=prompt_override, session_id=session_id)
+            raw = fn(hours, prompt_override=prompt_override, session_id=session_id, shared_context=context)
         except Exception as e:
             logger.error(f"Domain '{domain_name}' failed: {e}", exc_info=True)
             raw = f"**{domain_name}**: Agent failed — {e}"
@@ -880,6 +896,7 @@ def generate_daily_report(hours: int = 24) -> str:
         "domain_results": [],
         "prompts": {},
         "baseline": {},
+        "shared_context": {},
         "correlation_findings": "",
         "final_report": None,
         "suspicious_items": [],

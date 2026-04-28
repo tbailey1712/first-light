@@ -32,6 +32,7 @@ def run_firewall_threat_agent(
     hours: int = 24,
     prompt_override: str = "",
     session_id: Optional[str] = None,
+    shared_context: str = "",
 ) -> str:
     """Run the firewall + threat intelligence domain agent."""
     from agent.tools.logs import query_security_summary, query_auth_events, query_outbound_blocks
@@ -53,6 +54,8 @@ def run_firewall_threat_agent(
     if not prompt_override:
         raise ValueError("firewall_threat agent requires a prompt — ensure Langfuse prompt 'first-light-firewall-threat' exists with label=production")
     system = prompt_override.replace("{hours}", str(hours))
+    if shared_context:
+        system = shared_context + "\n\n" + system
     user = FIREWALL_THREAT_USER.format(hours=hours)
 
     logger.info("Running firewall_threat_agent...")
@@ -74,6 +77,7 @@ def run_dns_agent(
     hours: int = 24,
     prompt_override: str = "",
     session_id: Optional[str] = None,
+    shared_context: str = "",
 ) -> str:
     """Run the DNS security domain agent."""
     from agent.tools.metrics import (
@@ -111,6 +115,8 @@ def run_dns_agent(
     if not prompt_override:
         raise ValueError("dns agent requires a prompt — ensure Langfuse prompt 'first-light-dns' exists with label=production")
     system = prompt_override.replace("{hours}", str(hours))
+    if shared_context:
+        system = shared_context + "\n\n" + system
     user = DNS_USER.format(hours=hours)
 
     logger.info("Running dns_agent...")
@@ -132,6 +138,7 @@ def run_network_flow_agent(
     hours: int = 24,
     prompt_override: str = "",
     session_id: Optional[str] = None,
+    shared_context: str = "",
 ) -> str:
     """Run the network flow (ntopng) domain agent."""
     from agent.tools.ntopng import (
@@ -186,6 +193,8 @@ def run_network_flow_agent(
     if not prompt_override:
         raise ValueError("network_flow agent requires a prompt — ensure Langfuse prompt 'first-light-network-flow' exists with label=production")
     system = prompt_override.replace("{hours}", str(hours))
+    if shared_context:
+        system = shared_context + "\n\n" + system
     user = NETWORK_FLOW_USER.format(hours=hours)
 
     logger.info("Running network_flow_agent...")
@@ -207,6 +216,7 @@ def run_infrastructure_agent(
     hours: int = 24,
     prompt_override: str = "",
     session_id: Optional[str] = None,
+    shared_context: str = "",
 ) -> str:
     """Run the infrastructure health domain agent."""
     from agent.tools.logs import query_infrastructure_events
@@ -242,6 +252,8 @@ def run_infrastructure_agent(
     if not prompt_override:
         raise ValueError("infrastructure agent requires a prompt — ensure Langfuse prompt 'first-light-infrastructure' exists with label=production")
     system = prompt_override.replace("{hours}", str(hours))
+    if shared_context:
+        system = shared_context + "\n\n" + system
     user = INFRASTRUCTURE_USER.format(hours=hours)
 
     logger.info("Running infrastructure_agent...")
@@ -263,6 +275,7 @@ def run_wireless_agent(
     hours: int = 24,
     prompt_override: str = "",
     session_id: Optional[str] = None,
+    shared_context: str = "",
 ) -> str:
     """Run the wireless health domain agent."""
     from agent.tools.logs import query_wireless_health
@@ -272,6 +285,8 @@ def run_wireless_agent(
     if not prompt_override:
         raise ValueError("wireless agent requires a prompt — ensure Langfuse prompt 'first-light-wireless' exists with label=production")
     system = prompt_override.replace("{hours}", str(hours))
+    if shared_context:
+        system = shared_context + "\n\n" + system
     user = WIRELESS_USER.format(hours=hours)
 
     logger.info("Running wireless_agent...")
@@ -293,6 +308,7 @@ def run_validator_agent(
     hours: int = 24,
     prompt_override: str = "",
     session_id: Optional[str] = None,
+    shared_context: str = "",
 ) -> str:
     """Run the Ethereum validator domain agent."""
     from agent.tools.validator import query_validator_health
@@ -301,6 +317,8 @@ def run_validator_agent(
     if not prompt_override:
         raise ValueError("validator agent requires a prompt — ensure Langfuse prompt 'first-light-validator' exists with label=production")
     system = prompt_override.replace("{hours}", str(hours))
+    if shared_context:
+        system = shared_context + "\n\n" + system
     user = VALIDATOR_USER.format(hours=hours)
 
     logger.info("Running validator_agent...")
@@ -322,6 +340,7 @@ def run_cloudflare_agent(
     hours: int = 24,
     prompt_override: str = "",
     session_id: Optional[str] = None,
+    shared_context: str = "",
 ) -> str:
     """Run the Cloudflare edge security domain agent."""
     from agent.tools.cloudflare_tools import (
@@ -340,6 +359,8 @@ def run_cloudflare_agent(
     if not prompt_override:
         raise ValueError("cloudflare agent requires a prompt — ensure Langfuse prompt 'first-light-cloudflare' exists with label=production")
     system = prompt_override.replace("{hours}", str(hours))
+    if shared_context:
+        system = shared_context + "\n\n" + system
     user = CLOUDFLARE_USER.format(hours=hours)
 
     logger.info("Running cloudflare_agent...")
@@ -361,6 +382,7 @@ def run_home_automation_agent(
     hours: int = 24,
     prompt_override: str = "",
     session_id: Optional[str] = None,
+    shared_context: str = "",
 ) -> str:
     """Run the home automation security domain agent."""
     from agent.tools.ha_tools import (
@@ -379,6 +401,8 @@ def run_home_automation_agent(
     if not prompt_override:
         raise ValueError("home_automation agent requires a prompt — ensure Langfuse prompt 'first-light-home-automation' exists with label=production")
     system = prompt_override.replace("{hours}", str(hours))
+    if shared_context:
+        system = shared_context + "\n\n" + system
     user = HOME_AUTOMATION_USER.format(hours=hours)
 
     logger.info("Running home_automation_agent...")
