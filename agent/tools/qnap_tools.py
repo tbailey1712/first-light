@@ -116,9 +116,17 @@ def query_qnap_health() -> str:
     mem_free = _first(m_snmp, "qnap_memory_free_bytes") or _first(m_api, "qnap_memory_free_bytes")
     mem_pct = _pct(mem_used, mem_total)
     uptime_days = None
-    uptime_s = _first(m_snmp, "qnap_uptime_seconds") or _first(m_api, "qnap_uptime_seconds")
-    if uptime_s:
+    # Both exporters report qnap_uptime_seconds but both are currently unreliable:
+    # SNMP returns 0.0 (OID parse bug), API returns exporter process uptime not NAS uptime.
+    # Pick the larger value (more likely to be real) and ignore values under 600s (10 min)
+    # which are almost certainly exporter restarts, not NAS reboots.
+    uptime_snmp = _first(m_snmp, "qnap_uptime_seconds") or 0
+    uptime_api = _first(m_api, "qnap_uptime_seconds") or 0
+    uptime_s = max(uptime_snmp, uptime_api)
+    if uptime_s > 600:
         uptime_days = round(uptime_s / 86400, 1)
+    else:
+        uptime_days = None  # unreliable — don't report
 
     # --- Temperatures ---
     # SNMP exporter: qnap_system_temp_celsius, qnap_disk_temp_celsius{disk, model}

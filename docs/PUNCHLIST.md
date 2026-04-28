@@ -157,6 +157,7 @@ Synthesis agent reads/writes facts to Redis across daily runs — repeat IPs, re
 
 ## Deferred (Explicitly Post-V1)
 
+- **Switch Port 5 link flaps** — backyard camera EoC path. Chronic physical-layer failure (sub-second bounce pairs, 68+ flaps/day). Needs: inspect coax/F-connectors at both ends, swap EoC adapter, check PoE injector under load. Causes surveillance gaps on 192.168.3.15.
 - **BookStack auto-documentation** — `scripts/generate_bookstack_docs.py` via BookStack API at bookstack.mcducklabs.com. Needs `BOOKSTACK_TOKEN_ID/SECRET` in `.env`.
 - **MCP servers per data source** — expose tools to external LLMs
 - **Agentic response actions** — block IPs on pfSense, quarantine devices to restricted VLAN
