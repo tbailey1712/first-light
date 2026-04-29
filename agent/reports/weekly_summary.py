@@ -139,3 +139,57 @@ async def generate_weekly_summary_async(days: int = 7) -> dict:
     return await asyncio.get_running_loop().run_in_executor(
         None, generate_weekly_summary, days
     )
+
+
+# ── Data-driven weekly report (LangGraph pipeline) ───────────────────────────
+
+def get_weekly_report_path(date_str: str) -> Path:
+    """Get file path for a data-driven weekly report."""
+    year, month, _ = date_str.split("-")
+    report_dir = WEEKLY_REPORTS_DIR / year / month
+    report_dir.mkdir(parents=True, exist_ok=True)
+    return report_dir / f"{date_str}_weekly_report.md"
+
+
+async def generate_weekly_report(hours: int = 168) -> dict:
+    """
+    Generate a data-driven weekly trend report using the LangGraph pipeline.
+
+    Queries ClickHouse/APIs directly with 7-day windows, then synthesizes
+    a trend-focused narrative. Distinct from generate_weekly_summary() which
+    is a text-only meta-analysis of daily report markdown.
+
+    Returns:
+        Dict with report_id, date, report_type, report_path, report_text
+    """
+    from agent.graphs.weekly_report_graph import generate_weekly_report as _run_graph
+
+    report_id = str(uuid.uuid4())
+    report_date = datetime.now().strftime("%Y-%m-%d")
+
+    logger.info("Generating weekly trend report %s for %s", report_id, report_date)
+
+    report_body = await asyncio.get_running_loop().run_in_executor(
+        None, _run_graph, hours
+    )
+
+    header = (
+        f"# First Light — Weekly Trend Report\n"
+        f"**Week ending:** {report_date}  \n"
+        f"**Report ID:** {report_id}  \n"
+        f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \n"
+        f"\n---\n\n"
+    )
+    full_report = header + report_body
+
+    out_path = get_weekly_report_path(report_date)
+    out_path.write_text(full_report)
+    logger.info("Weekly trend report saved: %s", out_path)
+
+    return {
+        "report_id": report_id,
+        "date": report_date,
+        "report_type": "weekly",
+        "report_path": str(out_path),
+        "report_text": full_report,
+    }

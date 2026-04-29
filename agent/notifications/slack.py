@@ -163,9 +163,13 @@ class SlackWebhookChannel:
             return False
 
     async def send_report(self, report: dict) -> None:
-        """Send the daily report as formatted Block Kit blocks."""
+        """Send a report as formatted Block Kit blocks."""
         report_text = report.get("report_text", "")
-        header = f"First Light Daily Report — {report.get('date', 'N/A')}"
+        report_type = report.get("report_type", "daily")
+        if report_type == "weekly":
+            header = f"First Light Weekly Trend Report — {report.get('date', 'N/A')}"
+        else:
+            header = f"First Light Daily Report — {report.get('date', 'N/A')}"
 
         body = _md_to_mrkdwn(report_text)
         blocks = _build_blocks(header, body)
@@ -253,9 +257,13 @@ class SlackBotChannel:
             return None
 
     async def send_report(self, report: dict) -> None:
-        """Post the daily report to SLACK_REPORTS_CHANNEL as Block Kit blocks."""
+        """Post a report to SLACK_REPORTS_CHANNEL as Block Kit blocks."""
         report_text = report.get("report_text", "")
-        header = f"First Light Daily Report — {report.get('date', 'N/A')}"
+        report_type = report.get("report_type", "daily")
+        if report_type == "weekly":
+            header = f"First Light Weekly Trend Report — {report.get('date', 'N/A')}"
+        else:
+            header = f"First Light Daily Report — {report.get('date', 'N/A')}"
         body = _md_to_mrkdwn(report_text)
         blocks = _build_blocks(header, body)
 

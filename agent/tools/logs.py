@@ -20,13 +20,12 @@ def query_security_summary(hours: int = 1) -> str:
     """Get security summary showing threats, blocks, and attacks.
 
     Args:
-        hours: Lookback period in hours (default: 1, max: 24)
+        hours: Lookback period in hours (default: 1, max: 168)
 
     Returns:
         JSON with summary stats + top threats with sample logs
     """
-    # Limit hours to prevent excessive data
-    hours = min(hours, 24)
+    hours = min(hours, 168)
 
     # Query pfSense firewall blocks
     pfsense_query = f"""
@@ -123,12 +122,12 @@ def query_wireless_health(hours: int = 6) -> str:
     set by the OTel transform/unifi processor.
 
     Args:
-        hours: Lookback period in hours (default: 6, max: 48)
+        hours: Lookback period in hours (default: 6, max: 168)
 
     Returns:
         JSON with event counts per type per AP, notable events, and samples
     """
-    hours = min(hours, 48)
+    hours = min(hours, 168)
 
     # Security-relevant and notable wireless events by type
     event_query = f"""
@@ -258,12 +257,12 @@ def query_infrastructure_events(hours: int = 24) -> str:
     """Get infrastructure health events (Docker, HA, Proxmox).
 
     Args:
-        hours: Lookback period in hours (default: 24)
+        hours: Lookback period in hours (default: 24, max: 168)
 
     Returns:
         JSON with container health, HA errors, VM operations
     """
-    hours = min(hours, 24)
+    hours = min(hours, 168)
 
     # Docker health check failures
     docker_query = f"""
@@ -564,13 +563,13 @@ def query_outbound_blocks(hours: int = 24) -> str:
     - Infected and attempting to reach known bad IPs
 
     Args:
-        hours: Lookback period in hours (default: 24)
+        hours: Lookback period in hours (default: 24, max: 168)
 
     Returns:
         JSON with top internal IPs that triggered outbound blocks, their destination
         IPs/ports, and block counts.
     """
-    hours = min(hours, 48)
+    hours = min(hours, 168)
 
     query = f"""
     SELECT

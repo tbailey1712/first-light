@@ -28,6 +28,8 @@ logger = logging.getLogger("scheduler")
 
 REPORT_LOCK_KEY = "report:lock:daily"
 REPORT_LOCK_TTL = 600  # 10 minutes
+WEEKLY_LOCK_KEY = "report:lock:weekly"
+WEEKLY_LOCK_TTL = 600
 
 # Keep private aliases for backward compatibility within this module
 _REPORT_LOCK_KEY = REPORT_LOCK_KEY
@@ -75,6 +77,35 @@ async def run_daily_report():
         if r is not None:
             try:
                 r.delete(_REPORT_LOCK_KEY)
+            except Exception:
+                pass
+
+
+async def run_weekly_report():
+    """Run the weekly trend report, guarded by a Redis distributed lock."""
+    r = await asyncio.get_event_loop().run_in_executor(None, _get_redis_client)
+    if r is not None:
+        acquired = r.set(WEEKLY_LOCK_KEY, "1", nx=True, ex=WEEKLY_LOCK_TTL)
+        if not acquired:
+            logger.warning("Weekly report already running (Redis lock held) — skipping")
+            return
+    else:
+        r = None
+
+    logger.info("Starting weekly trend report...")
+    try:
+        from agent.reports.weekly_summary import generate_weekly_report
+        from agent.notifications import broadcast_report
+        report = await generate_weekly_report()
+        await broadcast_report(report)
+        logger.info("Weekly report complete: %s", report["report_path"])
+    except Exception as e:
+        logger.error("Weekly report failed: %s", e, exc_info=True)
+        await _notify_failure("Weekly report", str(e))
+    finally:
+        if r is not None:
+            try:
+                r.delete(WEEKLY_LOCK_KEY)
             except Exception:
                 pass
 
@@ -224,6 +255,23 @@ async def _run():
         misfire_grace_time=300,
         next_run_time=datetime.now(),  # Run immediately on startup too
     )
+    # Weekly trend report — default Sunday 09:00
+    weekly_day = int(os.getenv("WEEKLY_REPORT_DAY", "6"))  # 0=Mon..6=Sun
+    weekly_hour = int(os.getenv("WEEKLY_REPORT_HOUR", "9"))
+    weekly_minute = int(os.getenv("WEEKLY_REPORT_MINUTE", "0"))
+    scheduler.add_job(
+        run_weekly_report,
+        trigger=CronTrigger(
+            day_of_week=weekly_day, hour=weekly_hour,
+            minute=weekly_minute, timezone=tz,
+        ),
+        id="weekly_report",
+        name="Weekly Trend Report",
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+    logger.info("Weekly report scheduled: day=%d at %02d:%02d %s", weekly_day, weekly_hour, weekly_minute, tz)
+
     eval_hour = int(os.getenv("EVAL_HOUR", "10"))
     eval_minute = int(os.getenv("EVAL_MINUTE", "0"))
     if os.getenv("EVAL_ENABLED", "false").lower() == "true":
