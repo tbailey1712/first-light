@@ -351,33 +351,28 @@ def query_cloudflare_zone_analytics(hours: int = 24) -> str:
 
     from_ts, to_ts = _time_range(hours)
 
-    # Two separate aliases with distinct dimension sets — prevents cross-product
-    # double-counting that occurs when both dimensions are mixed in one query.
+    # Use httpRequests1hGroups — stable endpoint with nested aggregates.
+    # CF removed groupBy from httpRequestsAdaptiveGroups (April 2026).
     query = """
 query ZoneAnalytics($zoneTag: String!, $from: Time!, $to: Time!) {
   viewer {
     zones(filter: {zoneTag: $zoneTag}) {
-      byStatus: httpRequestsAdaptiveGroups(
-        limit: 50
+      httpRequests1hGroups(
+        limit: 100
         filter: { datetime_geq: $from, datetime_leq: $to }
-        orderBy: [count_DESC]
-        groupBy: [edgeResponseStatus, cacheStatus]
+        orderBy: [datetime_ASC]
       ) {
-        count
-        dimensions {
-          edgeResponseStatus
-          cacheStatus
-        }
-      }
-      byCountry: httpRequestsAdaptiveGroups(
-        limit: 20
-        filter: { datetime_geq: $from, datetime_leq: $to }
-        orderBy: [count_DESC]
-        groupBy: [clientCountryName]
-      ) {
-        count
-        dimensions {
-          clientCountryName
+        sum {
+          requests
+          cachedRequests
+          responseStatusMap {
+            edgeResponseStatus
+            requests
+          }
+          countryMap {
+            clientCountryName
+            requests
+          }
         }
       }
     }
@@ -403,29 +398,26 @@ query ZoneAnalytics($zoneTag: String!, $from: Time!, $to: Time!) {
 
     zone = zones_data[0]
 
-    # Request totals and status distribution
+    # Aggregate across hourly buckets
     total_requests = 0
+    cached_requests = 0
     by_status: dict = {}
-    by_cache: dict = {}
-
-    for group in zone.get("byStatus", []):
-        cnt = group["count"]
-        total_requests += cnt
-        status = group["dimensions"].get("edgeResponseStatus", 0)
-        cache = group["dimensions"].get("cacheStatus", "unknown")
-        status_class = f"{status // 100}xx" if status else "unknown"
-        by_status[status_class] = by_status.get(status_class, 0) + cnt
-        by_cache[cache] = by_cache.get(cache, 0) + cnt
-
-    # Top countries
     country_counts: dict = {}
-    for group in zone.get("byCountry", []):
-        country = group["dimensions"].get("clientCountryName", "unknown")
-        country_counts[country] = country_counts.get(country, 0) + group["count"]
+
+    for group in zone.get("httpRequests1hGroups", []):
+        s = group.get("sum", {})
+        total_requests += s.get("requests", 0)
+        cached_requests += s.get("cachedRequests", 0)
+        for entry in s.get("responseStatusMap", []):
+            status = entry.get("edgeResponseStatus", 0)
+            status_class = f"{status // 100}xx" if status else "unknown"
+            by_status[status_class] = by_status.get(status_class, 0) + entry.get("requests", 0)
+        for entry in s.get("countryMap", []):
+            country = entry.get("clientCountryName", "unknown")
+            country_counts[country] = country_counts.get(country, 0) + entry.get("requests", 0)
 
     top_countries = sorted(country_counts.items(), key=lambda x: x[1], reverse=True)[:10]
 
-    # Flag anomalous status codes
     error_requests = by_status.get("4xx", 0) + by_status.get("5xx", 0)
     error_rate = round(error_requests / total_requests * 100, 1) if total_requests else 0
 
@@ -435,7 +427,8 @@ query ZoneAnalytics($zoneTag: String!, $from: Time!, $to: Time!) {
         "by_status_class": {k: v for k, v in sorted(by_status.items(), key=lambda x: x[1], reverse=True)},
         "error_requests": error_requests,
         "error_rate_pct": error_rate,
-        "cache_by_status": by_cache,
+        "cached_requests": cached_requests,
+        "cache_hit_pct": round(cached_requests / total_requests * 100, 1) if total_requests else 0,
         "top_countries": [{"country": c, "count": n} for c, n in top_countries],
     }, indent=2)
 

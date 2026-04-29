@@ -101,7 +101,7 @@ def query_threat_intel_summary(hours: int = 24, min_score: int = 0) -> str:
             # Also check how many IPs are enriched vs not
             coverage_query = f"""
             SELECT
-                COUNT(DISTINCT attributes_string['pfsense.src_ip']) as total_blocked_ips,
+                COUNT(DISTINCT fw.src_ip) as total_blocked_ips,
                 countIf(ti.ip != '') as enriched_ips
             FROM (
                 SELECT DISTINCT attributes_string['pfsense.src_ip'] as src_ip

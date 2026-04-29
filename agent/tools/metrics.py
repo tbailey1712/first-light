@@ -39,7 +39,8 @@ def query_adguard_top_clients(hours: int = 24, limit: int = 20) -> str:
             simpleJSONExtractString(ts.labels, 'traffic_type') as traffic_type,
             round(avg(s.value), 0) as queries_24h
         FROM signoz_metrics.samples_v4 s
-        JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+        JOIN signoz_metrics.time_series_v4 ts
+          ON s.fingerprint = ts.fingerprint AND ts.metric_name = 'adguard_client_queries_24h'
         WHERE s.metric_name = 'adguard_client_queries_24h'
           AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
         GROUP BY client, ip, traffic_type
@@ -71,7 +72,8 @@ def query_adguard_block_rates(
             simpleJSONExtractString(ts.labels, 'client_ip') as ip,
             round(avg(s.value), 2) as avg_block_rate_pct
         FROM signoz_metrics.samples_v4 s
-        JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+        JOIN signoz_metrics.time_series_v4 ts
+          ON s.fingerprint = ts.fingerprint AND ts.metric_name = 'adguard_client_block_rate'
         WHERE s.metric_name = 'adguard_client_block_rate'
           AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
         GROUP BY client, ip
@@ -105,7 +107,8 @@ def query_adguard_high_risk_clients(
             simpleJSONExtractString(ts.labels, 'client_ip') as ip,
             round(avg(s.value), 2) as risk_score
         FROM signoz_metrics.samples_v4 s
-        JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+        JOIN signoz_metrics.time_series_v4 ts
+          ON s.fingerprint = ts.fingerprint AND ts.metric_name = 'adguard_client_risk_score'
         WHERE s.metric_name = 'adguard_client_risk_score'
           AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
         GROUP BY client, ip
@@ -136,7 +139,8 @@ def query_adguard_traffic_by_type(hours: int = 24) -> str:
             round(sum(s.value), 0) as total_queries,
             count(DISTINCT simpleJSONExtractString(ts.labels, 'client_ip')) as unique_clients
         FROM signoz_metrics.samples_v4 s
-        JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+        JOIN signoz_metrics.time_series_v4 ts
+          ON s.fingerprint = ts.fingerprint AND ts.metric_name = 'adguard_client_queries_24h'
         WHERE s.metric_name = 'adguard_client_queries_24h'
           AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
         GROUP BY traffic_type
@@ -184,7 +188,8 @@ def query_adguard_network_summary(hours: int = 24) -> str:
                 simpleJSONExtractString(ts.labels, 'severity') as severity,
                 round(avg(s.value), 0) as unacknowledged_count
             FROM signoz_metrics.samples_v4 s
-            JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+            JOIN signoz_metrics.time_series_v4 ts
+              ON s.fingerprint = ts.fingerprint AND ts.metric_name = 'adguard_anomalies_unacknowledged'
             WHERE s.metric_name = 'adguard_anomalies_unacknowledged'
               AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
             GROUP BY severity
@@ -228,7 +233,8 @@ def query_adguard_dhcp_fingerprints(hours: int = 24) -> str:
                 simpleJSONExtractString(ts.labels, 'client_name') as client_name,
                 round(avg(s.value), 0) as queries_24h
             FROM signoz_metrics.samples_v4 s
-            JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+            JOIN signoz_metrics.time_series_v4 ts
+              ON s.fingerprint = ts.fingerprint AND ts.metric_name = 'adguard_dhcp_device_queries_24h'
             WHERE s.metric_name = 'adguard_dhcp_device_queries_24h'
               AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
             GROUP BY client_ip, client_name
@@ -241,7 +247,8 @@ def query_adguard_dhcp_fingerprints(hours: int = 24) -> str:
                 simpleJSONExtractString(ts.labels, 'base_domain') as base_domain,
                 round(avg(s.value), 0) as query_count
             FROM signoz_metrics.samples_v4 s
-            JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+            JOIN signoz_metrics.time_series_v4 ts
+              ON s.fingerprint = ts.fingerprint AND ts.metric_name = 'adguard_dhcp_device_top_domain_queries_24h'
             WHERE s.metric_name = 'adguard_dhcp_device_top_domain_queries_24h'
               AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
             GROUP BY client_ip, rank, base_domain
@@ -253,7 +260,8 @@ def query_adguard_dhcp_fingerprints(hours: int = 24) -> str:
                 simpleJSONExtractString(ts.labels, 'client_ip') as client_ip,
                 round(avg(s.value), 0) as unique_domains
             FROM signoz_metrics.samples_v4 s
-            JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+            JOIN signoz_metrics.time_series_v4 ts
+              ON s.fingerprint = ts.fingerprint AND ts.metric_name = 'adguard_dhcp_device_unique_domains_24h'
             WHERE s.metric_name = 'adguard_dhcp_device_unique_domains_24h'
               AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
             GROUP BY client_ip
@@ -295,7 +303,8 @@ def query_adguard_threat_signals(hours: int = 24) -> str:
                 simpleJSONExtractString(ts.labels, 'beaconing_domain') as domain,
                 round(avg(s.value), 4) as beaconing_score
             FROM signoz_metrics.samples_v4 s
-            JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+            JOIN signoz_metrics.time_series_v4 ts
+              ON s.fingerprint = ts.fingerprint AND ts.metric_name = 'adguard_client_beaconing_score'
             WHERE s.metric_name = 'adguard_client_beaconing_score'
               AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
             GROUP BY client_ip, client_name, domain
@@ -308,7 +317,8 @@ def query_adguard_threat_signals(hours: int = 24) -> str:
                 simpleJSONExtractString(ts.labels, 'client_name') as client_name,
                 round(avg(s.value), 4) as txt_ratio
             FROM signoz_metrics.samples_v4 s
-            JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+            JOIN signoz_metrics.time_series_v4 ts
+              ON s.fingerprint = ts.fingerprint AND ts.metric_name = 'adguard_client_txt_query_ratio_24h'
             WHERE s.metric_name = 'adguard_client_txt_query_ratio_24h'
               AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
             GROUP BY client_ip, client_name
@@ -320,7 +330,8 @@ def query_adguard_threat_signals(hours: int = 24) -> str:
                 simpleJSONExtractString(ts.labels, 'severity') as severity,
                 round(avg(s.value), 0) as count
             FROM signoz_metrics.samples_v4 s
-            JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+            JOIN signoz_metrics.time_series_v4 ts
+              ON s.fingerprint = ts.fingerprint AND ts.metric_name = 'adguard_anomalies_unacknowledged'
             WHERE s.metric_name = 'adguard_anomalies_unacknowledged'
               AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
             GROUP BY severity
@@ -333,7 +344,8 @@ def query_adguard_threat_signals(hours: int = 24) -> str:
                 simpleJSONExtractString(ts.labels, 'severity') as severity,
                 round(avg(s.value), 0) as count
             FROM signoz_metrics.samples_v4 s
-            JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+            JOIN signoz_metrics.time_series_v4 ts
+              ON s.fingerprint = ts.fingerprint AND ts.metric_name = 'adguard_client_anomaly_count_24h'
             WHERE s.metric_name = 'adguard_client_anomaly_count_24h'
               AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
             GROUP BY client_ip, anomaly_type, severity
@@ -386,7 +398,8 @@ def query_adguard_blocked_domains(
             simpleJSONExtractString(ts.labels, 'traffic_type') as traffic_type,
             round(avg(s.value), 0) as blocks_24h
         FROM signoz_metrics.samples_v4 s
-        JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+        JOIN signoz_metrics.time_series_v4 ts
+          ON s.fingerprint = ts.fingerprint AND ts.metric_name = 'adguard_client_blocks_24h'
         WHERE s.metric_name = 'adguard_client_blocks_24h'
           AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
           AND s.value > 0
@@ -424,7 +437,8 @@ def query_adguard_new_devices(hours: int = 24) -> str:
                 simpleJSONExtractString(ts.labels, 'client_name') as client_name,
                 round(avg(s.value), 0) as first_seen_ts
             FROM signoz_metrics.samples_v4 s
-            JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+            JOIN signoz_metrics.time_series_v4 ts
+              ON s.fingerprint = ts.fingerprint AND ts.metric_name = 'adguard_new_device_info'
             WHERE s.metric_name = 'adguard_new_device_info'
               AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
             GROUP BY client_ip, client_name
@@ -457,7 +471,8 @@ def query_adguard_blocklist_attribution(hours: int = 24) -> str:
             simpleJSONExtractString(ts.labels, 'blocklist_name') as blocklist_name,
             round(avg(s.value), 0) as blocks_24h
         FROM signoz_metrics.samples_v4 s
-        JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+        JOIN signoz_metrics.time_series_v4 ts
+          ON s.fingerprint = ts.fingerprint AND ts.metric_name = 'adguard_blocklist_blocks_24h'
         WHERE s.metric_name = 'adguard_blocklist_blocks_24h'
           AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
         GROUP BY blocklist_name
@@ -500,7 +515,8 @@ def query_adguard_per_client_blocked_domains(
             simpleJSONExtractString(ts.labels, 'blocked_domain') as blocked_domain,
             round(avg(s.value), 0) as blocks_24h
         FROM signoz_metrics.samples_v4 s
-        JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+        JOIN signoz_metrics.time_series_v4 ts
+          ON s.fingerprint = ts.fingerprint AND ts.metric_name = 'adguard_client_top_blocked_domain_queries_24h'
         WHERE s.metric_name = 'adguard_client_top_blocked_domain_queries_24h'
           AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
         GROUP BY client_ip, client_name, blocked_domain
@@ -544,7 +560,8 @@ def query_adguard_client_new_domains(
             simpleJSONExtractString(ts.labels, 'client_name') as client_name,
             round(avg(s.value), 0) as new_domains_24h
         FROM signoz_metrics.samples_v4 s
-        JOIN signoz_metrics.time_series_v4 ts ON s.fingerprint = ts.fingerprint
+        JOIN signoz_metrics.time_series_v4 ts
+          ON s.fingerprint = ts.fingerprint AND ts.metric_name = 'adguard_client_new_domains_24h'
         WHERE s.metric_name = 'adguard_client_new_domains_24h'
           AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
         GROUP BY client_ip, client_name
