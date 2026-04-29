@@ -52,6 +52,7 @@ class WeeklyReportState(TypedDict):
     baseline: dict[str, Any]        # last week's metrics from Redis
     infra_health: str               # pre-flight check JSON
     trend_data: dict[str, dict]     # collector_name -> structured results
+    daily_reports: str              # concatenated daily report text for continuity tracking
     final_report: Optional[str]
 
 
@@ -139,7 +140,25 @@ def initialize(state: WeeklyReportState) -> dict:
         logger.error("Infra health check failed: %s", e)
         infra_health_raw = json.dumps({"overall": "unknown", "error": str(e)})
 
-    return {"prompt": prompt, "baseline": baseline, "infra_health": infra_health_raw}
+    # Load daily report files for continuity tracking — lets synthesis spot
+    # recurring issues, unresolved action items, and patterns across the week
+    daily_reports_text = ""
+    try:
+        from agent.reports.weekly_summary import _load_last_n_daily_reports
+        daily = _load_last_n_daily_reports(7)
+        if daily:
+            parts = []
+            for date_str, content in daily:
+                parts.append(f"=== DAILY REPORT — {date_str} ===\n{content}")
+            daily_reports_text = "\n\n".join(parts)
+            logger.info("Loaded %d daily reports for weekly continuity tracking", len(daily))
+    except Exception as e:
+        logger.warning("Failed to load daily reports: %s", e)
+
+    return {
+        "prompt": prompt, "baseline": baseline,
+        "infra_health": infra_health_raw, "daily_reports": daily_reports_text,
+    }
 
 
 def collect_trends(state: WeeklyReportState) -> dict:
@@ -219,6 +238,20 @@ def synthesize(state: WeeklyReportState) -> dict:
             sections.append(f"Data collection failed: {data['error']}")
         else:
             sections.append(json.dumps(data, indent=2, default=str))
+        sections.append("\n---")
+
+    # Append daily reports for continuity tracking
+    daily_reports = state.get("daily_reports", "")
+    if daily_reports:
+        sections.append("\n## DAILY REPORTS (for continuity tracking)")
+        sections.append(
+            "Below are the daily reports from this week. Use them to identify:\n"
+            "- Recurring issues that appeared in multiple reports\n"
+            "- Action items that were flagged but never resolved\n"
+            "- Patterns or trends that daily anomaly detection noted\n"
+            "Call out anything that keeps coming back or is getting worse."
+        )
+        sections.append(daily_reports)
         sections.append("\n---")
 
     sections.append("\nWrite the final weekly trend report now.")
@@ -323,6 +356,7 @@ def generate_weekly_report(hours: int = 168) -> str:
         "baseline": {},
         "infra_health": "{}",
         "trend_data": {},
+        "daily_reports": "",
         "final_report": None,
     }
 
