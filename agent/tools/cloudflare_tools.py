@@ -360,7 +360,6 @@ query ZoneAnalytics($zoneTag: String!, $from: Time!, $to: Time!) {
       httpRequests1hGroups(
         limit: 100
         filter: { datetime_geq: $from, datetime_leq: $to }
-        orderBy: [datetime_ASC]
       ) {
         sum {
           requests
