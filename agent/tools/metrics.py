@@ -285,7 +285,7 @@ def query_adguard_threat_signals(hours: int = 24) -> str:
 
     Covers all active security signals from the AdGuard analytics exporter:
     - C2 beaconing scores per client/domain (>= 0.5 reported; 1.0 = high confidence)
-    - TXT query ratios per client (DNS tunneling indicator; > 0.3 = elevated; > 0.5 = suspicious)
+    - TXT query ratios per client (DNS tunneling indicator; Apple devices normally reach 0.5–1.2 due to iCloud Private Relay and push notification TXT lookups — only flag > 2.0 as elevated, > 3.0 as suspicious)
     - Unacknowledged anomalies by severity
     - Per-client anomaly counts by type
 
@@ -322,7 +322,7 @@ def query_adguard_threat_signals(hours: int = 24) -> str:
             WHERE s.metric_name = 'adguard_client_txt_query_ratio_24h'
               AND s.unix_milli > (toUnixTimestamp(now()) - {hours} * 3600) * 1000
             GROUP BY client_ip, client_name
-            HAVING txt_ratio > 0.15
+            HAVING txt_ratio > 1.5
             ORDER BY txt_ratio DESC
         """,
         "anomaly_counts_by_severity": f"""
