@@ -509,6 +509,12 @@ def synthesize(state: DailyReportState) -> dict:
     # ── Phase B: narrative synthesis ───────────────────────────────────────────
     synthesis_system = state["prompts"]["synthesis"]
 
+    # Inject shared context (KNOWN_ISSUES.md suppressions) so synthesis
+    # doesn't include items that domain agents should have suppressed
+    shared_ctx = state.get("shared_context", {}).get("synthesis", "")
+    if shared_ctx:
+        synthesis_system = synthesis_system + "\n\n" + shared_ctx
+
     baseline_context = _format_baseline_context(state.get("baseline", {}))
     if baseline_context:
         synthesis_system = synthesis_system + f"\n\n{baseline_context}"
@@ -944,7 +950,18 @@ def generate_daily_report(hours: int = 24) -> str:
         try:
             from langgraph.store.postgres import PostgresStore
             with PostgresStore.from_conn_string(
-                cfg.postgres_url, ttl={"default_ttl": 864_000}  # 10 days
+                cfg.postgres_url,
+                pool_config={
+                    "min_size": 1,
+                    "max_size": 3,
+                    "kwargs": {
+                        "keepalives": 1,
+                        "keepalives_idle": 30,
+                        "keepalives_interval": 10,
+                        "keepalives_count": 5,
+                    },
+                },
+                ttl={"default_ttl": 864_000},  # 10 days
             ) as pg_store:
                 pg_store.setup()
                 compiled = _builder.compile(store=pg_store)
