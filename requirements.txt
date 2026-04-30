@@ -2,6 +2,7 @@
 
 # Core AI and Agent Framework
 langgraph>=0.2.50  # Used with ThreadPoolExecutor for parallel agent execution
+langgraph-checkpoint-postgres>=3.0  # PostgresStore for episodic memory
 langchain-openai>=1.0.0
 openai>=2.0.0
 langchain-core>=0.3.0
@@ -23,6 +24,7 @@ structlog>=24.0
 
 # Caching and State
 redis>=5.0
+psycopg[binary]>=3.1  # PostgreSQL driver for LangGraph Store
 cachetools>=5.3
 
 # Scheduling

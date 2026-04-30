@@ -92,6 +92,9 @@ class FirstLightConfig(BaseSettings):
     # Redis
     redis_url: str = "redis://fl-redis:6379/0"
 
+    # Postgres (LangGraph Store — episodic memory)
+    postgres_url: Optional[str] = None
+
     # LiteLLM Router
     litellm_base_url: str = "https://model-router.mcducklabs.com"
     litellm_api_key: Optional[str] = None

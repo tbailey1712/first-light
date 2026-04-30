@@ -513,6 +513,19 @@ def synthesize(state: DailyReportState) -> dict:
     if baseline_context:
         synthesis_system = synthesis_system + f"\n\n{baseline_context}"
 
+    # Inject cross-run episodic memory (repeat IPs, severity trends, escalations)
+    try:
+        from langgraph.config import get_store as _get_langgraph_store
+        from agent.episodic_memory import format_episodic_context
+        _store = _get_langgraph_store()
+        if _store:
+            episodic_ctx = format_episodic_context(_store)
+            if episodic_ctx:
+                synthesis_system = synthesis_system + f"\n\n{episodic_ctx}"
+                logger.info("Episodic memory context injected (%d chars)", len(episodic_ctx))
+    except Exception as e:
+        logger.debug("Episodic memory not available: %s", e)
+
     if suspicious_items:
         synthesis_system += f"\n\nNote: {len(suspicious_items)} item(s) flagged for automated deep investigation — see Investigation Findings section that will follow this report."
 
@@ -573,6 +586,16 @@ def synthesize(state: DailyReportState) -> dict:
     new_baseline = _extract_baseline_metrics(state["domain_results"])
     if new_baseline:
         _save_baseline(new_baseline)
+
+    # Persist episodic memory for next run
+    try:
+        from langgraph.config import get_store as _get_langgraph_store
+        from agent.episodic_memory import save_episodic_memory
+        _store = _get_langgraph_store()
+        if _store:
+            save_episodic_memory(_store, state["domain_results"])
+    except Exception as e:
+        logger.warning("Failed to save episodic memory: %s", e)
 
     return {"final_report": final_report, "suspicious_items": suspicious_items}
 
@@ -889,6 +912,7 @@ def generate_daily_report(hours: int = 24) -> str:
     import uuid
     from langfuse import get_client as get_langfuse_client, LangfuseOtelSpanAttributes
     from opentelemetry import trace as otel_trace
+    from agent.config import get_config
 
     start = datetime.now(timezone.utc)
     session_id = f"daily-report-{start.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
@@ -914,7 +938,24 @@ def generate_daily_report(hours: int = 24) -> str:
         "investigation_findings": None,
     }
 
-    result = graph.invoke(initial_state)
+    # Compile with PostgresStore for episodic memory if configured
+    cfg = get_config()
+    if cfg.postgres_url:
+        try:
+            from langgraph.store.postgres import PostgresStore
+            with PostgresStore.from_conn_string(
+                cfg.postgres_url, ttl={"default_ttl": 864_000}  # 10 days
+            ) as pg_store:
+                pg_store.setup()
+                compiled = _builder.compile(store=pg_store)
+                result = compiled.invoke(initial_state)
+                logger.info("Graph executed with PostgresStore (episodic memory enabled)")
+        except Exception as e:
+            logger.warning("PostgresStore failed, falling back to no episodic memory: %s", e)
+            result = graph.invoke(initial_state)
+    else:
+        result = graph.invoke(initial_state)
+
     final_report = result.get("final_report") or ""
 
     lf.update_current_span(output=final_report[:500])
