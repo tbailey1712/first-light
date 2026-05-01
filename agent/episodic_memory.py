@@ -35,7 +35,8 @@ def save_episodic_memory(store: BaseStore, domain_results: list[dict[str, Any]])
     for dr in domain_results:
         for ip_str in dr.get("flagged_ips", []):
             try:
-                if ipaddress.ip_address(ip_str).is_private:
+                addr = ipaddress.ip_address(ip_str)
+                if addr.is_private or addr.is_multicast or addr.is_reserved or addr.is_loopback:
                     continue
             except ValueError:
                 continue
