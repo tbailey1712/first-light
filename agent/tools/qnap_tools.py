@@ -188,7 +188,7 @@ def query_qnap_health() -> str:
 
     # --- ZFS/filesystem usage (SNMP hrStorageTable) ---
     # NVR volumes are circular recording — always near 100% by design, never alert on them.
-    _NVR_MOUNTS = {"/share/ZFS19_DATA", "/share/ZFS21_DATA", "/share/ZFS530_DATA"}
+    _NVR_MOUNTS = {"/share/ZFS21_DATA", "/share/ZFS530_DATA"}
     # Friendly names for shares we care about
     _SHARE_NAMES = {
         "/share/ZFS22_DATA": "ssd_share",
