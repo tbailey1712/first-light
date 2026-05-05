@@ -21,6 +21,7 @@ RUN mkdir -p /var/log/remote && chmod 755 /var/log/remote
 # Copy configuration
 COPY rsyslog.conf /etc/rsyslog.conf
 COPY logrotate.conf /etc/logrotate.d/syslog-remote
+RUN chmod 0644 /etc/logrotate.d/syslog-remote
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
