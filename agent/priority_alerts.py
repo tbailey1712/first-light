@@ -94,18 +94,33 @@ def _parse_alert_rules() -> list[AlertRule]:
     return rules
 
 
-def check_priority_alerts(report_text: str) -> list[AlertRule]:
+@dataclass
+class TriggeredAlert:
+    rule: AlertRule
+    context: str  # Relevant lines from the report
+
+
+def check_priority_alerts(report_text: str) -> list[TriggeredAlert]:
     """Check report text against all priority alert rules.
 
-    Returns list of AlertRules that matched (keywords found in report).
+    Returns list of TriggeredAlerts with context extracted from the report.
     """
     rules = _parse_alert_rules()
-    triggered: list[AlertRule] = []
+    triggered: list[TriggeredAlert] = []
     report_lower = report_text.lower()
+    report_lines = report_text.splitlines()
 
     for rule in rules:
-        if any(kw.lower() in report_lower for kw in rule.keywords):
-            triggered.append(rule)
+        matched_kw = next((kw for kw in rule.keywords if kw.lower() in report_lower), None)
+        if matched_kw:
+            # Extract lines containing the matched keyword for context
+            context_lines = [
+                ln.strip() for ln in report_lines
+                if matched_kw.lower() in ln.lower() and ln.strip()
+            ]
+            # Cap at 3 lines, 300 chars total
+            context = "\n".join(context_lines[:3])[:300]
+            triggered.append(TriggeredAlert(rule=rule, context=context))
             logger.warning("Priority alert triggered: %s", rule.name)
 
     return triggered
@@ -133,13 +148,14 @@ async def fire_priority_alerts(report_text: str) -> int:
     _PRI_MAP = {"high": 1, "emergency": 2}
 
     fired = 0
-    for rule in triggered:
-        priority = _PRI_MAP.get(rule.priority, 1)
+    for alert in triggered:
+        priority = _PRI_MAP.get(alert.rule.priority, 1)
+        message = alert.context if alert.context else alert.rule.name
         payload = {
             "token": pushover._token,
             "user": pushover._user,
-            "title": f"🚨 {rule.title}",
-            "message": f"Priority alert triggered in daily report: {rule.name}",
+            "title": f"🚨 {alert.rule.title}",
+            "message": message,
             "priority": priority,
             "sound": "siren",
         }
@@ -152,7 +168,7 @@ async def fire_priority_alerts(report_text: str) -> int:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.post(_PUSHOVER_URL, data=payload)
             if resp.status_code == 200:
-                logger.info("Priority alert sent: %s (priority=%s)", rule.title, rule.priority)
+                logger.info("Priority alert sent: %s (priority=%s)", alert.rule.title, alert.rule.priority)
                 fired += 1
             else:
                 logger.error("Priority alert Pushover failed: %s — %s", resp.status_code, resp.text[:200])
