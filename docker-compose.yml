@@ -11,7 +11,7 @@ services:
   #   1. SigNoz OTel collector (TCP 5140)
   #   2. /var/log/remote/{host}/syslog.log files for CrowdSec
   rsyslog:
-    image: rsyslog/syslog_appliance_alpine:latest
+    build: ./rsyslog
     container_name: fl-rsyslog
     restart: unless-stopped
     environment:
@@ -20,7 +20,6 @@ services:
       - "514:514/udp"
       - "514:514/tcp"
     volumes:
-      - ./rsyslog/rsyslog.conf:/etc/rsyslog.conf:ro
       - syslog_files:/var/log/remote
     networks:
       - signoz-net
