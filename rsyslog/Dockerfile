@@ -3,12 +3,13 @@
 
 FROM debian:12-slim
 
-# Install rsyslog with all standard modules
-# Note: omfile is built-in, omfwd requires the main rsyslog package
+# Install rsyslog with all standard modules + logrotate/cron for retention
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     rsyslog \
     rsyslog-relp \
+    logrotate \
+    cron \
     && rm -rf /var/lib/apt/lists/*
 
 # The omfwd module should be built-in to rsyslog on Debian,
@@ -19,9 +20,12 @@ RUN mkdir -p /var/log/remote && chmod 755 /var/log/remote
 
 # Copy configuration
 COPY rsyslog.conf /etc/rsyslog.conf
+COPY logrotate.conf /etc/logrotate.d/syslog-remote
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # Expose syslog ports
 EXPOSE 514/udp 514/tcp
 
-# Run rsyslog in foreground
-CMD ["rsyslogd", "-n", "-f", "/etc/rsyslog.conf"]
+# Run entrypoint (starts cron + rsyslog)
+CMD ["/entrypoint.sh"]
