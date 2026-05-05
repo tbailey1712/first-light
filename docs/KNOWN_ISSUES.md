@@ -38,6 +38,10 @@ Domain tags in [brackets] control which agents see each item.
 
 - **CF Access protected services** [firewall_threat, dns_security, cloudflare]: langfuse.mcducklabs.com and ai.mcducklabs.com are behind CF Access + WAF. WAF hits being blocked = protection working. Do NOT flag as unprotected or recommend adding CF Access.
 
+## Alerts
+
+- **VLAN 1 MAC randomization detection** [firewall_threat, wireless, dns_security, infrastructure]: If a new/unknown device appears on VLAN 1 (192.168.1.x) with a locally administered MAC (randomized — bit 1 of first octet is set), cross-reference against all known Apple/Kindle devices (iPhones, iPads, watches, Kindles) to check if any are no longer online. A randomized MAC on VLAN 1 that correlates with a missing known device is a CRITICAL finding — it means a device has enabled private WiFi addressing and bypassed DHCP registration. Report which known device disappeared and the new MAC that appeared. This is a security alert, not routine.
+
 ## Rules
 
 - **IP resolution** [firewall_threat, dns_security, network_flow, infrastructure]: Before flagging any internal IP (192.168.x.x) as unknown, check docs/dhcp_leases.md. If the IP is in the lease table, use the device name and do not recommend identification.
