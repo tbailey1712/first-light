@@ -158,6 +158,29 @@ docker compose restart agent slack-bot
 
 ---
 
+## Notification & Alert System
+
+**Channels:** Slack (primary), Pushover (push notifications), Telegram (legacy)
+
+**Daily report flow:** `scheduler.py` → `generate_daily_report()` → `broadcast_report()` (all channels) → `fire_priority_alerts()` (Pushover-only for critical matches)
+
+**Priority Alerts (`docs/PRIORITY_ALERTS.md`):**
+User-editable keyword-based alert triggers. When the daily report text matches any defined keyword pattern, an immediate high-priority Pushover notification fires (separate from the routine low-priority report summary). Edit the markdown file to add/remove alerts — no code changes needed.
+
+Alert priorities:
+- `high` — sound + vibration, single notification
+- `emergency` — repeats every 60s until acknowledged (10min max)
+
+**`agent/priority_alerts.py`** — parses `PRIORITY_ALERTS.md`, matches keywords against report text, fires Pushover via API.
+
+**Suppressions & Alerts in `docs/KNOWN_ISSUES.md`:**
+- `## Suppressions` — items agents should NOT flag (reduce noise)
+- `## Alerts` — items agents should ACTIVELY flag as critical (increase signal)
+- `## Rules` — behavioral instructions for all agents
+- Domain tags `[firewall_threat, dns_security, ...]` control which agents see each item
+
+---
+
 ## Active Work
 
 ### EPIC_FL_EVAL_001 — Langfuse Eval Lifecycle
