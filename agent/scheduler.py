@@ -14,7 +14,9 @@ import json
 import logging
 import os
 import signal
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -216,6 +218,26 @@ async def run_infra_health_check():
         logger.error("Failed to send infra health alert: %s", e)
 
 
+async def run_report_cleanup():
+    """Delete report files older than 90 days."""
+    reports_dir = os.getenv("FIRST_LIGHT_REPORTS_DIR", "/data/reports")
+    max_age_seconds = 90 * 86400  # 90 days
+    now = time.time()
+    deleted = 0
+
+    for pattern in ("**/*.md", "**/*.json"):
+        for path in Path(reports_dir).glob(pattern):
+            if path.is_file() and (now - path.stat().st_mtime) > max_age_seconds:
+                try:
+                    path.unlink()
+                    deleted += 1
+                except OSError as e:
+                    logger.warning("Failed to delete old report %s: %s", path, e)
+
+    if deleted:
+        logger.info("Report cleanup: deleted %d files older than 90 days", deleted)
+
+
 async def _notify_failure(job_name: str, error: str):
     """Send a failure alert to all registered notification channels."""
     try:
@@ -276,6 +298,16 @@ async def _run():
         misfire_grace_time=3600,
     )
     logger.info("Weekly report scheduled: day=%d at %02d:%02d %s", weekly_day, weekly_hour, weekly_minute, tz)
+
+    # Report file cleanup — daily at 03:00
+    scheduler.add_job(
+        run_report_cleanup,
+        trigger=CronTrigger(hour=3, minute=0, timezone=tz),
+        id="report_cleanup",
+        name="Report File Cleanup (90d)",
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
 
     eval_hour = int(os.getenv("EVAL_HOUR", "10"))
     eval_minute = int(os.getenv("EVAL_MINUTE", "0"))
