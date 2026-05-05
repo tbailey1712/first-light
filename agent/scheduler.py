@@ -67,8 +67,13 @@ async def run_daily_report():
     try:
         from agent.reports.daily_threat_assessment import generate_daily_report
         from agent.notifications import broadcast_report
+        from agent.priority_alerts import fire_priority_alerts
         report = await generate_daily_report()
         await broadcast_report(report)
+        # Check for priority alerts that need immediate push notification
+        alert_count = await fire_priority_alerts(report.get("report_text", ""))
+        if alert_count:
+            logger.warning("Fired %d priority alert(s) via Pushover", alert_count)
         logger.info(f"Daily report complete: {report['report_path']}")
     except Exception as e:
         logger.error(f"Daily report failed: {e}", exc_info=True)
