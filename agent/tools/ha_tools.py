@@ -8,12 +8,17 @@ Create one at: Home Assistant → Profile → Security → Long-Lived Access Tok
 
 import json
 import logging
+import os
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import httpx
 from langchain_core.tools import tool
 
 from agent.config import get_config
+
+_LOCAL_TZ = ZoneInfo(os.getenv("TZ", "America/Chicago"))
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +30,25 @@ _SECURITY_DOMAINS = {
 _INTERESTING_DOMAINS = _SECURITY_DOMAINS | {
     "climate", "sensor", "switch", "light", "automation", "script",
 }
+
+
+def _to_local(iso_str: str) -> str:
+    """Convert an ISO-8601 UTC timestamp to local time string (e.g. '2026-05-04 16:16 CDT')."""
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        local_dt = dt.astimezone(_LOCAL_TZ)
+        return local_dt.strftime("%Y-%m-%d %H:%M %Z")
+    except (ValueError, TypeError):
+        return iso_str
+
+
+def _local_hour(iso_str: str) -> Optional[int]:
+    """Return local-time hour for an ISO-8601 timestamp, or None on parse failure."""
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        return dt.astimezone(_LOCAL_TZ).hour
+    except (ValueError, TypeError):
+        return None
 
 
 def _ha_base_url() -> Optional[str]:
@@ -82,7 +106,6 @@ def query_ha_logbook(hours: int = 24, domains: str = "") -> str:
     if base_url is None:
         return _not_configured()
 
-    from datetime import datetime, timedelta, timezone
     now = datetime.now(timezone.utc).replace(microsecond=0)
     start = (now - timedelta(hours=hours)).isoformat()
 
@@ -111,7 +134,8 @@ def query_ha_logbook(hours: int = 24, domains: str = "") -> str:
         entity_id = entry.get("entity_id", "")
         name = entry.get("name", entity_id)
         message = entry.get("message", "")
-        when = entry.get("when", "")
+        when_raw = entry.get("when", "")
+        when = _to_local(when_raw) if when_raw else ""
 
         if filter_domains and domain not in filter_domains:
             continue
@@ -119,13 +143,9 @@ def query_ha_logbook(hours: int = 24, domains: str = "") -> str:
         item = {"entity": entity_id, "name": name, "message": message, "when": when}
         by_domain.setdefault(domain, []).append(item)
 
-        # Flag security-relevant events at unusual hours
-        try:
-            dt = datetime.fromisoformat(when.replace("Z", "+00:00"))
-            hour = dt.hour
-            is_odd_hour = hour >= 22 or hour < 7
-        except Exception:
-            is_odd_hour = False
+        # Flag security-relevant events at unusual LOCAL hours
+        local_h = _local_hour(when_raw)
+        is_odd_hour = (local_h is not None) and (local_h >= 22 or local_h < 7)
 
         is_security = domain in {"lock", "alarm_control_panel", "binary_sensor"}
         is_notable = any(kw in message.lower() for kw in ("unlock", "open", "trigger", "armed", "disarm", "detected"))
@@ -236,7 +256,6 @@ def query_ha_entity_history(entity_id: str, hours: int = 24) -> str:
     if base_url is None:
         return _not_configured()
 
-    from datetime import datetime, timedelta, timezone
     start = (datetime.now(timezone.utc) - timedelta(hours=hours)).replace(microsecond=0).isoformat()
 
     try:
@@ -262,9 +281,10 @@ def query_ha_entity_history(entity_id: str, hours: int = 24) -> str:
         if not isinstance(entity_history, list):
             continue
         for state_record in entity_history:
+            raw_ts = state_record.get("last_changed", "")
             transitions.append({
                 "state": state_record.get("state"),
-                "last_changed": state_record.get("last_changed"),
+                "last_changed": _to_local(raw_ts) if raw_ts else "",
             })
 
     return json.dumps({
