@@ -18,7 +18,7 @@ Each alert has:
   - priority: high
 
 - **CCTV VLAN outbound allowed**
-  - keywords: `cctv`, `vlan 3`, `allowed out`, `egress allowed`
+  - keywords: `cctv outbound allowed`, `cctv egress allowed`, `vlan 3 outbound allowed`, `camera reached external`
   - title: CCTV VLAN Outbound Traffic ALLOWED
   - priority: emergency
 
