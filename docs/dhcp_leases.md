@@ -102,6 +102,7 @@ Last updated: 2026-04-11
 | 192.168.1.73 | 50:23:a2:b3:bc:21 (Apple) | tb-ipad-air | |
 | 192.168.1.72 | f0:27:2d:dc:9a:0c (Amazon) | kindle-ellie | |
 | 192.168.1.71 | 84:d6:d0:d5:3d:f2 (Amazon) | kindle-alex | |
+| TBD | 28:24:c9:60:1e:1c (Amazon) | amazon-unknown | Unidentified Kindle/Fire tablet. Needs owner ID + static DHCP reservation. Currently gets .200-.244 pool IPs. |
 | 192.168.1.70 | 9c:76:0e:42:69:37 (Apple) | flanders | flanders #4 |
 | 192.168.1.68 | 60:3e:5f:42:ae:5a | OMC-MBP-Pro | |
 | 192.168.1.67 | e8:5f:02:5a:e1:5a (Apple) | Ellie-iPhone | |
