@@ -282,6 +282,21 @@ async def _run():
         misfire_grace_time=300,
         next_run_time=datetime.now(),  # Run immediately on startup too
     )
+    # Ingestion freshness watchdog — auto-recovers the otel-collector log-pipeline
+    # wedge (logs stop while metrics keep flowing). Default every 10 min.
+    if os.getenv("WATCHDOG_ENABLED", "true").lower() == "true":
+        from agent.watchdog import run_ingestion_watchdog
+        watchdog_interval = int(os.getenv("WATCHDOG_INTERVAL_MINUTES", "10"))
+        scheduler.add_job(
+            run_ingestion_watchdog,
+            trigger="interval",
+            minutes=watchdog_interval,
+            id="ingestion_watchdog",
+            name="Log Ingestion Watchdog",
+            max_instances=1,
+            misfire_grace_time=300,
+        )
+        logger.info("Ingestion watchdog scheduled every %dm", watchdog_interval)
     # Weekly trend report — default Sunday 09:00
     weekly_day = int(os.getenv("WEEKLY_REPORT_DAY", "6"))  # 0=Mon..6=Sun
     weekly_hour = int(os.getenv("WEEKLY_REPORT_HOUR", "9"))

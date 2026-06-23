@@ -577,8 +577,17 @@ exporters:
     dsn: tcp://clickhouse:9000/signoz_metrics
   clickhouselogsexporter:
     dsn: tcp://clickhouse:9000/signoz_logs
-    timeout: 10s
+    # 45s (was 10s): the daily ~18:05 UTC metrics-merge window can make a
+    # resource-fingerprint insert take 5-20s; a 10s budget caused the insert to
+    # fail and wedge the log pipeline. retry_on_failure ensures a transient
+    # failure retries instead of dropping. See memory: project_log_ingestion_wedge.
+    timeout: 45s
     use_new_schema: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
   signozclickhousemeter:
     dsn: tcp://clickhouse:9000/signoz_meter
     timeout: 45s
