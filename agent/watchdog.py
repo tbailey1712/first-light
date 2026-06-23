@@ -111,15 +111,21 @@ def _measure_freshness() -> Freshness:
     """Query ClickHouse for log + metric lag in seconds."""
     from agent.tools.infra_health import _clickhouse_query
 
+    # `timestamp <= now` excludes clock-skewed sources that emit future-dated
+    # logs (observed: a device sending timestamps ~5h ahead). Without this,
+    # max(timestamp) is always in the future -> negative lag -> watchdog never
+    # detects a real stall.
     log_sql = f"""
-        SELECT toUnixTimestamp(now()) - toUnixTimestamp(toDateTime(max(timestamp) / 1000000000)) AS lag_s
+        SELECT toUnixTimestamp(now()) - intDiv(max(timestamp), 1000000000) AS lag_s
         FROM signoz_logs.distributed_logs_v2
         WHERE timestamp >= (toUnixTimestamp(now()) - {_LOG_WINDOW_S}) * 1000000000
+          AND timestamp <= toUnixTimestamp64Nano(now64())
     """
     metric_sql = f"""
-        SELECT toUnixTimestamp(now()) - toUnixTimestamp(toDateTime(max(unix_milli) / 1000)) AS lag_s
+        SELECT toUnixTimestamp(now()) - intDiv(max(unix_milli), 1000) AS lag_s
         FROM signoz_metrics.distributed_samples_v4
         WHERE unix_milli >= (toUnixTimestamp(now()) - {_METRIC_WINDOW_S}) * 1000
+          AND unix_milli <= toUnixTimestamp(now()) * 1000
     """
 
     # Distinguish "query failed" (None rows) from "no data in window" (empty/null
