@@ -48,7 +48,11 @@ DOCKER_SOCK = os.getenv("WATCHDOG_DOCKER_SOCK", "/var/run/docker.sock")
 _LOG_WINDOW_S = 4 * 3600
 _METRIC_WINDOW_S = 3600
 
+ALERT_REPEAT_AFTER_S = int(os.getenv("WATCHDOG_ALERT_REPEAT_AFTER_S", str(6 * 3600)))
+
 _REDIS_LAST_RESTART = "watchdog:last_restart_ts"
+_REDIS_LAST_ALERT_ACTION = "watchdog:last_alert_action"
+_REDIS_LAST_ALERT_TS = "watchdog:last_alert_ts"
 _REDIS_DAY_PREFIX = "watchdog:restarts:"
 
 
@@ -77,9 +81,8 @@ def decide(
 
     - log lag unknown            -> skip   (can't reach ClickHouse; don't act blind)
     - logs fresh                 -> ok
-    - logs stale, metrics fresh  -> restart (the wedge signature) or alert_only
-                                    if a guardrail blocks the restart
-    - logs stale, metrics not    -> alert_only (broader outage; restart won't help)
+    - logs stale                 -> restart, whatever the metrics say, or
+                                    alert_only if a guardrail blocks it
     """
     if fresh.log_lag_s is None:
         return Decision("skip", "log freshness unknown (ClickHouse unreachable)")
@@ -87,22 +90,83 @@ def decide(
     if fresh.log_lag_s < log_stale_s:
         return Decision("ok", f"logs fresh ({fresh.log_lag_s}s lag)")
 
+    # Reaching here means the log query SUCCEEDED (log_lag_s is not None), so
+    # ClickHouse is reachable and the collector is the prime suspect either way.
+    # Metric lag now only tells us which failure this looks like — it is not a
+    # veto. The old code returned alert_only when both were stale, on the
+    # assumption that meant a broader outage a restart could not fix. The
+    # 2026-08-21 incident disproved that: the collector lost a startup race
+    # against ClickHouse, failed to build ANY pipeline, and killed both signals
+    # at once. A restart was the whole fix, and the watchdog sat on its hands
+    # for 11 days. The min-gap and daily-cap guardrails bound the risk of
+    # restarting when it genuinely will not help.
     metrics_fresh = fresh.metric_lag_s is not None and fresh.metric_lag_s < metric_fresh_s
-    if not metrics_fresh:
-        metric_desc = "unknown" if fresh.metric_lag_s is None else f"{fresh.metric_lag_s}s"
-        return Decision(
-            "alert_only",
-            f"logs stale ({fresh.log_lag_s}s) AND metrics not fresh ({metric_desc}) "
-            "— broader outage, collector restart will not help",
+    if metrics_fresh:
+        reason = (
+            f"log-pipeline wedge: logs stale {fresh.log_lag_s}s while metrics fresh "
+            f"{fresh.metric_lag_s}s"
         )
-
-    reason = (
-        f"log-pipeline wedge: logs stale {fresh.log_lag_s}s while metrics fresh "
-        f"{fresh.metric_lag_s}s"
-    )
+    else:
+        metric_desc = "unknown" if fresh.metric_lag_s is None else f"{fresh.metric_lag_s}s"
+        reason = (
+            f"collector not delivering: logs stale {fresh.log_lag_s}s and metrics "
+            f"{metric_desc} — ClickHouse answered, so the collector is the suspect"
+        )
     if not can_restart:
         return Decision("alert_only", reason + " — restart suppressed by guardrail")
     return Decision("restart", reason)
+
+
+# --- Pure helpers -----------------------------------------------------------
+
+def lag_from_rows(rows: list[dict] | None, window_s: int) -> int | None:
+    """Turn a freshness query result into a lag in seconds.
+
+    Three distinct outcomes, and conflating them is what hid the 2026-08-21
+    outage for 11 days:
+
+    - `rows is None`      -> the query FAILED; lag is unknown, don't act blind.
+    - no rows / NULL lag  -> nothing in the window; stale by at least `window_s`.
+    - a row with a value  -> the real lag.
+
+    The trap: ClickHouse `max()` over an EMPTY set of a *non-nullable* column
+    returns **0, not NULL**, so `lag = now - 0` came back as ~1.79e9 seconds
+    (56 years) and sailed past the `is None` guard. Any lag larger than the
+    query's own window is impossible by construction — the WHERE clause bounds
+    it — so it can only be that artifact. Clamp it.
+    """
+    if rows is None:
+        return None
+    if not rows or rows[0].get("lag_s") is None:
+        return window_s
+    lag = int(float(rows[0]["lag_s"]))
+    if lag < 0:
+        return 0  # clock skew from a source running ahead
+    return min(lag, window_s)
+
+
+def should_alert(
+    action: str,
+    last_action: str | None,
+    seconds_since_last: int | None,
+    repeat_after_s: int,
+) -> bool:
+    """Decide whether this tick's outcome is worth notifying a human about.
+
+    The watchdog ticks every 10 minutes. Re-sending an identical alert on every
+    tick sent ~1,500 Pushover and ~1,500 Slack messages during the Aug 21
+    outage, which is how a real alert becomes background noise. Notify on a
+    *change* of state, or once per `repeat_after_s` while a problem persists.
+    """
+    healthy = action in ("ok", "skip")
+    if healthy:
+        # Exactly one "recovered" message, and only if we'd alerted before.
+        return last_action is not None and last_action not in ("ok", "skip")
+    if last_action != action:
+        return True
+    if seconds_since_last is None:
+        return True
+    return seconds_since_last >= repeat_after_s
 
 
 # --- I/O helpers ------------------------------------------------------------
@@ -128,26 +192,10 @@ def _measure_freshness() -> Freshness:
           AND unix_milli <= toUnixTimestamp(now()) * 1000
     """
 
-    # Distinguish "query failed" (None rows) from "no data in window" (empty/null
-    # -> stale beyond the window). For staleness we must treat empty-in-window as
-    # a large lag, otherwise a multi-hour wedge reads as "unknown" and we never act.
-    log_rows = _clickhouse_query(log_sql)
-    if log_rows is None:
-        log_lag: int | None = None
-    elif not log_rows or log_rows[0].get("lag_s") is None:
-        log_lag = _LOG_WINDOW_S  # nothing for 4h -> definitely stale
-    else:
-        log_lag = int(float(log_rows[0]["lag_s"]))
-
-    metric_rows = _clickhouse_query(metric_sql)
-    if metric_rows is None:
-        metric_lag: int | None = None
-    elif not metric_rows or metric_rows[0].get("lag_s") is None:
-        metric_lag = _METRIC_WINDOW_S  # nothing for 1h -> stale
-    else:
-        metric_lag = int(float(metric_rows[0]["lag_s"]))
-
-    return Freshness(log_lag_s=log_lag, metric_lag_s=metric_lag)
+    return Freshness(
+        log_lag_s=lag_from_rows(_clickhouse_query(log_sql), _LOG_WINDOW_S),
+        metric_lag_s=lag_from_rows(_clickhouse_query(metric_sql), _METRIC_WINDOW_S),
+    )
 
 
 def _check_guardrails(redis) -> tuple[bool, str]:
@@ -182,6 +230,33 @@ def _record_restart(redis) -> None:
         redis.expire(day_key, 2 * 86400)
     except Exception as e:  # noqa: BLE001
         logger.warning("watchdog failed to record restart in redis: %s", e)
+
+
+def _read_alert_state(redis) -> tuple[str | None, int | None]:
+    """Return (last_alerted_action, seconds_since_that_alert)."""
+    if redis is None:
+        return None, None
+    try:
+        raw = redis.get(_REDIS_LAST_ALERT_ACTION)
+        if raw is None:
+            return None, None
+        last_action = raw.decode() if isinstance(raw, bytes) else str(raw)
+        ts = redis.get(_REDIS_LAST_ALERT_TS)
+        elapsed = int(time.time()) - int(ts) if ts is not None else None
+        return last_action, elapsed
+    except Exception as e:  # noqa: BLE001 — never let bookkeeping suppress an alert
+        logger.warning("watchdog could not read alert state (%s) — alerting", e)
+        return None, None
+
+
+def _record_alert(redis, action: str) -> None:
+    if redis is None:
+        return
+    try:
+        redis.set(_REDIS_LAST_ALERT_ACTION, action)
+        redis.set(_REDIS_LAST_ALERT_TS, int(time.time()))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("watchdog failed to record alert state: %s", e)
 
 
 def _restart_collector() -> None:
@@ -219,33 +294,57 @@ def evaluate_and_act() -> WatchdogResult:
         decision.action, fresh.log_lag_s, fresh.metric_lag_s, decision.reason,
     )
 
+    # Every outcome below is gated by should_alert() so a persistent problem
+    # notifies on state change and then at most once per ALERT_REPEAT_AFTER_S,
+    # instead of every single tick.
+    last_action, since_last = _read_alert_state(redis)
+
+    def _gate(action: str) -> bool:
+        return should_alert(action, last_action, since_last, ALERT_REPEAT_AFTER_S)
+
     if decision.action in ("ok", "skip"):
-        return WatchdogResult(decision, None)
+        if not _gate(decision.action):
+            return WatchdogResult(decision, None)
+        _record_alert(redis, decision.action)
+        return WatchdogResult(
+            decision,
+            f"✅ *First Light — ingestion watchdog*\n"
+            f"Ingestion has recovered — {decision.reason}.",
+        )
 
     if decision.action == "restart":
         try:
             _restart_collector()
         except Exception as e:  # noqa: BLE001
             logger.error("watchdog restart of %s FAILED: %s", COLLECTOR_CONTAINER, e)
+            _record_alert(redis, "restart_failed")
             return WatchdogResult(
                 decision,
                 f"🔴 *First Light — ingestion watchdog*\n"
-                f"Detected log-pipeline wedge but the auto-restart FAILED: `{e}`\n"
+                f"Ingestion has stalled but the auto-restart FAILED: `{e}`\n"
                 f"{decision.reason}\nManual `docker restart {COLLECTOR_CONTAINER}` needed.",
             )
         _record_restart(redis)
+        _record_alert(redis, decision.action)
         msg = (
             f"🔧 *First Light — ingestion watchdog*\n"
-            f"Auto-restarted `{COLLECTOR_CONTAINER}` — {decision.reason}.\n"
-            f"Log ingestion had stalled while metrics kept flowing (collector log "
-            f"pipeline wedge)."
+            f"Auto-restarted `{COLLECTOR_CONTAINER}` — {decision.reason}."
         )
         return WatchdogResult(decision, msg)
 
-    # alert_only
+    # alert_only — a restart was warranted but a guardrail blocked it.
+    if not _gate(decision.action):
+        logger.info(
+            "watchdog: alert suppressed (repeat of %s, last sent %ss ago, repeat after %ss)",
+            last_action, since_last, ALERT_REPEAT_AFTER_S,
+        )
+        return WatchdogResult(decision, None)
+    _record_alert(redis, decision.action)
     msg = (
         f"⚠️ *First Light — ingestion watchdog*\n{decision.reason}.\n"
-        f"(guardrail: {guard_reason})"
+        f"Auto-restart was NOT attempted — guardrail: {guard_reason}.\n"
+        f"If this persists, check `docker logs {COLLECTOR_CONTAINER}` for pipeline "
+        f"build errors."
     )
     return WatchdogResult(decision, msg)
 

@@ -164,7 +164,17 @@ services:
       - "4317:4317" # OTLP gRPC receiver
       - "4318:4318" # OTLP HTTP receiver
       - "5140:5140" # Syslog receiver (First Light custom)
+    # NOTE: this block OVERRIDES the depends_on merged in via *db-depend above —
+    # an explicit key always wins over a YAML merge key. Listing only `signoz`
+    # here meant the collector never waited for ClickHouse, and on 2026-08-21 it
+    # started first, failed to build the clickhouselogsexporter ("dial tcp
+    # 172.21.0.4:9000: connect: connection refused"), and served nothing for 11
+    # days. Keep all three conditions listed explicitly.
     depends_on:
+      clickhouse:
+        condition: service_healthy
+      schema-migrator-sync:
+        condition: service_completed_successfully
       signoz:
         condition: service_healthy
   schema-migrator-sync:

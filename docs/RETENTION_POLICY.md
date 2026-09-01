@@ -81,7 +81,36 @@ ALTER TABLE system.query_views_log MODIFY TTL event_date + INTERVAL 3 DAY;
 
 **Risk:** Low. These tables are ClickHouse self-diagnostics. No FL tooling reads them. ClickHouse respects TTL on merge — space reclaimed gradually (force with `OPTIMIZE TABLE ... FINAL` if needed).
 
-**Persistence:** TTL is stored in table metadata — survives container restarts. One-time operation.
+> **⚠️ Audited 2026-09-01 — this phase had NOT taken effect.**
+>
+> Every one of the tables above came back with **no TTL at all**, holding data
+> back to 2026-05-22:
+>
+> | Table | Size | Rows |
+> |---|---|---|
+> | `system.processors_profile_log` | 3.61 GiB | 158,909,214 |
+> | `system.query_log` | 3.55 GiB | 31,355,783 |
+> | `system.trace_log` | 3.07 GiB | 120,929,477 |
+> | `system.metric_log` | 2.37 GiB | 8,829,685 |
+> | `system.part_log` | 1.48 GiB | 18,151,319 |
+> | `system.asynchronous_metric_log` | 1.16 GiB | 1,694,610,146 |
+> | `system.query_views_log` | 278 MiB | 2,483,556 |
+>
+> Total: **15.5 GiB — 70% of the 22 GiB ClickHouse volume**, versus 3.2 GiB of
+> real logs and 2.5 GiB of real metrics. The `ALTER TABLE` route above is also
+> not as durable as this doc claimed: ClickHouse **renames the old system log
+> table and creates a fresh one** whenever the table's schema changes across a
+> server version, and the new table is built from `config.xml` — so an `ALTER`'d
+> TTL is silently dropped on upgrade.
+>
+> **Now implemented declaratively** in `signoz/common/clickhouse/config.xml`: an
+> active `<ttl>event_date + INTERVAL 3 DAY DELETE</ttl>` in each of the 8 enabled
+> log-table sections. Config-driven TTL is reapplied whenever ClickHouse recreates
+> the table, so it survives version upgrades. (`text_log` is commented out in the
+> shipped config and was left alone.)
+
+**Persistence:** Declared in `config.xml`, so it is reapplied on container recreation
+*and* on ClickHouse version upgrades. Prefer this over `ALTER TABLE` for system tables.
 
 ---
 
