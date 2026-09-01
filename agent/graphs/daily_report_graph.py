@@ -315,7 +315,8 @@ def run_domains_parallel(state: DailyReportState) -> dict:
         if structured:
             logger.info(f"{domain_name}: structured output parsed — severity={overall_severity}, {len(findings)} findings, {len(metrics)} metrics")
         else:
-            logger.warning(f"{domain_name}: no structured JSON block found — overall_severity defaulting to 'ok', falling back to free-text extraction")
+            overall_severity = "unknown"
+            logger.warning(f"{domain_name}: no structured JSON block found — overall_severity set to 'unknown', falling back to free-text extraction")
 
         flagged_ips = _extract_ips(summary)
         if flagged_ips:
@@ -339,9 +340,52 @@ def run_domains_parallel(state: DailyReportState) -> dict:
             except Exception as e:
                 name = futures[future]
                 logger.error(f"Domain thread '{name}' raised: {e}", exc_info=True)
-                results.append({"domain": name, "summary": f"**{name}**: Agent failed — {e}", "flagged_ips": [], "overall_severity": "ok", "findings": [], "metrics": {}})
+                results.append(failed_domain_result(name, e))
 
     return {"domain_results": results}
+
+
+
+# --- Failed / unanalyzed domain handling ------------------------------------
+#
+# A domain agent that crashed was previously recorded with overall_severity
+# "ok", making "we did not look" indistinguishable from "we looked and it was
+# fine". That is why 39 of 69 daily reports (57%) shipped with a missing agent
+# between 2026-06-23 and 2026-09-01 without anyone noticing.
+
+def failed_domain_result(name: str, error: BaseException) -> dict:
+    """Placeholder result for a domain agent that never produced output."""
+    return {
+        "domain": name,
+        "summary": f"**{name}**: Agent failed — {error}",
+        "flagged_ips": [],
+        "overall_severity": "unknown",
+        "findings": [],
+        "metrics": {},
+    }
+
+
+def unanalyzed_domains(domain_results: list[dict]) -> list[str]:
+    """Names of domains with no usable analysis, in the order they were run."""
+    return [r["domain"] for r in domain_results
+            if r.get("overall_severity") == "unknown"]
+
+
+def format_unanalyzed_notice(names: list[str]) -> str:
+    """A banner for the top of the report. Empty string when nothing is missing.
+
+    Deterministic on purpose — prepended to the synthesis output rather than
+    left to the LLM, so an incomplete run can never be presented as an
+    all-clear.
+    """
+    if not names:
+        return ""
+    return (
+        f"> ⚠️ **Incomplete run — {len(names)} of {len(DOMAIN_AGENTS)} domains were "
+        f"NOT analyzed:** {', '.join(names)}.\n"
+        f"> Findings below cover the remaining domains only; absence of a finding "
+        f"for these is not evidence of absence.\n\n"
+    )
 
 
 @observe(as_type="span", capture_input=False, capture_output=False)
@@ -444,6 +488,12 @@ def synthesize(state: DailyReportState) -> dict:
     Phase B: full narrative synthesis.
     """
     domain_summaries = {r["domain"]: r["summary"] for r in state["domain_results"]}
+    missing_domains = unanalyzed_domains(state["domain_results"])
+    if missing_domains:
+        logger.warning(
+            "Synthesis running on an INCOMPLETE set — %d of %d domains unanalyzed: %s",
+            len(missing_domains), len(DOMAIN_AGENTS), ", ".join(missing_domains),
+        )
 
     # ── Phase A: build suspicious items from structured domain findings ─────────
     # Primary: read findings[] directly from domain structured output.
@@ -532,6 +582,16 @@ def synthesize(state: DailyReportState) -> dict:
     except Exception as e:
         logger.debug("Episodic memory not available: %s", e)
 
+    if missing_domains:
+        synthesis_system += (
+            f"\n\nIMPORTANT — INCOMPLETE DATA: {len(missing_domains)} of "
+            f"{len(DOMAIN_AGENTS)} domain agents produced no analysis this run: "
+            f"{', '.join(missing_domains)}. You have NO data for these domains. Do not "
+            f"describe them as healthy, clear, or quiet, and do not let their absence "
+            f"raise your confidence in an all-clear headline. Say plainly that they "
+            f"were not analyzed."
+        )
+
     if suspicious_items:
         synthesis_system += f"\n\nNote: {len(suspicious_items)} item(s) flagged for automated deep investigation — see Investigation Findings section that will follow this report."
 
@@ -587,6 +647,7 @@ def synthesize(state: DailyReportState) -> dict:
     logger.info("Running synthesis node...")
     response = chat(messages, "synthesis", session_id=state["session_id"], agent_name="synthesis")
     final_report = response.choices[0].message.content or ""
+    final_report = format_unanalyzed_notice(missing_domains) + final_report
     logger.info("Synthesis complete.")
 
     new_baseline = _extract_baseline_metrics(state["domain_results"])

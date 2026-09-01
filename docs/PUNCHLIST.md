@@ -155,6 +155,39 @@ Synthesis agent reads/writes facts to Redis across daily runs — repeat IPs, re
 
 ---
 
+## 👁️ Watch Items — Confirm Before Closing
+
+### WATCH-1: Log ingestion volume ~5x above documented baseline
+**Opened:** 2026-09-01
+**Observed:** ~14,800 log rows per 5 min (~4.3M/day) immediately after ingestion was
+restored, against the ~850k/day baseline recorded in CLAUDE.md. Top source by a wide
+margin is `systemd-resolved` (5,810 per 5 min), then UniFi APs and pfSense `filterlog`.
+
+**Why it is not yet a bug:** the sample was taken ~25 minutes after
+`signoz-otel-collector` was restarted following an 11-day outage (2026-08-21 →
+2026-09-01). Queued TCP syslog senders flushing backlog produce exactly this shape,
+and an earlier sample at +2 min showed only 1,100 rows / 5 min, so the rate was still
+climbing toward steady state when measured.
+
+**How to settle it:** re-measure once the system has been quiet for a full day —
+2026-09-02 or later, ideally just before the 08:00 report:
+
+```bash
+ssh tbailey@192.168.2.106 "docker exec signoz-clickhouse clickhouse-client -q \
+  \"SELECT resources_string['service.name'] AS svc, count() AS c
+     FROM signoz_logs.distributed_logs_v2
+     WHERE timestamp > toUnixTimestamp64Nano(now64() - INTERVAL 30 MINUTE)
+     GROUP BY svc ORDER BY c DESC LIMIT 10 FORMAT PrettyCompact\""
+```
+
+- **Settles to roughly 850k/day** → close this item, it was backlog flush.
+- **Stays near 4.3M/day** → real regression. Start with `systemd-resolved`: it is
+  Docker-host DNS chatter with little security value, and dropping or sampling it at
+  the collector is the cheapest fix. Note the 30-day TTL on `logs_v2` sizes the volume
+  budget, so a sustained 5x changes the disk math set in RETENTION_POLICY.md.
+
+---
+
 ## Deferred (Explicitly Post-V1)
 
 - **Switch Port 5 link flaps** — backyard camera EoC path. Chronic physical-layer failure (sub-second bounce pairs, 68+ flaps/day). Needs: inspect coax/F-connectors at both ends, swap EoC adapter, check PoE injector under load. Causes surveillance gaps on 192.168.3.15.
