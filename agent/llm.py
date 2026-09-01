@@ -11,6 +11,8 @@ Public API:
 
 import json
 import logging
+import os
+import random
 import time
 from typing import Literal, Optional
 
@@ -46,6 +48,70 @@ def _set_trace_session(session_id: Optional[str]) -> None:
     if session_id:
         span = otel_trace.get_current_span()
         span.set_attribute(LangfuseOtelSpanAttributes.TRACE_SESSION_ID, session_id)
+
+
+# --- Transient-failure retry policy ----------------------------------------
+#
+# Between 2026-06-23 and 2026-09-01, 39 of 69 daily reports (57%) completed
+# with at least one domain agent missing, and on 2026-08-19 all eight failed.
+# Every one was a litellm.ServiceUnavailableError (HTTP 503) from the model
+# router. The old loop retried only InternalServerError (500) and
+# RateLimitError (429), so a 503 killed the agent on the first blip and the
+# report shipped short without saying so.
+LLM_RETRIES = int(os.getenv("LLM_RETRIES", "4"))
+LLM_RETRY_BASE_DELAY_S = float(os.getenv("LLM_RETRY_BASE_DELAY_S", "5"))
+
+RETRYABLE_LLM_ERRORS: tuple[type[BaseException], ...] = (
+    litellm.InternalServerError,      # 500 — upstream provider overload
+    litellm.ServiceUnavailableError,  # 503 — the router itself shedding load
+    litellm.RateLimitError,           # 429
+    litellm.APIConnectionError,       # transport blip
+    litellm.Timeout,
+)
+
+
+def is_retryable(exc: BaseException) -> bool:
+    """True for transient transport/capacity failures worth another attempt.
+
+    Deliberately narrow: a bug in our own request (ValueError, KeyError, a bad
+    tool schema) must fail fast rather than burn four attempts and 35 seconds.
+    """
+    return isinstance(exc, RETRYABLE_LLM_ERRORS)
+
+
+def call_with_retries(
+    fn,
+    *,
+    retries: int = 3,
+    base_delay: float = 5.0,
+    sleep=time.sleep,
+    jitter=None,
+    label: str = "",
+):
+    """Call `fn`, retrying transient LLM failures with jittered exponential backoff.
+
+    `sleep` and `jitter` are injectable so the policy is testable without
+    actually waiting. Jitter matters here specifically: all eight domain agents
+    start within the same second (ThreadPoolExecutor, max_workers=8), so a fixed
+    backoff sends them back at the router in lockstep, colliding again on
+    exactly the overloaded instant that just rejected them.
+    """
+    if jitter is None:
+        jitter = lambda: random.uniform(0, 1)  # noqa: E731
+    delay = base_delay
+    for attempt in range(1, retries + 1):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001 — re-raised unless transient
+            if not is_retryable(e) or attempt == retries:
+                raise
+            wait = delay + jitter()
+            logger.warning(
+                "LLM %s on attempt %d/%d for %s — retrying in %.1fs",
+                type(e).__name__, attempt, retries, label or "llm", wait,
+            )
+            sleep(wait)
+            delay *= 2
 
 
 # ── Core call ──────────────────────────────────────────────────────────────────
@@ -107,36 +173,12 @@ def chat(
             agent_name or agent_type, _ctx_chars, _ctx_chars // 4,
         )
 
-    # Retry on transient 500s (LiteLLM proxies Anthropic overload as InternalServerError)
-    _retries = 3
-    _delay = 5.0
-    last_exc = None
-    for attempt in range(_retries):
-        try:
-            response = litellm.completion(**kwargs)
-            break
-        except litellm.InternalServerError as e:
-            last_exc = e
-            if attempt < _retries - 1:
-                logger.warning(
-                    "LLM 500 on attempt %d/%d for %s — retrying in %.0fs",
-                    attempt + 1, _retries, agent_name or agent_type, _delay,
-                )
-                time.sleep(_delay)
-                _delay *= 2
-            else:
-                raise
-        except litellm.RateLimitError as e:
-            last_exc = e
-            if attempt < _retries - 1:
-                logger.warning(
-                    "LLM rate limit on attempt %d/%d — retrying in %.0fs",
-                    attempt + 1, _retries, _delay,
-                )
-                time.sleep(_delay)
-                _delay *= 2
-            else:
-                raise
+    response = call_with_retries(
+        lambda: litellm.completion(**kwargs),
+        retries=LLM_RETRIES,
+        base_delay=LLM_RETRY_BASE_DELAY_S,
+        label=agent_name or agent_type,
+    )
 
     msg = response.choices[0].message
     lf.update_current_generation(
