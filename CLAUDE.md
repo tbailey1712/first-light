@@ -241,12 +241,20 @@ git add <files>
 git commit -m "description"
 git push origin feature/langgraph-redesign
 
-# REMOTE: pull and restart
-ssh tbailey@192.168.2.106 "cd /opt/first-light && git pull && docker compose restart agent slack-bot"
-
-# REMOTE: rebuild with dependency changes
+# REMOTE: deploy ANY code change — always --build
 ssh tbailey@192.168.2.106 "cd /opt/first-light && git pull && docker compose up -d --build agent slack-bot"
+
+# REMOTE: prune the images the rebuild orphaned
+ssh tbailey@192.168.2.106 "docker image prune -f"
 ```
+
+**⚠️ `docker compose restart` does NOT deploy code.** `agent/Dockerfile` `COPY`s the
+source into the image and the `agent` service mounts no source volume (only
+`agent_reports`, uptimekuma data, and the docker socket), so a restart re-runs the
+**old image**. `git pull && docker compose restart` looks like it worked — the
+container comes up clean and logs normally — while still running the previous
+build. Always use `up -d --build`. (This bit us on 2026-09-01: a watchdog fix was
+reported deployed and verified when the container was still on old code.)
 
 ### Key Notes
 
