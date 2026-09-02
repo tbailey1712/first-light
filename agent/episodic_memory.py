@@ -25,6 +25,47 @@ _NS_SEVERITY = ("episodic", "severity")
 _NS_FINDINGS = ("episodic", "findings")
 
 
+# --- Connection pool ---------------------------------------------------------
+#
+# Neon is serverless: its proxy closes connections that have been idle for a
+# few minutes, server-side. The daily report opens the PostgresStore at graph
+# start and does not touch it again until synthesis ~8-10 minutes later, by
+# which point the pooled connection is dead. The pool handed it out anyway, so
+# every read failed with "consuming input failed: SSL connection has been closed
+# unexpectedly" while the write at the end of the run (on a fresh connection)
+# succeeded. Net effect: episodic memory was write-only, and no run ever logged
+# "Episodic memory context injected".
+#
+# TCP keepalives do not help — the close is a deliberate server-side action, not
+# a dropped network path. The pool must validate on checkout instead.
+
+NEON_IDLE_CUTOFF_S = 300  # Neon's approximate idle-connection cutoff
+
+
+def build_pool_config() -> dict:
+    """psycopg_pool settings for the episodic-memory PostgresStore."""
+    from psycopg_pool import ConnectionPool
+
+    return {
+        "min_size": 1,
+        "max_size": 3,
+        # Validate (and transparently replace) a connection on checkout. This is
+        # the fix: without it a server-closed connection is handed to synthesis.
+        "check": ConnectionPool.check_connection,
+        # Retire idle connections before Neon does it for us.
+        "max_idle": 120,
+        # Hard ceiling well inside a single report run (~10 min).
+        "max_lifetime": 600,
+        "reconnect_timeout": 30.0,
+        "kwargs": {
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 5,
+        },
+    }
+
+
 def save_episodic_memory(store: BaseStore, domain_results: list[dict[str, Any]]) -> None:
     """Extract and persist episodic facts from domain results into the Store."""
     today = date.today().isoformat()

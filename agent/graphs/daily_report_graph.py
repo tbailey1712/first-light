@@ -1010,18 +1010,10 @@ def generate_daily_report(hours: int = 24) -> str:
     if cfg.postgres_url:
         try:
             from langgraph.store.postgres import PostgresStore
+            from agent.episodic_memory import build_pool_config
             with PostgresStore.from_conn_string(
                 cfg.postgres_url,
-                pool_config={
-                    "min_size": 1,
-                    "max_size": 3,
-                    "kwargs": {
-                        "keepalives": 1,
-                        "keepalives_idle": 30,
-                        "keepalives_interval": 10,
-                        "keepalives_count": 5,
-                    },
-                },
+                pool_config=build_pool_config(),
                 ttl={"default_ttl": 864_000},  # 10 days
             ) as pg_store:
                 pg_store.setup()
