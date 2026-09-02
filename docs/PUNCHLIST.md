@@ -318,6 +318,46 @@ No evidence links them — router 503s are HTTP status responses, not DNS failur
 
 ---
 
+### WATCH-4: HA host in a runaway mDNS rename loop — ~21/sec 🔴
+**Opened:** 2026-09-02
+**Host:** Home Assistant, 192.168.2.52 (VM 109, the largest guest at 10 GB / 95% mem)
+
+`systemd-resolved` on the HA host detects an mDNS name conflict, renames itself,
+re-announces, immediately conflicts again, and repeats — forever:
+
+```
+ha systemd-resolved: Detected conflict on ha1709530.local IN A 192.168.2.52
+ha systemd-resolved: Hostname conflict, changing published hostname from 'haN' to 'haN+1'
+```
+
+The counter is the rename count: **ha254334 on 08-19 → ha1709530 on 09-02**, about
+**1.45M renames in 14 days**, currently ~21/second (76,000/hour, 1.82M/day). Before
+filtering this was **43% of all log volume on the network**.
+
+**Cost beyond logs:** every rename is an mDNS multicast announcement. WiFi multicast
+is transmitted at the lowest basic rate, so ~21/sec of it is a continuous tax on every
+wireless client — plausibly a contributor to WATCH-3's DNS timeouts, though not its
+root cause (WATCH-3 is AdGuard resource starvation, and this loop ran at a flat
+~70k/hour on both sides of that onset).
+
+**Likely cause:** an mDNS reflector/repeater echoing the host's own announcements back
+to it, so it sees its own claim as a conflict. Check for a Bonjour/mDNS repeater on
+the UniFi network settings or an avahi-reflector on pfSense — particularly one bridging
+VLAN 1 and VLAN 2, since HA sits on VLAN 2 and announces `IN A 192.168.2.52`.
+
+**Fix (on the HA host, not available to this session — no SSH):**
+- Disable systemd-resolved's mDNS: `MulticastDNS=no` in `/etc/systemd/resolved.conf`.
+  HA does its own zeroconf in Python and does not need systemd-resolved's.
+- Or set a stable hostname and stop the `_workstation._tcp` registration.
+- Then find and disable the reflector so it does not recur.
+
+**Currently filtered** at the OTel collector so it stops costing 1.8M rows/day. The
+condition is unchanged on the network — re-check with:
+`docker logs fl-rsyslog` or temporarily remove the filter in
+`signoz/otel-collector-config.yaml`.
+
+---
+
 ---
 
 ## Deferred (Explicitly Post-V1)
