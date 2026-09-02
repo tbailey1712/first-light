@@ -111,6 +111,27 @@ processors:
         - severity_number < SEVERITY_NUMBER_INFO and resource.attributes["device.type"] != "firewall"
         # Drop repetitive DHCP requests (keep security-relevant logs)
         - IsMatch(body, "DHCPACK|DHCPREQUEST") and resource.attributes["service.name"] == "dhcpd"
+        # --- 2026-09-02 noise reduction (see PUNCHLIST WATCH-3/4) -------------
+        # The Proxmox host is an 8-core Atom C2758 at 3.9x vCPU oversubscription;
+        # halving log ingest is the cheapest relief available until new hardware
+        # lands. Each pattern below is a KNOWN, DOCUMENTED condition where the
+        # repetition carries no information the first line did not.
+        #
+        # HA systemd-resolved mDNS conflict loop: ~21/sec, 1.82M lines/day, 43%
+        # of ALL log volume. The host renames itself endlessly (ha254334 on
+        # 08-19 -> ha1709530 on 09-02, ~1.45M renames). Tracked as WATCH-4; the
+        # fix is on the HA host, not here.
+        # NOTE: single-quoted — the ': ' inside the regex makes YAML parse an
+        # unquoted scalar as a mapping instead of a string.
+        - 'IsMatch(body, "systemd-resolved: (Detected conflict|Hostname conflict)")'
+        # Concord alarm bridge HTTP access log: HA polling /zones and /partitions,
+        # ~353k/day. Only successful (200) polls are dropped, so a failing alarm
+        # bridge still surfaces.
+        - IsMatch(body, "concord232_server.*GET /(zones|partitions).* 200 -")
+        # UniFi per-station QoE telemetry (~142k/day). Redundant: the same
+        # dns_timeout condition is reported by STA_TRACKER, which we KEEP because
+        # it is the live signal for WATCH-3.
+        - IsMatch(body, "wireless_agg_stats.log_sta_anomalies")
         # Drop routine health checks and keepalives
         - IsMatch(body, "health check|keepalive|heartbeat") and severity_number < SEVERITY_NUMBER_WARN
         # AGGRESSIVE: Drop most ntopng logs (keep only WARN and above)
