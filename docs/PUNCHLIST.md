@@ -229,7 +229,7 @@ inside a recent event-time window:
 
 ---
 
-### WATCH-3: Network-wide DNS timeouts since 2026-08-19 — ONGOING 🔴
+### WATCH-3: Network-wide DNS timeouts since 2026-08-19 — ROOT-CAUSED 2026-09-02 🔴 ONGOING
 **Opened:** 2026-09-02
 **This is why log volume is up, and it is a live incident, not noise.**
 
@@ -261,8 +261,60 @@ log-volume reduction, but they are the clearest signal of an unresolved incident
 suppressing them would hide it. Volume should fall back toward the ~2.3M/day baseline
 on its own once DNS is fixed — re-measure then, and only add filters if it does not.
 
-**Next step:** start at AdGuard Home (the network's resolver) — upstream resolver
-health, and what changed on or around 2026-08-19.
+## Root cause: the AdGuard host is resource-starved
+
+`192.168.1.3` (AdGuard Home + DHCP, per `docs/dhcp_leases.md:127`) cannot service DNS
+under concurrency, so it **silently drops** queries. Clients see a timeout and retry,
+which adds load and sustains the condition — a self-reinforcing loop, which is why it
+has never recovered on its own.
+
+Measured on the host 2026-09-02:
+
+| Metric | Value | Notes |
+|---|---|---|
+| RAM | 2048 MB total, **16 MB free** | |
+| Swap | **378 MB of 512 MB in use**, actively paging | `si` 188–196 |
+| Run queue (`r`) | **4–16** on 4 vCPUs | sustained oversubscription |
+| **CPU steal (`st`)** | **26–37% sustained** (one 64% sample) | hypervisor starvation |
+| Load average | 12.35 / 9.50 / 7.75 | |
+
+Reproduced live, from two source IPs on different VLANs:
+
+| Test | Source | Result |
+|---|---|---|
+| Paced ~7 qps | docker host (VLAN 2) | 39/40 ok — 2.5% loss |
+| 40 parallel | docker host (VLAN 2) | 12/40 ok — **70% loss** |
+| Paced ~7 qps | AdGuard's own host | 30/30 ok — 0% loss |
+| 40 parallel | AdGuard's own host | 19/40 ok — **53% loss** |
+| Rate sweep | docker host | clean to 20 qps, degrades at 30 |
+
+**Ruled out:**
+- *Network path / pfSense / VLAN routing* — drops reproduce from AdGuard's own host.
+- *Upstream resolver failure* — guaranteed-uncached lookups resolve in ~110 ms.
+- *A single rogue device* — 10+ stations jumped 100–500x at the same instant.
+- *The HA mDNS conflict loop* — constant ~70k/hour on both sides of the onset.
+- *AppArmor denials* — `rsyslogd` state files in LXC namespaces, unrelated to DNS.
+
+**Main contributor:** the `adgh` analytics stack is co-located on the resolver —
+`ingest_logs.py` runs hourly at ~31% CPU / 417 MB RSS (20% of total RAM) against a
+**6.6 GB** `cache.db`, alongside 4 gunicorn workers, on a 2 GB host.
+
+### Recommended fixes (infrastructure — not applied, needs your call)
+1. **Raise the LXC memory allocation**, 2 GB → 4 GB. Cheapest, addresses the swapping.
+2. **Investigate the 26–37% CPU steal on the Proxmox host** — the guest is only getting
+   about two-thirds of its allotted CPU, which no in-guest tuning can fix.
+3. **Move the `adgh` analytics stack off the DNS resolver.** A 6.6 GB SQLite analytics
+   workload does not belong on critical network infrastructure.
+4. Raising AdGuard's `ratelimit` would mask the symptom, not fix it. Do 1–3 first.
+
+**Still unknown:** the precise trigger at **2026-08-19 08:12 UTC** (03:12 CDT). Reading
+`/opt/AdGuardHome/AdGuardHome.yaml` and `data/querylog.json` needs sudo on 192.168.1.3,
+which this session does not have. Candidates: `cache.db` crossing a size threshold, an
+`adgh` change, or Proxmox contention starting. AdGuard itself has not restarted since
+the 2026-08-21 host boot, so a service restart is not the trigger.
+
+*(An earlier note here suggested the Aug 19 model-router 503 storm might share a cause.
+No evidence links them — router 503s are HTTP status responses, not DNS failures.)*
 
 ---
 
