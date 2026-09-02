@@ -114,45 +114,65 @@ class ClickHouseClient:
 
     def insert_enrichment(self, enrichment: Dict) -> bool:
         """Insert enrichment result into ClickHouse."""
-        sources = enrichment.get('sources', {})
-        assessment = enrichment.get('threat_assessment', {})
+        return self.execute(
+            "INSERT INTO threat_intel.enrichments FORMAT JSONEachRow\n"
+            + build_enrichment_row(enrichment)
+        )
 
-        # Extract error sources
-        error_sources = []
-        for source_name, source_data in sources.items():
-            if isinstance(source_data, dict) and 'error' in source_data:
-                error_sources.append(source_name)
 
-        # Build INSERT statement
-        sql = f"""
-        INSERT INTO threat_intel.enrichments FORMAT JSONEachRow
-        {{"ip": "{enrichment['ip']}",
-         "enriched_at": "{enrichment['enriched_at']}",
-         "abuseipdb_score": {sources.get('abuseipdb', {}).get('abuse_confidence_score', 0)},
-         "abuseipdb_reports": {sources.get('abuseipdb', {}).get('total_reports', 0)},
-         "abuseipdb_distinct_users": {sources.get('abuseipdb', {}).get('num_distinct_users', 0)},
-         "abuseipdb_country_code": "{sources.get('abuseipdb', {}).get('country_code', '')}",
-         "abuseipdb_usage_type": "{sources.get('abuseipdb', {}).get('usage_type', '')}",
-         "abuseipdb_is_whitelisted": {str(sources.get('abuseipdb', {}).get('is_whitelisted', False)).lower()},
-         "virustotal_malicious": {sources.get('virustotal', {}).get('malicious', 0)},
-         "virustotal_suspicious": {sources.get('virustotal', {}).get('suspicious', 0)},
-         "virustotal_harmless": {sources.get('virustotal', {}).get('harmless', 0)},
-         "virustotal_reputation": {sources.get('virustotal', {}).get('reputation', 0)},
-         "virustotal_as_owner": "{sources.get('virustotal', {}).get('as_owner', '')}",
-         "virustotal_country": "{sources.get('virustotal', {}).get('country', '')}",
-         "alienvault_pulse_count": {sources.get('alienvault', {}).get('pulse_count', 0)},
-         "alienvault_pulses": {sources.get('alienvault', {}).get('pulses', [])},
-         "alienvault_country_code": "{sources.get('alienvault', {}).get('country_code', '')}",
-         "threat_score": {assessment.get('threat_score', 0)},
-         "is_malicious": {str(assessment.get('is_malicious', False)).lower()},
-         "confidence": "{assessment.get('confidence', 'low')}",
-         "categories": {assessment.get('categories', [])},
-         "recommendation": "{assessment.get('recommendation', 'allow')}",
-         "error_sources": {error_sources}
-        }}
-        """
 
-        return self.execute(sql)
+def build_enrichment_row(enrichment: Dict) -> str:
+    """Serialise one enrichment as a single JSONEachRow line.
+
+    Built with json.dumps rather than an f-string. The previous version
+    interpolated Python values directly, so list fields rendered as
+    `['hosting/datacenter']` -- single-quoted Python repr, not JSON -- and
+    ClickHouse rejected the row with 400 Bad Request. Only rows where every list
+    happened to be empty survived, which is why enrichment coverage sat at 16%
+    while lookups themselves were succeeding. Unescaped string interpolation had
+    the same failure mode for any value containing a double quote.
+    """
+    sources = enrichment.get('sources', {}) or {}
+    assessment = enrichment.get('threat_assessment', {}) or {}
+
+    def src(name: str) -> Dict:
+        value = sources.get(name, {})
+        return value if isinstance(value, dict) else {}
+
+    abuse, vt, av = src('abuseipdb'), src('virustotal'), src('alienvault')
+
+    error_sources = [
+        name for name, data in sources.items()
+        if isinstance(data, dict) and 'error' in data
+    ]
+
+    row = {
+        "ip": enrichment.get('ip', ''),
+        "enriched_at": enrichment.get('enriched_at', ''),
+        "abuseipdb_score": abuse.get('abuse_confidence_score', 0),
+        "abuseipdb_reports": abuse.get('total_reports', 0),
+        "abuseipdb_distinct_users": abuse.get('num_distinct_users', 0),
+        "abuseipdb_country_code": abuse.get('country_code', '') or '',
+        "abuseipdb_usage_type": abuse.get('usage_type', '') or '',
+        "abuseipdb_is_whitelisted": bool(abuse.get('is_whitelisted', False)),
+        "virustotal_malicious": vt.get('malicious', 0),
+        "virustotal_suspicious": vt.get('suspicious', 0),
+        "virustotal_harmless": vt.get('harmless', 0),
+        "virustotal_reputation": vt.get('reputation', 0),
+        "virustotal_as_owner": vt.get('as_owner', '') or '',
+        "virustotal_country": vt.get('country', '') or '',
+        "alienvault_pulse_count": av.get('pulse_count', 0),
+        "alienvault_pulses": list(av.get('pulses', []) or []),
+        "alienvault_country_code": av.get('country_code', '') or '',
+        "threat_score": assessment.get('threat_score', 0),
+        "is_malicious": bool(assessment.get('is_malicious', False)),
+        "confidence": assessment.get('confidence', 'low'),
+        "categories": list(assessment.get('categories', []) or []),
+        "recommendation": assessment.get('recommendation', 'allow'),
+        "error_sources": error_sources,
+    }
+    # JSONEachRow is newline-delimited, so the row must stay on one line.
+    return json.dumps(row, ensure_ascii=False)
 
 
 class ThreatIntelEnricher:
