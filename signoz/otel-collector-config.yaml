@@ -75,9 +75,33 @@ processors:
           - set(attributes["hostname"], "ntopng") where IsMatch(attributes["hostname"], "^\\d{4}-\\d{2}-\\d{2}$") and IsMatch(attributes["message"], "192.168.1.5")
           # Filter out any remaining date hostnames (set to nil so they don't pollute)
           - set(attributes["hostname"], nil) where IsMatch(attributes["hostname"], "^\\d{4}-\\d{2}-\\d{2}$")
-          # Copy hostname and appname from attributes to resource (only if valid)
-          - set(resource.attributes["host.name"], attributes["hostname"]) where attributes["hostname"] != nil
-          - set(resource.attributes["service.name"], attributes["appname"]) where attributes["appname"] != nil
+          # NOTE: promotion to resource attributes deliberately does NOT happen
+          # here. Setting resource.attributes from a `context: log` statement
+          # mutates the Resource that every log record in the batch SHARES, so
+          # the last record processed wins for all of them. On 2026-09-02 that
+          # left 3,903 of 12,620 filterlog records (31%) labelled as UniFi APs,
+          # systemd-resolved, nginx and others — and since the pfSense parsing
+          # below is gated on service.name == "filterlog", those records lost
+          # every pfsense.* field. groupbyattrs/syslog + transform/promote_source
+          # now do this safely; see the logs pipeline.
+  # Split the single shared syslog Resource into one Resource per
+  # (appname, hostname). groupbyattrs MOVES these log attributes up to the
+  # resource, which is the only safe way to derive resource attributes from
+  # per-record values.
+  groupbyattrs/syslog:
+    keys:
+      - appname
+      - hostname
+  # Now that each source has its own Resource, renaming to the canonical
+  # OTel names is safe: `context: resource` runs once per Resource, not once
+  # per record.
+  transform/promote_source:
+    error_mode: ignore
+    log_statements:
+      - context: resource
+        statements:
+          - set(attributes["service.name"], attributes["appname"]) where attributes["appname"] != nil
+          - set(attributes["host.name"], attributes["hostname"]) where attributes["hostname"] != nil
   # Filter out noisy/repetitive logs to reduce storage
   filter/noise_reduction:
     error_mode: ignore
@@ -615,7 +639,7 @@ service:
       exporters: [signozclickhousemetrics, signozmeter]
     logs:
       receivers: [otlp, syslog]
-      processors: [transform/syslog, filter/noise_reduction, transform/device_context, transform/pfsense, transform/ssh_sudo, transform/ntopng, transform/homeassistant, transform/unifi, transform/proxmox, batch]
+      processors: [transform/syslog, groupbyattrs/syslog, transform/promote_source, filter/noise_reduction, transform/device_context, transform/pfsense, transform/ssh_sudo, transform/ntopng, transform/homeassistant, transform/unifi, transform/proxmox, batch]
       exporters: [clickhouselogsexporter, signozmeter]
     metrics/meter:
       receivers: [signozmeter]
