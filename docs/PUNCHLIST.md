@@ -181,7 +181,7 @@ ClickHouse is 6.2 GiB after the 2026-09-01 trim.
 
 ---
 
-### WATCH-2: `service.name` misattributed on ~31% of syslog records 🔴
+### ~~WATCH-2: `service.name` misattributed on ~31% of syslog records~~ ✅ FIXED 2026-09-02
 **Opened:** 2026-09-02
 **Impact: firewall data loss.** Of records whose *body* contains `filterlog[`, only
 8,717 of 12,620 in a 30-minute sample carried `service.name=filterlog`. The other
@@ -211,8 +211,58 @@ Resource and the `set()` becomes safe. Alternative: keep `service.name` as a log
 attribute rather than promoting it to the resource, and re-gate the pfSense parsing on
 `attributes["appname"]`.
 
-⚠️ Collector config changes caused the 2026-08-21 outage — validate the parse and
-watch `docker logs signoz-otel-collector` for pipeline build errors after applying.
+**Fixed** in commit `ec57acd`: `groupbyattrs/syslog` splits the shared Resource by
+`(appname, hostname)`, then `transform/promote_source` renames to `service.name` /
+`host.name` in `context: resource`. Verified after the reload, filtering on
+`observed_timestamp` (ingestion time) because clock-skewed hosts put pre-fix rows
+inside a recent event-time window:
+
+| Measure | Before | After |
+|---|---|---|
+| filterlog rows correctly tagged | 8,717 / 12,620 (69%) | **1,339 / 1,339 (100%)** |
+| filterlog rows with `pfsense.*` fields | ~69% | **806 / 806 (100%)** |
+| `systemd-resolved` rows carrying filterlog bodies | 1,725 | **0** |
+
+⚠️ Any per-source log volume analysis dated before 2026-09-02 is unreliable. The
+"AdGuardHome up 61x" figure in WATCH-1 was this bug — those rows were
+`concord232_server`, `canonical-livepatch` and `systemd-timesyncd` from `krusty`.
+
+---
+
+### WATCH-3: Network-wide DNS timeouts since 2026-08-19 — ONGOING 🔴
+**Opened:** 2026-09-02
+**This is why log volume is up, and it is a live incident, not noise.**
+
+`[STA_TRACKER] DNS request timed out` from the UniFi APs, per day:
+
+| Day | STA_TRACKER DNS timeouts | `anomalies=dns_timeout` |
+|---|---|---|
+| Aug 13–18 | 1,800 – 4,600 | 1,000 – 2,200 |
+| **Aug 19** | **1,157,164** | **181,936** |
+| Aug 20 | 405,770 | 118,956 |
+| Aug 21 (partial) | 119,302 | 33,383 |
+| Aug 22–30 | *ingestion outage — no data* | |
+| Sep 1 (partial) | 157,132 | 42,939 |
+| Sep 2 | 194,319 and climbing | 49,499 |
+
+A 50–100x step change beginning 2026-08-19 that has never come back down. It is
+still running. Note 2026-08-19 is also the day all 8 domain agents failed on model
+router 503s and daily log volume hit 10.8M — worth checking whether the DNS problem
+caused that, rather than the two being coincidental.
+
+Corroborating signals, all consistent with DNS resolution failing network-wide:
+- `openwebui` (192.168.2.15) TXT query ratio 48.28 — flagged critical in the 09-02 report
+- DNS block rate 24.7% against an 8% baseline
+- `systemd-timesyncd: Timed out waiting for reply ... (ntp.ubuntu.com)` on `krusty`
+- `canonical-livepatch ... POST request failed` on `krusty`
+
+**Deliberately NOT filtered.** Dropping these at the collector was on the table as a
+log-volume reduction, but they are the clearest signal of an unresolved incident and
+suppressing them would hide it. Volume should fall back toward the ~2.3M/day baseline
+on its own once DNS is fixed — re-measure then, and only add filters if it does not.
+
+**Next step:** start at AdGuard Home (the network's resolver) — upstream resolver
+health, and what changed on or around 2026-08-19.
 
 ---
 
