@@ -157,34 +157,64 @@ Synthesis agent reads/writes facts to Redis across daily runs — repeat IPs, re
 
 ## 👁️ Watch Items — Confirm Before Closing
 
-### WATCH-1: Log ingestion volume ~5x above documented baseline
-**Opened:** 2026-09-01
-**Observed:** ~14,800 log rows per 5 min (~4.3M/day) immediately after ingestion was
-restored, against the ~850k/day baseline recorded in CLAUDE.md. Top source by a wide
-margin is `systemd-resolved` (5,810 per 5 min), then UniFi APs and pfSense `filterlog`.
+### ~~WATCH-1: Log ingestion volume above baseline~~ ✅ RESOLVED 2026-09-02
+**Answer: not backlog flush, and not `systemd-resolved`.** Re-measured 16h after the
+collector restart. Per-day counts from `logs_v2`:
 
-**Why it is not yet a bug:** the sample was taken ~25 minutes after
-`signoz-otel-collector` was restarted following an 11-day outage (2026-08-21 →
-2026-09-01). Queued TCP syslog senders flushing backlog produce exactly this shape,
-and an earlier sample at +2 min showed only 1,100 rows / 5 min, so the rate was still
-climbing toward steady state when measured.
+| Day | Rows | Note |
+|---|---|---|
+| 2026-08-11 … 08-18 | ~2.33M/day | true pre-outage steady state |
+| 2026-08-19 | 10.82M | spike; same day all 8 domain agents failed |
+| 2026-09-02 | ~5.0M/day projected | current |
 
-**How to settle it:** re-measure once the system has been quiet for a full day —
-2026-09-02 or later, ideally just before the 08:00 report:
+Two corrections fell out of this:
 
-```bash
-ssh tbailey@192.168.2.106 "docker exec signoz-clickhouse clickhouse-client -q \
-  \"SELECT resources_string['service.name'] AS svc, count() AS c
-     FROM signoz_logs.distributed_logs_v2
-     WHERE timestamp > toUnixTimestamp64Nano(now64() - INTERVAL 30 MINUTE)
-     GROUP BY svc ORDER BY c DESC LIMIT 10 FORMAT PrettyCompact\""
+1. **CLAUDE.md's "~850k logs/day" was stale.** The real pre-outage baseline was
+   ~2.3M/day, so the increase is ~2.2x, not the ~5x first suspected.
+2. **`systemd-resolved` was not the driver** — it is flat (1.06x vs Aug 18). The real
+   growth is UniFi AP `mcad: wireless_agg_stats.log_sta_anomalies` per-station
+   telemetry (19–43x across three APs), plus volume inflated by WATCH-2 below.
+
+Remaining genuine reduction opportunity is the UniFi `mcad` stats chatter, which is
+per-station telemetry with little security value. Not urgent: disk is at 49% and
+ClickHouse is 6.2 GiB after the 2026-09-01 trim.
+
+---
+
+### WATCH-2: `service.name` misattributed on ~31% of syslog records 🔴
+**Opened:** 2026-09-02
+**Impact: firewall data loss.** Of records whose *body* contains `filterlog[`, only
+8,717 of 12,620 in a 30-minute sample carried `service.name=filterlog`. The other
+**3,903 (31%)** were labelled `systemd-resolved`, the three UniFi APs, `nginx`,
+`concord232_server`, `pulse-agent`, or `CEF`.
+
+Because the pfSense CSV parsing in `signoz/otel-collector-config.yaml` (lines
+133–143) is gated on `resource.attributes["service.name"] == "filterlog"`, those
+3,903 records get **no `pfsense.*` attributes at all** — no src_ip, dst_ip, action,
+interface or port. They are invisible to every structured `firewall_threat` query and
+simultaneously pollute the wireless and DNS domains with foreign records.
+
+Treat block counts in reports before this is fixed as undercounts of roughly a third.
+
+**Root cause** — `otel-collector-config.yaml` line 80:
+```yaml
+- set(resource.attributes["service.name"], attributes["appname"]) where attributes["appname"] != nil
 ```
+This sets a **resource** attribute from a **log-record** attribute inside a
+`context: log` block. In the OTel data model many log records share a single Resource
+object, so every record in a batch mutates the *same* resource and the last one
+processed wins for all of them. Line 79 does the same to `host.name`.
 
-- **Settles to roughly 850k/day** → close this item, it was backlog flush.
-- **Stays near 4.3M/day** → real regression. Start with `systemd-resolved`: it is
-  Docker-host DNS chatter with little security value, and dropping or sampling it at
-  the collector is the cheapest fix. Note the 30-day TTL on `logs_v2` sizes the volume
-  budget, so a sustained 5x changes the disk math set in RETENTION_POLICY.md.
+**Fix:** add the `groupbyattrs` processor (not currently in the config) keyed on
+`appname`/`hostname` *before* the transform, so each distinct combination gets its own
+Resource and the `set()` becomes safe. Alternative: keep `service.name` as a log
+attribute rather than promoting it to the resource, and re-gate the pfSense parsing on
+`attributes["appname"]`.
+
+⚠️ Collector config changes caused the 2026-08-21 outage — validate the parse and
+watch `docker logs signoz-otel-collector` for pipeline build errors after applying.
+
+---
 
 ---
 

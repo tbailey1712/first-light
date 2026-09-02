@@ -17,7 +17,9 @@ The project name is **First Light** (not NetOps AI). The Slack bot is the primar
 ## Current Status (April 2026)
 
 **Infrastructure:** ✅ Deployed and operational
-- SigNoz (ClickHouse backend) collecting ~850k logs/day, ~500k metrics/day
+- SigNoz (ClickHouse backend) collecting ~2.3M logs/day, ~8.6M metrics/day
+  (measured 2026-09-02 from `logs_v2`/`samples_v4`; the earlier "850k logs/day,
+  500k metrics/day" figures were stale by roughly 3x and 17x)
 - OTel Collector with comprehensive log parsing (pfSense filterlog, SSH/sudo, ntopng, Proxmox, HA, Docker)
 - Telegraf for SNMP metrics: TP-Link switch, QNAP (fans/temps/disks/filesystems), Proxmox
 - AbuseIPDB threat intel enrichment (throttled to <1000 req/day via `threat-intel-enricher` service)
