@@ -153,6 +153,87 @@ find /opt/first-light/reports -name "*.json" -mtime +90 -delete
 
 ---
 
+## Collection Scope Audit — 2026-09-02/03
+
+Retention caps how long data lives. This section caps what is *collected at all*,
+which matters more on the current hardware: the Proxmox host is an 8-core Atom
+C2758 with ~3.8x vCPU oversubscription, and the `docker` guest holding
+SigNoz/ClickHouse sits at 97% of 8 GB — it had begun failing small allocations
+(`Couldn't allocate 528 bytes`).
+
+### Result
+
+| Stream | Before | After | Cut |
+|---|---|---|---|
+| Logs | 4.25M/day | ~1.9M/day | −55% |
+| Metrics | 9.46M/day | ~2.4M/day | −75% |
+
+### How to tell what is actually consumed
+
+**Metrics** are read only by `@tool` functions with **hardcoded** `metric_name`
+values in SQL, plus **4 staleness sentinels** in `agent/tools/infra_health.py`:
+
+| Sentinel metric | Guards |
+|---|---|
+| `adguard_queries_total` | adguard-exporter |
+| `interface_in_octets` | telegraf-snmp |
+| `qnap_cpu_usage_percent` | qnap-exporter |
+| `beacon_active_validators` | validator-metrics |
+
+⚠️ Those sentinels are referenced in a Python tuple, not in SQL, so a grep for
+`metric_name =` will **miss two of them**. Dropping either silently makes the
+corresponding infra-health check read "permanently stale".
+
+### Metric prefixes: kept vs dropped
+
+| Prefix | M/day | Series | ClickHouse consumers | Verdict |
+|---|---|---|---|---|
+| `proxmox_` | 5.31 | 238 | **none** | dropped |
+| `adguard_` | 0.89 | 31 | 35 refs + sentinel | keep |
+| `nethermind_` | 0.57 | 221 | none | dropped |
+| `interface_` | 0.43 | 6 | 18 refs + sentinel | keep |
+| `libp2p_` | 0.32 | 104 | none | dropped |
+| `beacon_` | 0.30 | 135 | sentinel | keep |
+| `qnap_` | 0.27 | 25 | sentinel | keep |
+| `otelcol_` | 0.26 | 36 | none | dropped |
+| `exporter_` | 0.26 | 6 | none | dropped |
+| `validator_` | 0.25 | 72 | ETH domain | keep |
+| `nbc_` | 0.22 | 56 | none | dropped |
+| `engine_`/`process_`/`python_` | 0.13 | 22 | none | dropped |
+
+**The big one:** `proxmox_*` was 60% of all metrics and has never been read from
+ClickHouse — `agent/tools/proxmox_tools.py` calls the Proxmox API directly.
+Likewise the Ethereum client internals: the validator domain scrapes its beacon
+node via `_parse_prometheus`, not ClickHouse.
+
+Implemented as `filter/drop_unused_metrics` on both the `metrics` and
+`metrics/prometheus` pipelines in `signoz/otel-collector-config.yaml`.
+
+### Logs dropped
+
+| Pattern | /day | Why safe |
+|---|---|---|
+| HA `systemd-resolved` conflict loop | 1.82M | Known runaway (WATCH-4); repetition adds nothing |
+| Concord `GET /zones\|/partitions` 200 | 353k | HA polling; non-200 still surfaces |
+| UniFi `wireless_agg_stats` | 142k | Redundant with STA_TRACKER, which is kept |
+| UniFi `stahtd_dump_event` | 110k | Wireless domain uses the UniFi controller API |
+| `WPA: Receive FT ... STA Roamed` | 46k | Successful roams only; auth FAILURES kept |
+
+**Deliberately kept:** `STA_TRACKER` DNS timeouts (~650k/day) — the live signal
+for WATCH-3 — and all `filterlog` firewall records. There is no debug-level
+volume to cut; `filter/noise_reduction` already drops below-INFO severity.
+
+### Caveats
+
+- `agent/tools/investigation.py` exposes `query_clickhouse_raw`, so an
+  investigation could in principle request a dropped metric.
+- No historical series will exist for dropped prefixes going forward. Re-enable by
+  removing the relevant line from `filter/drop_unused_metrics`.
+- Re-audit after the new hardware lands; several of these were dropped for
+  headroom, not because the data is worthless.
+
+---
+
 ## Build Sequence
 
 1. Phase 1 (syslog) — biggest impact, lowest risk, self-contained
