@@ -102,6 +102,34 @@ processors:
         statements:
           - set(attributes["service.name"], attributes["appname"]) where attributes["appname"] != nil
           - set(attributes["host.name"], attributes["hostname"]) where attributes["hostname"] != nil
+  # Drop metrics nothing reads. Audited 2026-09-03: metrics were 8.9M samples/day
+  # against 2.09M logs/day, i.e. the dominant ClickHouse load, on a docker VM at
+  # 97% of 8 GB that had started failing small allocations
+  # ("Couldn't allocate 528 bytes").
+  #
+  # Method: metrics are consumed only by @tool functions with HARDCODED
+  # metric_name values in SQL, plus 4 staleness sentinels in
+  # agent/tools/infra_health.py. Everything below has ZERO ClickHouse consumers.
+  # proxmox_* alone was 5.31M/day (60% of all metrics, 238 series) and is never
+  # read — agent/tools/proxmox_tools.py talks to the Proxmox API directly.
+  #
+  # KEPT: adguard_* (35 refs + sentinel adguard_queries_total), interface_*
+  # (18 refs + sentinel interface_in_octets), qnap_* (sentinel
+  # qnap_cpu_usage_percent), beacon_*/validator_* (sentinel
+  # beacon_active_validators, plus the ETH validator domain).
+  filter/drop_unused_metrics:
+    error_mode: ignore
+    metrics:
+      metric:
+        - 'IsMatch(name, "^proxmox_")'
+        - 'IsMatch(name, "^nethermind_")'
+        - 'IsMatch(name, "^libp2p_")'
+        - 'IsMatch(name, "^nbc_")'
+        - 'IsMatch(name, "^engine_")'
+        - 'IsMatch(name, "^otelcol_")'
+        - 'IsMatch(name, "^exporter_")'
+        - 'IsMatch(name, "^process_")'
+        - 'IsMatch(name, "^python_")'
   # Filter out noisy/repetitive logs to reduce storage
   filter/noise_reduction:
     error_mode: ignore
@@ -132,6 +160,13 @@ processors:
         # dns_timeout condition is reported by STA_TRACKER, which we KEEP because
         # it is the live signal for WATCH-3.
         - IsMatch(body, "wireless_agg_stats.log_sta_anomalies")
+        # UniFi station-tracker JSON telemetry dumps (~110k/day). The wireless
+        # domain gets its data from the UniFi controller API, not these.
+        - 'IsMatch(body, "stahtd_dump_event")'
+        # Successful 802.11r fast-transition roams (~46k/day). Auth FAILURES are
+        # separate messages and are deliberately kept — the 09-03 report relied on
+        # them to flag 9,313 smoke-detector auth failures.
+        - 'IsMatch(body, "WPA: Receive FT: .* STA Roamed")'
         # Drop routine health checks and keepalives
         - IsMatch(body, "health check|keepalive|heartbeat") and severity_number < SEVERITY_NUMBER_WARN
         # AGGRESSIVE: Drop most ntopng logs (keep only WARN and above)
@@ -652,11 +687,11 @@ service:
       exporters: [clickhousetraces, signozmeter]
     metrics:
       receivers: [otlp]
-      processors: [batch]
+      processors: [filter/drop_unused_metrics, batch]
       exporters: [signozclickhousemetrics, signozmeter]
     metrics/prometheus:
       receivers: [prometheus]
-      processors: [batch]
+      processors: [filter/drop_unused_metrics, batch]
       exporters: [signozclickhousemetrics, signozmeter]
     logs:
       receivers: [otlp, syslog]
