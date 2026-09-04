@@ -64,9 +64,24 @@ sed -i \
 # Read the journal, so units that log only to journald (sshd on modern Ubuntu)
 # are still forwarded.
 mkdir -p /var/spool/rsyslog
+# IgnorePreviousMessages is essential. Without it, imjournal's first run
+# replays the ENTIRE journal history. On the pve hypervisor (2026-09-04) that
+# meant 1,776,519 messages lost to rate-limiting, rsyslog pinned at a full core
+# and 1.8 GB RSS, and a flood of backfilled records. RFC3164 carries no year, so
+# replayed entries from previous years are stamped with the CURRENT year - any
+# dated after today land in the future and corrupt freshness checks.
+#
+# The state file must not already exist for this to take effect, so it is
+# removed here: we deliberately want "start from now", not "resume the backlog".
+rm -f /var/spool/rsyslog/imjournal.state
 cat > /etc/rsyslog.d/10-imjournal.conf <<'EOF'
 global(workDirectory="/var/spool/rsyslog")
-module(load="imjournal" StateFile="imjournal.state")
+module(load="imjournal"
+       StateFile="imjournal.state"
+       IgnorePreviousMessages="on"
+       FileCreateMode="0644"
+       Ratelimit.Interval="60"
+       Ratelimit.Burst="20000")
 EOF
 
 # Forward everything to First Light.
