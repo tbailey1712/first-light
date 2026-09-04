@@ -20,6 +20,7 @@ Public interface:
 
 import json
 import logging
+import os
 import operator
 import re
 import time
@@ -332,7 +333,7 @@ def run_domains_parallel(state: DailyReportState) -> dict:
         }
 
     results = []
-    with ThreadPoolExecutor(max_workers=len(DOMAIN_AGENTS)) as executor:
+    with ThreadPoolExecutor(max_workers=domain_fanout_workers(len(DOMAIN_AGENTS))) as executor:
         futures = {executor.submit(_run_one, name): name for name in DOMAIN_AGENTS}
         for future in as_completed(futures):
             try:
@@ -386,6 +387,25 @@ def format_unanalyzed_notice(names: list[str]) -> str:
         f"> Findings below cover the remaining domains only; absence of a finding "
         f"for these is not evidence of absence.\n\n"
     )
+
+
+
+# --- Domain fan-out concurrency ---------------------------------------------
+#
+# This ran with max_workers=len(DOMAIN_AGENTS)=8. The docker VM has 4 vCPUs and
+# hosts TWO ClickHouse instances (SigNoz and Langfuse) plus MinIO, so eight
+# agents querying concurrently drove load average to 152 on 2026-09-04 - high
+# enough that sshd needed 20s to authenticate - while report duration degraded
+# 572s -> 599s -> 635s -> 1066s over four days. Past saturation, more threads
+# make the job slower, so the pool is bounded. All 8 agents still run; the
+# executor simply queues them.
+DOMAIN_FANOUT_WORKERS = int(os.getenv("DOMAIN_FANOUT_WORKERS", "4"))
+
+
+def domain_fanout_workers(n_agents: int, configured: int | None = None) -> int:
+    """Bounded worker count for the domain fan-out: 1 <= workers <= n_agents."""
+    want = DOMAIN_FANOUT_WORKERS if configured is None else configured
+    return max(1, min(want, n_agents))
 
 
 @observe(as_type="span", capture_input=False, capture_output=False)
