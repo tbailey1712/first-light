@@ -29,9 +29,33 @@ if ! command -v rsyslogd &>/dev/null; then
     apt-get update -qq && apt-get install -y rsyslog
 fi
 
-# Patch base rsyslog.conf for container compatibility:
-#   imklog   - requires /proc/kmsg, not available in containers
-#   imuxsock - conflicts with journald owning the syslog socket
+# --- Detect a pre-existing forwarder. Several hosts were configured by hand with
+# the legacy selector syntax (e.g. adguard: `*.* @192.168.2.106:514`). Adding a
+# second action would forward every message TWICE.
+EXISTING=$(grep -rlsE '^[^#]*(@@?[0-9]|omfwd)' /etc/rsyslog.conf /etc/rsyslog.d/ 2>/dev/null \
+           | grep -v '90-first-light.conf' || true)
+if [[ -n "$EXISTING" ]]; then
+    echo
+    echo "!! An existing syslog forwarder was found in:"
+    for f in $EXISTING; do printf '   %s: ' "$f"; grep -hsE '^[^#]*(@@?[0-9]|omfwd)' "$f" | head -2; done
+    if [[ "${REPLACE_EXISTING:-0}" == "1" ]]; then
+        for f in $EXISTING; do mv -v "$f" "$f.disabled-by-first-light"; done
+        echo "   Disabled (renamed to *.disabled-by-first-light)."
+    else
+        echo
+        echo "   Refusing to add a second forwarder - you would get duplicate logs."
+        echo "   Re-run with REPLACE_EXISTING=1 to disable the old config, or remove it by hand."
+        exit 1
+    fi
+fi
+
+# Patch base rsyslog.conf. Applies to bare metal (e.g. the pve hypervisor) as
+# well as containers:
+#   imklog   - unnecessary once imjournal is on, since journald already collects
+#              kmsg; leaving both enabled double-collects kernel messages. It
+#              also cannot work in a container, which has no /proc/kmsg.
+#   imuxsock - journald owns /dev/log. Reading both it and the journal delivers
+#              every message twice, so the socket input is turned off.
 sed -i \
     -e 's|^module(load="imklog"|#module(load="imklog"|' \
     -e 's|^module(load="imuxsock")|module(load="imuxsock" SysSock.Use="off")|' \
