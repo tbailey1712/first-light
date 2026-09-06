@@ -468,8 +468,8 @@ processors:
           - set(attributes["severity"], "info") where attributes["ha.level"] == "INFO"
           - set(attributes["ha.event_type"], "automation_triggered") where attributes["ha.automation_id"] != nil and attributes["ha.action"] == "triggered"
           - set(attributes["ha.event_type"], "error") where attributes["ha.level"] == "ERROR"
-          - set(attributes["ha.event_type"], "timeout") where IsMatch(body, "[Tt]imeout|timed out")
-          - set(attributes["ha.event_type"], "connection_issue") where IsMatch(body, "[Ff]ailed to connect|connection broken")
+          - set(attributes["ha.event_type"], "timeout") where attributes["_is_ha"] == "true" and IsMatch(body, "[Tt]imeout|timed out")
+          - set(attributes["ha.event_type"], "connection_issue") where attributes["_is_ha"] == "true" and IsMatch(body, "[Ff]ailed to connect|connection broken")
           - delete_key(attributes, "_is_ha") where attributes["_is_ha"] != nil
           - delete_key(attributes, "component") where attributes["component"] != nil
 
