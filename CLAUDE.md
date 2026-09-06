@@ -155,7 +155,11 @@ docker compose restart agent slack-bot
 - **JSONEachRow returns all integers as strings.** Always cast with `int()` before arithmetic: `int(row["block_count"])`. This caused `TypeError: unsupported operand type(s) for +=: 'int' and 'str'` in `query_outbound_blocks` (fixed).
 - **Default query timeout is 30 seconds.** Long aggregation queries against distributed tables will timeout. Add `max_execution_time: 12` to health check queries. Use `LIMIT` aggressively.
 - **Use distributed table names** (`signoz_logs.distributed_logs`, `signoz_metrics.distributed_*`) for cross-shard queries. Direct shard tables may return partial results.
-- **SigNoz HTTP API endpoint:** `http://signoz-query-service:8085/api/v1/query_range` for metrics; ClickHouse HTTP at port 9001 for raw SQL.
+- **SigNoz HTTP API endpoint:** `http://signoz-query-service:8085/api/v1/query_range` for metrics.
+- **Raw ClickHouse SQL:** SigNoz's ClickHouse does **not** publish a port to the host. Query it via
+  `ssh tbailey@192.168.2.106 "docker exec -i signoz-clickhouse clickhouse-client --query '<SQL>'"`.
+  Host port 9001 is **Portainer**, not ClickHouse (the older note saying 9001 was wrong). Port 8123 is
+  container-internal only. `127.0.0.1:8123` on the host is `langfuse-clickhouse-1` — a different database.
 - **Log attribute access:** `log.body` and `log.attributes["x"]` in OTTL transforms (not deprecated `body`/`attributes["x"]`).
 
 ---
@@ -310,7 +314,7 @@ Full device list: **`docs/dhcp_leases.md`**
 
 Key fixed IPs:
 - `192.168.1.1` — pfSense (Netgate 3100)
-- `192.168.2.9` — QNAP TS-462 (port 8080 for API, not through NPM)
+- `192.168.2.9` — QNAP TS-h765eU (port 8080 for API, not through NPM)
 - `192.168.2.7` — Frigate NVR (port 5000 — use direct IP, not `frigate.mcducklabs.com`)
 - `192.168.2.106` — Docker host (docker.mcducklabs.com)
 - `192.168.4.2` — ETH validator (vldtr)

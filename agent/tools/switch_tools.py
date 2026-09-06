@@ -35,7 +35,7 @@ _PORT_LABELS: dict[str, str] = {
     "6":  "Bsmt-Cabinet (empty) — IoT V2",
     "7":  "Office-Switch (printer + office devices)",
     "8":  "(available) — IoT V2",
-    "9":  "QNAP-NAS TS-462 + containers — IoT V2",
+    "9":  "QNAP-NAS TS-h765eU + containers — IoT V2",
     "10": "AP-1F-Front (unifi-1f-front) — TRUNK V1/V2/V3",
     "11": "Alex-Bedroom (empty)",
     "12": "(available) — IoT V2",

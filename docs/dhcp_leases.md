@@ -79,7 +79,7 @@ Last updated: 2026-04-11
 | 192.168.2.12 | c4:f7:c1:1e:70:8b | atv-basement | Apple TV — basement |
 | 192.168.2.11 | 00:05:cd:2f:71:c5 (D&M Holdings) | denon | |
 | 192.168.2.10 | 14:ae:85:71:72:d5 | googletv-basement | Chromecast with Google TV |
-| 192.168.2.9 | 24:5e:be:8e:92:09 (Qnap Systems) | nas | QNAP TS-462 |
+| 192.168.2.9 | 24:5e:be:8e:92:09 (Qnap Systems) | nas | QNAP TS-h765eU |
 | 192.168.2.8 | 02:42:e8:53:e4:15 | pbs | Proxmox Backup Server |
 | 192.168.2.7 | 02:42:76:61:95:5d | frigate-origin | Frigate NVR — use http://192.168.2.7:5000 |
 | 192.168.1.110 | 00:00:1c:9c:e3:71 (Bell Technologies) | bookstack | |
