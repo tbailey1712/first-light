@@ -136,7 +136,8 @@ docker compose restart agent slack-bot
 | `switch_tools.py` | TP-Link SG2424 SNMP — port stats, errors, utilization |
 | `infra_health.py` | Infrastructure health aggregator — log ingestion freshness, metrics staleness checks |
 | `validator.py` | ETH beacon chain API — attestation effectiveness, sync status, peer count, balance |
-| `adguard.py` | AdGuard Home API — query stats, blocked domains, client activity, TXT ratio |
+| `adguard_tools.py` | AdGuard Home **query log** API — the actual domains a client queried, TXT-record offenders. Needs `ADGUARD_USERNAME`/`ADGUARD_PASSWORD` and a VLAN 2→VLAN 1 firewall rule |
+| _(in `metrics.py`)_ | `query_adguard_*` aggregate tools read the **exporter's** metrics from ClickHouse — counts, block rates, TXT ratio. No domain names; use `adguard_tools.py` for those |
 | `threat_intel_tools.py` | AbuseIPDB lookups — IP reputation, abuse confidence score, ISP/country |
 | `cloudflare_tools.py` | Cloudflare API — tunnel status, firewall events, zone analytics |
 | `dns_tools.py` | DNS resolution utilities — reverse lookups, domain age checks |

@@ -22,6 +22,11 @@ from agent.tools.metrics import (
     query_adguard_traffic_by_type,
 )
 
+from agent.tools.adguard_tools import (
+    query_adguard_client_domains,
+    query_adguard_txt_offenders,
+)
+
 from agent.tools.threat_intel_tools import (
     query_threat_intel_summary,
     lookup_ip_threat_intel,
@@ -65,6 +70,9 @@ def get_all_tools() -> List[BaseTool]:
         query_adguard_high_risk_clients,
         query_adguard_blocked_domains,
         query_adguard_traffic_by_type,
+        # AdGuard query log (names the domains behind a DNS finding)
+        query_adguard_client_domains,
+        query_adguard_txt_offenders,
         # Threat intelligence
         query_threat_intel_summary,
         lookup_ip_threat_intel,
