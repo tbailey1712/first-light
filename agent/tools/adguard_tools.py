@@ -49,7 +49,9 @@ def _adguard_get(path: str, params: Optional[dict] = None) -> dict:
         return {"error": "adguard_username/adguard_password not configured in .env"}
 
     try:
-        with httpx.Client(timeout=20.0) as client:
+        # AdGuard 307-redirects :80 to https, and presents a self-signed cert on
+        # a LAN address, so both of these are required for any request to land.
+        with httpx.Client(timeout=20.0, follow_redirects=True, verify=False) as client:
             r = client.get(
                 f"{base}{path}",
                 params=params,

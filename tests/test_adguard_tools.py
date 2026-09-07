@@ -158,3 +158,39 @@ def test_unconfigured_host_is_reported():
     with patch.object(adguard_tools, "get_config", return_value=_cfg(host=None)):
         r = json.loads(query_adguard_client_domains.func(client_ip="192.168.2.15"))
     assert "adguard_host" in r["error"]
+
+
+def test_client_follows_redirects_and_tolerates_the_self_signed_cert():
+    """AdGuard 307-redirects :80 to https and serves a self-signed cert.
+
+    Unit tests with a mocked transport passed happily while the real call
+    returned HTTP 307 and no data. Both flags are required for any request to
+    reach AdGuard, so assert on how the client is constructed -- a mocked
+    response can't catch a missing redirect policy.
+    """
+    payload = {"data": [_entry("192.168.2.15", "x.example.com", "TXT")]}
+    with patch.object(adguard_tools, "get_config", return_value=_cfg()), \
+         patch.object(adguard_tools.httpx, "Client") as C:
+        C.return_value.__enter__.return_value.get.return_value = _Resp(payload)
+        query_adguard_client_domains.func(client_ip="192.168.2.15")
+
+    kwargs = C.call_args.kwargs
+    assert kwargs.get("follow_redirects") is True, "307 to https would be returned as an error"
+    assert kwargs.get("verify") is False, "self-signed LAN cert would fail verification"
+
+
+def test_acme_challenge_pattern_is_reported_as_a_single_domain():
+    """The real-world case this was built for.
+
+    openwebui showed a TXT ratio of 48.66 that looked like DNS tunneling. It was
+    495 lookups of one name -- a Let's Encrypt DNS-01 challenge retrying forever.
+    The distinguishing signal is concentration: one domain, not many.
+    """
+    payload = {"data": [
+        _entry("192.168.2.15", "_acme-challenge.openwebui.mcducklabs.com", "TXT")
+        for _ in range(20)
+    ]}
+    r = _run(query_adguard_client_domains, payload, client_ip="192.168.2.15", query_type="TXT")
+    assert len(r["top_domains"]) == 1
+    assert r["top_domains"][0]["count"] == 20
+    assert r["top_domains"][0]["domain"].startswith("_acme-challenge.")
