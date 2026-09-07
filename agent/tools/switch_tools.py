@@ -379,7 +379,7 @@ def query_wan_bandwidth_daily(days: int = 7) -> str:
         JSON list of daily records with wan_download_gb, wan_upload_gb, wan_total_gb.
     """
     config = get_config()
-    url = f"{config.signoz_clickhouse_url}/"
+    url = f"{_clickhouse_url()}/"
     query = f"""
         WITH ordered AS (
             SELECT
