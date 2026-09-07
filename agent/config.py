@@ -148,6 +148,13 @@ class FirstLightConfig(BaseSettings):
     signoz_clickhouse_user: str = "default"
     signoz_clickhouse_password: str = ""
 
+    # pfSense WAN interface name as reported by SNMP (Telegraf -> interface_*_octets).
+    # Driver-specific and therefore hardware-specific: the Netgate 3100 reported
+    # "mvneta2"; the 6100 that replaced it reports "ix3" (10G SFP+ to the fibre
+    # modem). Hardcoding this silently broke WAN bandwidth reporting when the
+    # firewall was swapped, so it lives here -- change the env var, not the code.
+    pfsense_wan_interface: str = "ix3"
+
     # Home Assistant
     ha_host: str = "192.168.2.52"
     ha_port: int = 8123

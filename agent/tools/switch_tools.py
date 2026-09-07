@@ -49,7 +49,7 @@ _PORT_LABELS: dict[str, str] = {
     "20": "Garage-Switch + 3 downstream cameras — TRUNK V1/V3",
     "21": "AP-Basement (unifi-basement) — TRUNK V1/V2/V3",
     "22": "Proxmox-V4-NIC Supermicro eth0 SFP — DMZ V4",
-    "23": "Firewall pfSense 3100 SFP — TRUNK V1/V2/V3/V4",
+    "23": "Firewall pfSense 6100 SFP — TRUNK V1/V2/V3/V4",
     "24": "rpi-ntop Raspberry Pi 4 ntopng — trusted V1",
 }
 
@@ -368,7 +368,7 @@ def query_pfsense_interface_traffic(hours: int = 24) -> str:
 def query_wan_bandwidth_daily(days: int = 7) -> str:
     """Get daily WAN internet bandwidth totals (download and upload) from pfSense.
 
-    Uses rate-based delta calculation on pfSense mvneta2 (WAN) SNMP counters from
+    Uses rate-based delta calculation on the pfSense WAN interface's SNMP counters from
     Telegraf, correctly handling counter resets from reboots. Reports actual internet
     traffic only — not internal LAN traffic.
 
@@ -379,6 +379,7 @@ def query_wan_bandwidth_daily(days: int = 7) -> str:
         JSON list of daily records with wan_download_gb, wan_upload_gb, wan_total_gb.
     """
     config = get_config()
+    wan_iface = config.pfsense_wan_interface
     url = f"{_clickhouse_url()}/"
     query = f"""
         WITH ordered AS (
@@ -392,7 +393,7 @@ def query_wan_bandwidth_daily(days: int = 7) -> str:
             JOIN signoz_metrics.distributed_time_series_v4 ts ON s.fingerprint = ts.fingerprint
             WHERE ts.metric_name IN ('interface_in_octets', 'interface_out_octets')
               AND simpleJSONExtractString(ts.labels, 'instance') = '192.168.1.1'
-              AND simpleJSONExtractString(ts.labels, 'name') = 'mvneta2'
+              AND simpleJSONExtractString(ts.labels, 'name') = '{wan_iface}'
               AND unix_milli >= (toUnixTimestamp(now() - INTERVAL {days} DAY)) * 1000
         )
         SELECT

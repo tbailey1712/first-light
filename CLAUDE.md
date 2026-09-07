@@ -313,7 +313,9 @@ Full device list: **`docs/dhcp_leases.md`**
 | 10 | 192.168.10.0/24 | Guest WiFi | None |
 
 Key fixed IPs:
-- `192.168.1.1` — pfSense (Netgate 3100)
+- `192.168.1.1` — pfSense (Netgate 6100; replaced the 3100). WAN is `ix3` (10G SFP+ to the
+  fibre modem); `igc0` is the LAN trunk carrying VLAN subinterfaces `igc0.2/.3/.4`. Interface
+  names are driver-specific — see `pfsense_wan_interface` in `agent/config.py`.
 - `192.168.2.9` — QNAP TS-h765eU (port 8080 for API, not through NPM)
 - `192.168.2.7` — Frigate NVR (port 5000 — use direct IP, not `frigate.mcducklabs.com`)
 - `192.168.2.106` — Docker host (docker.mcducklabs.com)
