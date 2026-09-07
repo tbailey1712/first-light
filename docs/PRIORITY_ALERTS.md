@@ -12,6 +12,11 @@ Each alert has:
 
 ## Active Alerts
 
+- **Unregistered device on isolated VLAN**
+  - keywords: `unregistered device`, `unknown device on vlan 3`, `unknown device on vlan 4`, `not in dhcp_leases`, `unrecognized mac on vlan 3`, `new device on cctv vlan`
+  - title: Unregistered Device on Isolated VLAN
+  - priority: high
+
 - **MAC randomization on VLAN 1**
   - keywords: `randomized mac`, `locally administered mac`, `private wifi address`, `mac randomization`
   - title: VLAN 1 MAC Randomization Detected
