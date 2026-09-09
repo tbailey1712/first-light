@@ -190,16 +190,41 @@ def query_wireless_health(hours: int = 6) -> str:
     FORMAT JSONEachRow
     """
 
+    # Per-client association churn. The aggregate counts above report totals per
+    # AP with only a unique_clients number, which cannot name an offender -- a
+    # device flapping 500 times a day was invisible in the daily report until it
+    # was found by hand. auth_fail_query only catches STA_ASSOC_TRACKER failures,
+    # so a client that completes its handshake and then drops never appears there.
+    flapping_query = f"""
+    SELECT
+        attributes_string['unifi.client_mac'] as client_mac,
+        countIf(attributes_string['unifi.event_type'] = 'disassociation') as disassociations,
+        countIf(attributes_string['unifi.event_type'] IN ('association', 'reassociation')) as associations,
+        COUNT(DISTINCT attributes_string['unifi.ap_hostname']) as aps_seen,
+        groupUniqArray(attributes_string['unifi.ap_hostname']) as ap_names
+    FROM signoz_logs.distributed_logs_v2
+    WHERE timestamp > toUnixTimestamp(now() - INTERVAL {hours} HOUR) * 1000000000
+      AND resources_string['device.type'] = 'access-point'
+      AND attributes_string['unifi.client_mac'] != ''
+    GROUP BY client_mac
+    HAVING disassociations >= {max(5, hours * 3)}
+    ORDER BY disassociations DESC
+    LIMIT 15
+    FORMAT JSONEachRow
+    """
+
     try:
         events_raw = _execute_clickhouse_query(event_query)
         notable_raw = _execute_clickhouse_query(notable_query)
         auth_fail_raw = _execute_clickhouse_query(auth_fail_query)
+        flapping_raw = _execute_clickhouse_query(flapping_query)
 
         events = [json.loads(line) for line in events_raw.split('\n') if line.strip()]
         notables = [json.loads(line) for line in notable_raw.split('\n') if line.strip()]
         auth_fails = [json.loads(line) for line in auth_fail_raw.split('\n') if line.strip()]
+        flapping = [json.loads(line) for line in flapping_raw.split('\n') if line.strip()]
 
-        if not events and not notables and not auth_fails:
+        if not events and not notables and not auth_fails and not flapping:
             return json.dumps({
                 "time_range": f"last {hours}h",
                 "status": "no_data",
@@ -207,6 +232,7 @@ def query_wireless_health(hours: int = 6) -> str:
                 "wireless_events": [],
                 "notable_events": [],
                 "auth_failures": [],
+                "flapping_clients": [],
             }, indent=2)
 
         # Summarise by event type across APs
@@ -240,12 +266,31 @@ def query_wireless_health(hours: int = 6) -> str:
                 ),
             })
 
+        # Name the churning clients. Aggregates alone cannot answer "which device",
+        # which is the first question anyone asks about a disassociation count.
+        annotated_flapping = []
+        for c in flapping:
+            dis, assoc = int(c["disassociations"]), int(c["associations"])
+            annotated_flapping.append({
+                "client_mac": c["client_mac"],
+                "disassociations": dis,
+                "associations": assoc,
+                "aps_seen": int(c["aps_seen"]),
+                "ap_names": c.get("ap_names", []),
+                "likely_cause": (
+                    "roaming across APs — check coverage or disable 802.11r/v for this client"
+                    if int(c["aps_seen"]) > 1 and assoc >= dis
+                    else "repeatedly joining and dropping — check whether this radio should be enabled at all"
+                ),
+            })
+
         return json.dumps({
             "time_range": f"last {hours}h",
             "status": "ok",
             "event_summary": sorted(by_type.values(), key=lambda x: x["total"], reverse=True),
             "notable_events": notables,
             "auth_failures": annotated_fails,
+            "flapping_clients": annotated_flapping,
         }, indent=2, default=str)
 
     except Exception as e:
