@@ -152,6 +152,15 @@ processors:
         # NOTE: single-quoted — the ': ' inside the regex makes YAML parse an
         # unquoted scalar as a mapping instead of a string.
         - 'IsMatch(body, "systemd-resolved: (Detected conflict|Hostname conflict)")'
+        # UniFi AP kernel ring-buffer chatter: ~46,900 lines/day, 70% of all AP
+        # log volume, carrying no wireless signal. Measured 2026-09-09: 23,641
+        # (2F-Back) + 18,962 (1F-Front) + 4,356 (Basement) in 24h. Dropped here
+        # rather than in transform/unifi because this filter runs earlier in the
+        # pipeline. Matches only the UniFi AP prefix (<apmac>,<model>-<fw>:) so
+        # kernel logs from every other host are untouched.
+        # NOTE: single-quoted — the ': ' inside the regex would otherwise make
+        # YAML parse this as a mapping.
+        - 'IsMatch(body, "[0-9a-f]{12},U[0-9]-[^:]+: kernel:")'
         # Concord alarm bridge HTTP access log: HA polling /zones and /partitions,
         # ~353k/day. Only successful (200) polls are dropped, so a failing alarm
         # bridge still surfaces.
@@ -499,6 +508,14 @@ processors:
           - set(attributes["unifi.interface"], attributes["interface"]) where attributes["interface"] != nil
           - delete_key(attributes, "interface") where attributes["interface"] != nil
           - merge_maps(attributes, ExtractPatterns(body, "STA\\s+(?P<client_mac>[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2})"), "upsert") where attributes["_is_unifi"] == "true"
+          # The pattern above requires "STA " with whitespace, so these formats
+          # yielded no client_mac at all -- 59,719 records in 24h. Without a MAC
+          # the event cannot be attributed to a device, which is why a smart meter
+          # failing PSK auth ~500 times a day was invisible until found by hand.
+          - 'merge_maps(attributes, ExtractPatterns(body, "STA=(?P<client_mac>[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2})"), "upsert") where IsMatch(body, "STA=[0-9a-f]{2}:")'
+          - 'merge_maps(attributes, ExtractPatterns(body, "EVENT_STA_[A-Z]+ [^ ]+ (?P<client_mac>[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2})"), "upsert") where IsMatch(body, "EVENT_STA_")'
+          - 'merge_maps(attributes, ExtractPatterns(body, "PSK-MISMATCH (?P<client_mac>[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2})"), "upsert") where IsMatch(body, "PSK-MISMATCH")'
+          - 'merge_maps(attributes, ExtractPatterns(body, "client\\[(?P<client_mac>[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2})\\]"), "upsert") where IsMatch(body, "rejected, reason=")'
           - set(attributes["unifi.client_mac"], attributes["client_mac"]) where attributes["client_mac"] != nil
           - delete_key(attributes, "client_mac") where attributes["client_mac"] != nil
           - "set(attributes[\"unifi.event_type\"], \"association\") where attributes[\"_is_unifi\"] == \"true\" and IsMatch(body, \"IEEE 802\\\\.11: associated\")"
@@ -512,6 +529,20 @@ processors:
           - set(attributes["unifi.event_type"], "roaming") where attributes["_is_unifi"] == "true" and IsMatch(body, "UBNT_ROAM")
           - set(attributes["unifi.event_type"], "sta_authorized") where attributes["_is_unifi"] == "true" and IsMatch(body, "AP-STA-CONNECTED")
           - set(attributes["unifi.event_type"], "sta_unauthorized") where attributes["_is_unifi"] == "true" and IsMatch(body, "AP-STA-DISCONNECTED")
+          # wevent.ubnt_custom_event() family -- 3,447/day, previously unclassified.
+          # EVENT_STA_JOIN is the association signal: without it a client that
+          # joins via this path shows disassociations with zero associations.
+          - set(attributes["unifi.event_type"], "sta_join") where IsMatch(body, "EVENT_STA_JOIN")
+          - set(attributes["unifi.event_type"], "sta_leave") where IsMatch(body, "EVENT_STA_LEAVE")
+          - set(attributes["unifi.event_type"], "sta_ip_assigned") where IsMatch(body, "EVENT_STA_IP")
+          # Security signals, ~975/day, previously invisible. psk_mismatch means a
+          # device is presenting the wrong pre-shared key.
+          - set(attributes["unifi.event_type"], "psk_mismatch") where IsMatch(body, "PSK-MISMATCH")
+          - 'set(attributes["unifi.event_type"], "client_rejected") where IsMatch(body, "rejected, reason=")'
+          # EVENT_STA_IP carries the MAC-to-IP mapping, useful for correlation.
+          - 'merge_maps(attributes, ExtractPatterns(body, "EVENT_STA_IP [^/]+/ (?P<client_ip>[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+)"), "upsert") where IsMatch(body, "EVENT_STA_IP")'
+          - set(attributes["unifi.client_ip"], attributes["client_ip"]) where attributes["client_ip"] != nil
+          - delete_key(attributes, "client_ip") where attributes["client_ip"] != nil
           - merge_maps(attributes, ExtractPatterns(body, "from_ap=(?P<from_ap_mac>[a-f0-9]{12})"), "upsert") where IsMatch(body, "UBNT_ROAM")
           - set(attributes["unifi.roam_from_ap"], attributes["from_ap_mac"]) where attributes["from_ap_mac"] != nil
           - delete_key(attributes, "from_ap_mac") where attributes["from_ap_mac"] != nil
