@@ -536,6 +536,7 @@ def synthesize(state: DailyReportState) -> dict:
                     "value": affected or finding.get("title", "unknown"),
                     "reason": finding.get("detail", finding.get("title", "")),
                     "source_domain": result["domain"],
+                    "severity": finding.get("severity", "warning"),
                 })
 
     # Fallback path — LLM extraction for any domain without structured output
@@ -567,7 +568,19 @@ def synthesize(state: DailyReportState) -> dict:
         except Exception as e:
             logger.warning("Synthesis Phase A fallback LLM extraction failed: %s", e)
 
+    # Order by severity before truncating. Items are collected in domain-completion
+    # order, so without this a critical finding from a late-finishing domain is
+    # silently dropped by the cap while an earlier domain's warnings survive.
+    # On 2026-09-08 wireless reported 3 critical findings and the list hit the
+    # cap at exactly 10; only one of them reached the report.
+    suspicious_items.sort(key=lambda i: 0 if i.get("severity") == "critical" else 1)
+    dropped = len(suspicious_items) - 10
     suspicious_items = suspicious_items[:10]
+    if dropped > 0:
+        logger.warning(
+            "Synthesis Phase A: %d item(s) dropped by the 10-item cap (%d critical retained)",
+            dropped, sum(1 for i in suspicious_items if i.get("severity") == "critical"),
+        )
     logger.info(
         "Synthesis Phase A: %d suspicious items (%d from structured, %d unstructured domains)",
         len(suspicious_items), len(structured_domains), len(unstructured_domains),

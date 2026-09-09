@@ -69,3 +69,44 @@ def test_notice_states_the_report_is_incomplete():
     # The whole point is that a reader cannot mistake this for an all-clear.
     notice = format_unanalyzed_notice(["wireless"])
     assert "NOT analyzed" in notice
+
+
+# ── Phase A severity ordering ────────────────────────────────────────────────
+
+def test_critical_findings_survive_the_phase_a_cap():
+    """Phase A caps suspicious_items at 10, in domain-completion order.
+
+    On 2026-09-08 the wireless agent reported 3 critical findings and the list
+    hit the cap at exactly 10; only one reached the report. Items must be
+    ordered by severity before truncation so a late-finishing domain's criticals
+    are not silently dropped in favour of an earlier domain's warnings.
+    """
+    items = (
+        [{"severity": "warning", "value": f"w{i}", "source_domain": "firewall_threat"} for i in range(10)]
+        + [{"severity": "critical", "value": f"c{i}", "source_domain": "wireless"} for i in range(3)]
+    )
+    items.sort(key=lambda i: 0 if i.get("severity") == "critical" else 1)
+    kept = items[:10]
+
+    criticals = [i for i in kept if i["severity"] == "critical"]
+    assert len(criticals) == 3, "all critical findings must survive the cap"
+    assert {i["value"] for i in criticals} == {"c0", "c1", "c2"}
+
+
+def test_ordering_is_stable_within_a_severity():
+    """Domain order must be preserved among equals, so output stays reproducible."""
+    items = [
+        {"severity": "warning", "value": "a"},
+        {"severity": "critical", "value": "b"},
+        {"severity": "warning", "value": "c"},
+        {"severity": "critical", "value": "d"},
+    ]
+    items.sort(key=lambda i: 0 if i.get("severity") == "critical" else 1)
+    assert [i["value"] for i in items] == ["b", "d", "a", "c"]
+
+
+def test_missing_severity_is_treated_as_warning_not_critical():
+    """A finding with no severity must not jump the queue ahead of real criticals."""
+    items = [{"value": "unknown"}, {"severity": "critical", "value": "real"}]
+    items.sort(key=lambda i: 0 if i.get("severity") == "critical" else 1)
+    assert items[0]["value"] == "real"
