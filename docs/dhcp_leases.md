@@ -21,6 +21,7 @@ preserve it.
 | 192.168.3.10 | 4c:11:bf:47:df:e1 (Zhejiang Dahua) | NVR | Dahua NVR |
 | 192.168.2.106 | 00:00:1c:81:bd:da (Bell Technologies) | docker | docker.mcducklabs.com — main Docker host |
 | 192.168.2.105 | 24:4c:ab:03:00:5c (Espressif) | wled-famroom | WLED ESP32 Family Room |
+| 192.168.2.89 | 2c:e6:4d:20:0d:9a | dehumidifier-mbr | Midea. Factory reset 2026-09-09 (unit was wedged, app could not see it); came back on defaults and needed a new reservation |
 | 192.168.2.87 | 68:09:47:cb:02:68 | emporia-ev-charger |  |
 | 192.168.2.86 | f0:16:1d:b6:1f:04 | emporia-vue | Energy Monitor |
 | 192.168.2.85 | dc:da:0c:b1:d2:f4 | shelly-furnace-attic |  |
@@ -29,7 +30,6 @@ preserve it.
 | 192.168.2.82 | ec:da:3b:c2:87:30 (Espressif) | shelly-furnace-basement |  |
 | 192.168.2.81 | d0:14:11:90:63:e5 | airthings-hub |  |
 | 192.168.2.80 | 48:a2:e6:c6:ce:86 (Resideo) | heatpumpgw | Heat Pump Gateway |
-| 192.168.2.73 | 2c:e6:4d:20:0d:9a | dehumidifier-mbr | Midea |
 | 192.168.2.72 | 5c:fc:e1:be:d3:2f | smoke-mbr |  |
 | 192.168.2.71 | 5c:fc:e1:91:06:21 | smoke-attic |  |
 | 192.168.2.70 | 5c:fc:e1:c4:3d:fc | smoke-basement-furnace |  |
