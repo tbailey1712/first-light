@@ -12,6 +12,11 @@ Each alert has:
 
 ## Active Alerts
 
+- **Backup failure**
+  - keywords: `backup failed`, `backup job failed`, `backup did not complete`, `offsite backup failure`, `no offsite backup`, `b2 backup failed`, `pbs task error`, `backup job error`
+  - title: Backup Failure
+  - priority: high
+
 - **Unregistered device on isolated VLAN**
   - keywords: `unregistered device`, `unknown device on vlan 3`, `unknown device on vlan 4`, `not in dhcp_leases`, `unrecognized mac on vlan 3`, `new device on cctv vlan`
   - title: Unregistered Device on Isolated VLAN

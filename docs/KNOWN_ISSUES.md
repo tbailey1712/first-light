@@ -8,6 +8,8 @@ Domain tags in [brackets] control which agents see each item.
 
 ## Suppressions
 
+- **Retired PBS backup groups** [infrastructure]: `ct/107` (encoder, intentionally stopped), `ct/108` (encoder, last backup 2025-09-19) and `vm/115` (VM no longer in the Proxmox inventory — orphaned group pending prune) are stale by design. Do NOT flag these three as backup failures, and do NOT let them drive a critical severity. Any OTHER group becoming stale IS a finding. Remove an entry here once its group is pruned.
+- **PBS estimated_full in the past** [infrastructure]: the datastore capacity projection returns a date already elapsed (e.g. 2025-03-14) when growth is flat. This is a broken projection, not a capacity warning. Use `used_pct` instead.
 - **Apple TV UDP 3722** [firewall_threat]: 192.168.2.12 (atv-basement) sends tens of thousands of UDP 3722 (AirPlay/HomeKit discovery) cross-VLAN to VLAN 1 hosts daily. Firewall blocks all of it (VLAN2→VLAN1 deny). High volume is inherent to the protocol. Do NOT flag regardless of block count or targets.
 - **AT&T gateway SSDP** [firewall_threat]: 192.168.0.239 on the WAN-side segment (gateway at 192.168.11.11) sends thousands of SSDP broadcasts (UDP/1900) to 239.255.255.250 daily on mvneta0. Normal WAN-side noise. The 192.168.0.x subnet is upstream of pfSense, NOT an undefined VLAN.
 - **Nest Hub broadcast** [firewall_threat]: 192.168.2.47 (HubMax-Kitchen) broadcasts UDP 9478/9999 (Google Cast/Home discovery) to 255.255.255.255. Firewall blocks at VLAN boundary. Normal smart-home behavior.
@@ -38,6 +40,12 @@ Domain tags in [brackets] control which agents see each item.
 - **CF Access protected services** [firewall_threat, dns_security, cloudflare]: langfuse.mcducklabs.com and ai.mcducklabs.com are behind CF Access + WAF. WAF hits being blocked = protection working. Do NOT flag as unprotected or recommend adding CF Access.
 
 ## Alerts
+
+- **Backup failure** [infrastructure]: A failed backup is only discovered when it is needed, so treat any of the following as a CRITICAL finding and report it every run until resolved.
+  - **Offsite (QNAP → Backblaze B2)**: the Hybrid Backup Sync job `"Backup to B2"` runs nightly, starting 02:00 and finishing around 03:25 (~1h25m, 2 folder pairs, ~1.2M files). Flag if HBS reports `Warning`, `Error` or `Failed`; if a `Started Backup job` has no matching `Finished Backup job`; or if no run appears at all in the last 26 hours. This is the ONLY copy that survives a fire — it is more important than the local ones.
+  - **Local (PBS)**: flag any non-zero `error` count in `task_summary_48h`, any entry in `failed_tasks_48h`, or any backup group becoming stale that is not in the suppression below. Also flag the datastore above 85% used.
+  - Report the job name, when it last succeeded, and how long it has been failing. Do NOT report a healthy backup — a successful run is not a finding.
+  - Note `overall_status: critical` from the PBS tool is driven by the known-stale groups below and is NOT by itself a finding.
 
 - **Unregistered device on an isolated VLAN** [firewall_threat, infrastructure, wireless]: Any source IP on **VLAN 3 (192.168.3.x, CCTV)** or **VLAN 4 (192.168.4.x, DMZ)** that is not listed in `docs/dhcp_leases.md` is a CRITICAL finding — report it every run until it is resolved or added to the lease table. These VLANs are isolated and have a fixed, known device inventory, so a new address means an unauthorised or forgotten device has joined. Do NOT suppress it because its traffic is blocked: pfSense only logs traffic that CROSSES the firewall, so an intruder on the same VLAN can reach the cameras/NVR at layer 2 without ever appearing in filterlog. "All blocked" is not "contained".
   Report: the IP, MAC and MAC vendor (OUI), how it connected (wired port, or WiFi SSID + AP from UniFi client data), when it first appeared, and its top external destinations. Cross-reference the OUI and destination countries — cheap IoT hardware phoning home to overseas cloud infrastructure on non-standard ports is the signature to call out.
