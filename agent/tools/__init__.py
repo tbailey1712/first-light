@@ -22,6 +22,8 @@ from agent.tools.metrics import (
     query_adguard_traffic_by_type,
 )
 
+from agent.tools.device_lookup import lookup_device
+
 from agent.tools.adguard_tools import (
     query_adguard_client_domains,
     query_adguard_txt_offenders,
@@ -70,6 +72,8 @@ def get_all_tools() -> List[BaseTool]:
         query_adguard_high_risk_clients,
         query_adguard_blocked_domains,
         query_adguard_traffic_by_type,
+        # Device identity — call before calling any address unknown
+        lookup_device,
         # AdGuard query log (names the domains behind a DNS finding)
         query_adguard_client_domains,
         query_adguard_txt_offenders,
